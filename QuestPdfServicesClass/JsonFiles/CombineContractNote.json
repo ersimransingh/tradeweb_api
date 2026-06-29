@@ -1,0 +1,890 @@
+{
+	"document": {
+		"DocumentName": "ClientFundLedger",
+		"PageSize": "A4",
+		"Orientation": "LANDSCAPE",
+		"MarginTop": 20,
+		"MarginBottom": 20,
+		"MarginLeft": 20,
+		"MarginRight": 20,
+		"DefaultFont": "Helvetica",
+		"DefaultFontSize": 9,
+		"IsActive": true
+	},
+	"globalHeader": [
+		{
+			"Label": "Image",
+			"DataField": "E:/My Work/16022026/TradeWebAPI/Typst/Assets/CompanyLogo.png",
+			"Position": 1,
+			"RowNo": 1,
+			"Width": 30,
+			"Align": "L",
+			"FontSize": 14,
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "CompanyName",
+			"Position": 2,
+			"RowNo": 1,
+			"Width": 50,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "Address1",
+			"Position": 2,
+			"RowNo": 2,
+			"Width": 50,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Address3",
+			"Position": 2,
+			"RowNo": 3,
+			"Width": 50,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "SEBIRefno123",
+			"Position": 2,
+			"RowNo": 4,
+			"Width": 50,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "CINNo",
+			"Position": 2,
+			"RowNo": 5,
+			"Width": 50,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": false
+		},
+		{
+			"Label": "spacer",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 6,
+			"Width": 100,
+			"Align": "L",
+			"FontSize": 12,
+			"IsBold": false
+		}
+	],
+	"globalFooter": [
+		{
+			"Label": "Text",
+			"DataField": "PrintDate",
+			"Position": 1,
+			"RowNo": 1,
+			"Width": 50,
+			"Align": "L",
+			"FontSize": 10
+		},
+		{
+			"Label": "Text",
+			"DataField": "PageNumber",
+			"Position": 2,
+			"RowNo": 1,
+			"Width": 50,
+			"Align": "R",
+			"FontSize": 10
+		}
+	],
+	"sections": [
+		{
+			"Label": "Text",
+			"DataField": "CONTRACT NOTE CUM TAX INVOICE",
+			"Position": 1,
+			"RowNo": 0,
+			"Width": 100,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "(Tax Invoice under Section 31 of GST Act)",
+			"Position": 1,
+			"RowNo": 1,
+			"Width": 100,
+			"Align": "C",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "Dealing Office: KANDIVALI/JAGDISH PARIKH A/601 BHOOMI DARSHAN, CHS LTD ,MAHAVIR NAGAR, NR, KAMLA ASHIKANDIVALI (W) ,MUMBAI, MAHARASHTRA,INDIA,400067 PIN : 400067 PHONE : 22807657",
+			"Position": 1,
+			"RowNo": 2,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Contract Note No. :",
+			"Position": 1,
+			"RowNo": 3,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "347544",
+			"Position": 2,
+			"RowNo": 3,
+			"Width": 20,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 3,
+			"RowNo": 3,
+			"Width": 16,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "ICCL",
+			"Position": 4,
+			"RowNo": 3,
+			"Width": 13,
+			"Align": "C",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "NCL",
+			"Position": 5,
+			"RowNo": 3,
+			"Width": 13,
+			"Align": "C",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "MSEI",
+			"Position": 6,
+			"RowNo": 3,
+			"Width": 13,
+			"Align": "C",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "GST Invoice :",
+			"Position": 1,
+			"RowNo": 4,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "27/234080",
+			"Position": 2,
+			"RowNo": 4,
+			"Width": 20,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 3,
+			"RowNo": 4,
+			"Width": 55,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Invoice Reference Number :",
+			"Position": 1,
+			"RowNo": 5,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 2,
+			"RowNo": 5,
+			"Width": 20,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Settlement No. :",
+			"Position": 3,
+			"RowNo": 5,
+			"Width": 16,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "2526833",
+			"Position": 4,
+			"RowNo": 5,
+			"Width": 13,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "2026044",
+			"Position": 5,
+			"RowNo": 5,
+			"Width": 13,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 6,
+			"RowNo": 5,
+			"Width": 13,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Trade Date :",
+			"Position": 1,
+			"RowNo": 6,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "05/03/2026",
+			"Position": 2,
+			"RowNo": 6,
+			"Width": 20,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Settlement Date",
+			"Position": 3,
+			"RowNo": 6,
+			"Width": 16,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "06/03/2026",
+			"Position": 4,
+			"RowNo": 6,
+			"Width": 13,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "06/03/2026",
+			"Position": 5,
+			"RowNo": 6,
+			"Width": 13,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 6,
+			"RowNo": 6,
+			"Width": 13,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Name of the Client :",
+			"Position": 1,
+			"RowNo": 7,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "KUNAL KIRTIBHAI SHAH",
+			"Position": 2,
+			"RowNo": 7,
+			"Width": 75,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Address of the Client :",
+			"Position": 1,
+			"RowNo": 8,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "A/10,ABHISHEK BUILDING,",
+			"Position": 2,
+			"RowNo": 8,
+			"Width": 75,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 9,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "2ND FLOOR,RATAN NAGAR,",
+			"Position": 2,
+			"RowNo": 9,
+			"Width": 75,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 10,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "DAHISAR (E)",
+			"Position": 2,
+			"RowNo": 10,
+			"Width": 75,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 11,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "MUMBAI 400068",
+			"Position": 2,
+			"RowNo": 11,
+			"Width": 75,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "State/State Code :",
+			"Position": 1,
+			"RowNo": 12,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Maharashtra",
+			"Position": 2,
+			"RowNo": 12,
+			"Width": 75,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "PAN of Client :",
+			"Position": 1,
+			"RowNo": 13,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "xxDPxx96xx",
+			"Position": 2,
+			"RowNo": 13,
+			"Width": 75,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "UCC of Client",
+			"Position": 1,
+			"RowNo": 14,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "11115",
+			"Position": 2,
+			"RowNo": 14,
+			"Width": 20,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Trading Back office code* :",
+			"Position": 3,
+			"RowNo": 14,
+			"Width": 16,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "11115",
+			"Position": 4,
+			"RowNo": 14,
+			"Width": 39,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "GST Identification No. of client (if available):",
+			"Position": 1,
+			"RowNo": 15,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 2,
+			"RowNo": 15,
+			"Width": 75,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "E-Mail ID :",
+			"Position": 1,
+			"RowNo": 16,
+			"Width": 25,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "kuxxxxxxx@gmxxx.cox",
+			"Position": 2,
+			"RowNo": 16,
+			"Width": 75,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "spacer",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 17,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 17,
+			"Width": 45,
+			"Align": "R",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "BSE(Cash/F&O/FX)",
+			"Position": 2,
+			"RowNo": 17,
+			"Width": 16,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "NSE(Cash/F&O/FX)",
+			"Position": 3,
+			"RowNo": 17,
+			"Width": 16,
+			"Align": "R",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "MSEI(Cash/F&O/FX)",
+			"Position": 4,
+			"RowNo": 17,
+			"Width": 15,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 5,
+			"RowNo": 17,
+			"Width": 8,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "*Trading/ Back Office Code (If Different from UCC)",
+			"Position": 1,
+			"RowNo": 18,
+			"Width": 45,
+			"Align": "R",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 2,
+			"RowNo": 18,
+			"Width": 16,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 3,
+			"RowNo": 18,
+			"Width": 16,
+			"Align": "R",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 4,
+			"RowNo": 18,
+			"Width": 15,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "",
+			"Position": 5,
+			"RowNo": 18,
+			"Width": 8,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "spacer",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 19,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Sir/Madam, \n I / We have this day done by your order and on your account the following transactions:",
+			"Position": 1,
+			"RowNo": 20,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "spacer",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 21,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Equity Segment",
+			"Position": 1,
+			"RowNo": 22,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "spacer",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 23,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "table",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 24,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "spacer",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 25,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Remark:\n1. Applicable only in case of cross currency contracts.\n2. To be converted into INR, based on RBI reference rate as on the date of transaction, in case cross currency contracts.\n3. To be calculated in accordance with the provisions of the applicable GST Laws issued from time to time.\n4. CGST:- Central GST; SGST:- State GST; IGST:- Integrated GST; UTT:- Union Territory Tax. Details of trade-wise levies shall be provided on request.\nNote:\n1. [**] Trades are executed due to non-discharge of obligation towards Margin/MTM/Settlement or other debit.\n2. [MTF] Margin Trading Financed.\nTransactions mentioned in this contract note cum bill shall be governed and subject to the Rules, Bye-laws, Regulations and Circulars of the respective Exchanges on which trades have been executed and Securities and Exchange Board of India issued from time to time. It shall also be subject to the relevant Acts, Rules, Regulations, Directives, Notifications, Guidelines (including GST Laws) & Circulars issued by SEBI / Government of India / State Governments and Union Territory Governments issued from time to time. The Exchanges provide Complaint Resolution, Arbitration and Appellate Arbitration facilities at the Regional Arbitration Centres (RAC). The client may approach its nearest centre, details of which are available on respective Exchange's website.\nPlease visit www.bseindia.com for BSE, www.msei.in for MSEI and www.nseindia.com for NSE.\nThe share of the listed stock exchange shall only be dealt by fit and proper persons as per Regulation 19 and 20 of SECC Regulations (For trades in BSE & MCX, for more information visit http://www.sebi.gov.in/sebi_data/attachdocs/1340272091708.pdf).\nThe share of the listed Depository Participant shall only be dealt by fit and proper persons as per SCHEDULE II, please refer below link:\nhttp://www.sebi.gov.in/acts/internotification.pdf\nDate: 05/03/2026\nPlace: MUMBAI",
+			"Position": 1,
+			"RowNo": 26,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		}
+	],
+	"tableSections": [
+		{
+			"TableName": "MasterTable",
+			"DataSource": "tbl_ProcessClientFundLedgerMaster",
+			"ShowHeader": true
+		},
+		{
+			"TableName": "TransactionTable",
+			"DataSource": "SP_CFLTransactionData",
+			"ShowHeader": true
+		}
+	],
+	"tableColumns": {
+		"table1": {
+			"headerRows": [
+				[
+					{
+						"label": " Date",
+						"colspan": 2,
+						"rowspan": 2
+					},
+					{
+						"label": "Clearing Member",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Segment Type",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Bill Chq No",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Transaction Type",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Particulars",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Voucher No",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Amount Details",
+						"colspan": 3,
+						"rowspan": 1
+					}
+				],
+				[
+					{
+						"label": "Settlement",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "Transaction",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "Debit",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "Credit",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "Balance",
+						"colspan": 1,
+						"rowspan": 1
+					}
+				]
+			],
+			"columns": [
+				{
+					"ColumnName": "Settlement Date",
+					"DataField": "SettlementDate",
+					"Width": 8,
+					"Alignment": "L",
+					"DisplayOrder": 1
+				},
+				{
+					"ColumnName": "Transaction Date",
+					"DataField": "TransactionDate",
+					"Width": 8,
+					"Alignment": "L",
+					"DisplayOrder": 2
+				},
+				{
+					"ColumnName": "Clearing Member",
+					"DataField": "ClearingMember",
+					"Width": 7,
+					"Alignment": "L",
+					"DisplayOrder": 3
+				},
+				{
+					"ColumnName": "Segment Type",
+					"DataField": "SegmentType",
+					"Width": 7,
+					"Alignment": "L",
+					"DisplayOrder": 4
+				},
+				{
+					"ColumnName": "Bill Chq No",
+					"DataField": "BillChqNo",
+					"Width": 7,
+					"Alignment": "L",
+					"DisplayOrder": 5
+				},
+				{
+					"ColumnName": "Transaction Type",
+					"DataField": "TransactionType",
+					"Width": 7,
+					"Alignment": "L",
+					"DisplayOrder": 6
+				},
+				{
+					"ColumnName": "Particulars",
+					"DataField": "ParticularsNarration",
+					"Width": 20,
+					"Alignment": "L",
+					"DisplayOrder": 7
+				},
+				{
+					"ColumnName": "Voucher No",
+					"DataField": "VoucherNo",
+					"Width": 7,
+					"Alignment": "L",
+					"DisplayOrder": 8
+				},
+				{
+					"ColumnName": "Debit",
+					"DataField": "Debit",
+					"Width": 6,
+					"Alignment": "R",
+					"DisplayOrder": 9
+				},
+				{
+					"ColumnName": "Credit",
+					"DataField": "Credit",
+					"Width": 6,
+					"Alignment": "R",
+					"DisplayOrder": 10
+				},
+				{
+					"ColumnName": "Balance",
+					"DataField": "Balance",
+					"Width": 7,
+					"Alignment": "R",
+					"DisplayOrder": 11
+				}
+			]
+		}
+	}
+}

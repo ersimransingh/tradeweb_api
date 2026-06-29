@@ -1,0 +1,13 @@
+# Minimal OpenSSL configuration for .NET Core 3.1 compatibility on Ubuntu 24.04+/26.04
+# This avoids OpenSSL 3.x provider configuration that the .NET Core 3.1 runtime cannot parse.
+
+openssl_conf = default_conf
+
+[default_conf]
+ssl_conf = ssl_sect
+
+[ssl_sect]
+system_default = system_default_sect
+
+[system_default_sect]
+CipherString = DEFAULT@SECLEVEL=1

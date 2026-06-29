@@ -1,0 +1,12538 @@
+CREATE TYPE [dbo].[tb_ParamList] AS TABLE(
+	[ParameterName] [varchar](max) NULL,
+	[ParameterValue] [varchar](max) NULL,
+	[HeaderName] [varchar](100) NULL,
+	[JsonTag] [int] NULL
+)
+GO
+
+CREATE TYPE [dbo].[UserAccessList] AS TABLE(
+	[ClientCode] [varchar](20) NULL,
+	[ClientName] [varchar](200) NULL
+)
+GO
+
+CREATE TYPE [dbo].[tb_ParameterXMLLIST] AS TABLE(
+	[J_Ui] [varchar](max) NULL,
+	[strSql] [varchar](max) NULL,
+	[X_Filter] [varchar](max) NULL,
+	[X_GFilter] [varchar](max) NULL,
+	[J_Api] [varchar](max) NULL
+)
+GO
+
+CREATE FUNCTION [dbo].[ReturnTable]
+(
+	@ItemList NVARCHAR(4000), 
+	@delimiter CHAR(1)
+)
+RETURNS @IDTable TABLE (Value VARCHAR(100))  
+AS      
+BEGIN    
+	DECLARE @tempItemList NVARCHAR(4000)
+	SET @tempItemList = @ItemList
+	DECLARE @i INT    
+	DECLARE @Item NVARCHAR(4000)
+	--SET @tempItemList = REPLACE (@tempItemList, ' ', '')
+	SET @i = CHARINDEX(@delimiter, @tempItemList)
+	WHILE (LEN(@tempItemList) > 0)
+	BEGIN
+		IF @i = 0
+			SET @Item = @tempItemList
+		ELSE
+			SET @Item = LEFT(@tempItemList, @i - 1)
+		INSERT INTO @IDTable(VALUE) VALUES(@Item)
+		IF @i = 0
+			SET @tempItemList = ''
+		ELSE
+			SET @tempItemList = RIGHT(@tempItemList, LEN(@tempItemList) - @i)
+		SET @i = CHARINDEX(@delimiter, @tempItemList)
+	END 
+	RETURN
+END  
+GO
+
+CREATE FUNCTION [dbo].[fn_EncryptStringTW](@strInput NVARCHAR(MAX))
+RETURNS NVARCHAR(MAX)
+WITH ENCRYPTION
+AS
+BEGIN
+    DECLARE @m INT = 0
+    DECLARE @strEncKey NVARCHAR(MAX) = 'ASHOKKHE'
+    DECLARE @gsEcDc NVARCHAR(1)
+    DECLARE @gsFinal NVARCHAR(MAX) = ''
+    DECLARE @gsCompare NVARCHAR(1)
+    DECLARE @glNumber INT = LEN(LTRIM(RTRIM(@strInput)))
+    DECLARE @sb NVARCHAR(MAX) = 'ASHOKKHE'
+    WHILE (LEN(@sb) < @glNumber)
+    BEGIN
+        SET @sb = @sb + 'ASHOKKHE'
+    END
+    SET @strEncKey = LEFT(@sb, @glNumber)
+    SET @m = 1
+    WHILE @m <= @glNumber
+    BEGIN
+        SET @gsEcDc = SUBSTRING(@strInput, @m, 1)
+        SET @gsCompare = SUBSTRING(@strEncKey, @m, 1)
+        SET @gsFinal = @gsFinal + CHAR(ASCII(@gsEcDc) + ASCII(@gsCompare) + 13)
+        SET @m = @m + 1
+    END
+    RETURN @gsFinal
+END
+GO
+
+CREATE OR ALTER FUNCTION [dbo].[fn_GetClients](@i_vcUserid VARCHAR(50), @i_vcSelectListTag VARCHAR(1)='', @i_vcSelectListCode VARCHAR(500)='') 
+RETURNS @o_tbOutPutTable TABLE(Client_Code VARCHAR(50))
+AS       
+BEGIN 
+  /*
+ ///////////////////////////////////////////////////////////////////////////////////////////
+ // Create By     : VAIBHAV GARG
+ // Created Date  : 21-NOV-2023
+ // Description   : 
+ // Reviewed By   : 
+ // Review Date   : 
+ //////////////////////////////////////////////////////////////////////////////////////////
+ */
+
+  DECLARE @strUserType VARCHAR(1) = '', @strUserAccessValue VARCHAR(50)=''
+  DECLARE @tbl_UserAccessRights TABLE(UserType VARCHAR(1), UserAccessValue VARCHAR(50))
+  
+  IF @i_vcUserid <> ''
+  BEGIN
+    INSERT INTO @tbl_UserAccessRights
+    SELECT LA_grouping, LA_GrCode from LoginAccess(NOLOCK) 
+    WHERE LA_UserId IN(SELECT VALUE FROM ReturnTable(@i_vcUserid,','))
+
+    DECLARE db_CursorClientList CURSOR FOR         
+    SELECT distinct UserType, UserAccessValue 
+    FROM @tbl_UserAccessRights  
+ 
+    OPEN db_CursorClientList       
+    FETCH NEXT FROM db_CursorClientList INTO @strUserType, @strUserAccessValue 
+    WHILE @@FETCH_STATUS = 0     
+    BEGIN
+      IF  @strUserType = 'B'
+	  BEGIN
+	    INSERT INTO @o_tbOutPutTable(Client_Code)
+	    SELECT DISTINCT cm_cd from client_master(nolock) where cm_brboffcode = @strUserAccessValue and cm_schedule = '49843750'
+	  END  
+	  ELSE IF @strUserType = 'F'
+	  BEGIN
+	    INSERT INTO @o_tbOutPutTable(Client_Code)
+	    SELECT DISTINCT cm_cd from client_master(nolock) where cm_familycd = @strUserAccessValue   and cm_schedule = '49843750'
+	  END
+	  ELSE IF @strUserType = 'A'
+	  BEGIN
+	    INSERT INTO @o_tbOutPutTable(Client_Code)
+	    SELECT DISTINCT cm_cd from client_master(nolock) where ISNULL(cm_freezeyn,'N') = 'N'  and cm_schedule = '49843750'
+	  END
+	  ELSE IF @strUserType = 'G'
+	  BEGIN
+	    INSERT INTO @o_tbOutPutTable(Client_Code)
+	    SELECT DISTINCT cm_cd from client_master(nolock) where cm_groupcd = @strUserAccessValue  and cm_schedule = '49843750'
+	  END
+	  ELSE IF @strUserType = 'C'
+	  BEGIN
+	    INSERT INTO @o_tbOutPutTable(Client_Code)
+	    SELECT DISTINCT cm_cd from client_master(nolock) where cm_cd = @strUserAccessValue  and cm_schedule = '49843750'
+	  END
+      FETCH NEXT FROM db_CursorClientList INTO @strUserType, @strUserAccessValue 
+    END        
+    CLOSE db_CursorClientList        
+    DEALLOCATE db_CursorClientList
+  END
+  ELSE
+  BEGIN
+    INSERT INTO @o_tbOutPutTable(Client_Code)
+	SELECT DISTINCT cm_cd from client_master(nolock) WHERE cm_schedule = 49843750
+  END
+
+   IF @i_vcSelectListTag = 'B'
+   BEGIN
+     DELETE FROM @o_tbOutPutTable 
+	 WHERE Client_Code NOT IN(SELECT DISTINCT cm_cd from client_master(nolock) where cm_brboffcode IN( SELECT VALUE FROM DBO.ReturnTable(@i_vcSelectListCode,',')))
+   END
+   ELSE IF @i_vcSelectListTag = 'F'
+   BEGIN
+     DELETE FROM @o_tbOutPutTable 
+	 WHERE Client_Code NOT IN(SELECT DISTINCT cm_cd from client_master(nolock) where cm_familycd IN( SELECT VALUE FROM DBO.ReturnTable(@i_vcSelectListCode,','))) 
+   END
+  ELSE IF @i_vcSelectListTag = 'C'
+  BEGIN
+    DELETE FROM @o_tbOutPutTable 
+	WHERE Client_Code NOT IN(SELECT VALUE FROM DBO.ReturnTable(@i_vcSelectListCode,',')) 
+  END
+  ELSE IF @i_vcSelectListTag = 'G'
+  BEGIN
+    DELETE FROM @o_tbOutPutTable 
+	WHERE Client_Code NOT IN(SELECT DISTINCT cm_cd from client_master(nolock) where cm_groupcd IN( SELECT VALUE FROM DBO.ReturnTable(@i_vcSelectListCode,','))) 
+  END
+
+  IF NOT EXISTS(SELECT 1 FROM @o_tbOutPutTable)
+  BEGIN
+    INSERT INTO @o_tbOutPutTable(Client_Code)
+	VALUES(@i_vcUserid)
+  END
+  RETURN
+END
+GO
+
+CREATE FUNCTION [dbo].[FN_base64toBinary](@bin NVARCHAR(MAX))
+RETURNS VARBINARY(MAX)
+AS
+BEGIN
+    DECLARE @Base64 VARBINARY(MAX)
+    SET @Base64 = CAST('' AS XML).value('xs:base64Binary(sql:variable("@bin"))', 'VARBINARY(MAX)')
+    RETURN @Base64
+END
+GO
+
+CREATE FUNCTION [dbo].[fn_GetEsignDocType] 
+(
+    @DocumentType NVARCHAR(100),
+    @Exchange NVARCHAR(100),
+    @IsTradeWeb NVARCHAR(1),       -- Assumes 'O' or other value
+    @CHGNCDEXCD NVARCHAR(1),       -- Assumes 'Y' or other value
+    @CommExch NVARCHAR(100)        -- Result from `GetCommExch` logic
+)
+RETURNS NVARCHAR(50)
+AS
+BEGIN
+    DECLARE @DocType NVARCHAR(50);
+
+    -- Primary conditions for Document Type
+    IF @DocumentType = 'Client Fund Ledger'
+        SET @DocType = 'CFL';
+    ELSE IF @DocumentType = 'Register Of Securities'
+        SET @DocType = 'ROS';
+    ELSE IF @DocumentType = 'Account Opening Letter'
+        SET @DocType = 'AOLET';
+    ELSE IF @DocumentType = 'Digital Ledger'
+        SET @DocType = 'LGR';
+    ELSE IF @DocumentType = 'Digital Security Ledger'
+        SET @DocType = 'SECLED';
+    ELSE IF @DocumentType = 'Digital Collateral Ledger'
+        SET @DocType = 'COLLED';
+    ELSE IF @DocumentType = 'Combine Contract'
+    BEGIN
+        IF @Exchange = 'MCX'
+            SET @DocType = 'CNOTE';
+        ELSE
+            SET @DocType = 'CNOTE' + @CommExch;
+
+        -- Trade Web and NCDEX-specific logic
+        IF @IsTradeWeb = 'O' AND @Exchange = 'NCDEX'
+        BEGIN
+            IF @CHGNCDEXCD = 'Y'
+                SET @DocType = 'CNOTEF';
+            ELSE
+                SET @DocType = 'CNOTEN';
+        END
+
+        IF @Exchange IN ('BSE/NSE Comm', 'BSE Comm', 'NSE Comm')
+            SET @DocType = 'XNOTE';
+    END
+    ELSE IF @DocumentType = 'Periodic Settlement'
+        SET @DocType = 'QTR';
+    ELSE IF @DocumentType = 'Combine Margin Statement'
+        SET @DocType = 'CMRG';
+
+    -- Exchange-specific logic
+    ELSE 
+    BEGIN
+        IF @Exchange = 'BSE Cash'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'CBSE';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MBC';
+            ELSE IF @DocumentType = 'STT'
+                SET @DocType = 'SCB';
+        END
+        ELSE IF @Exchange = 'NSE Cash'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'CNSE';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MNC';
+            ELSE IF @DocumentType = 'STT'
+                SET @DocType = 'SCN';
+        END
+        ELSE IF @Exchange = 'MCX Cash'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'CMCX';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MMC';
+        END
+        ELSE IF @Exchange = 'NSEDERV'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'FNSE';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MNF';
+            ELSE IF @DocumentType = 'STT'
+                SET @DocType = 'SFN';
+            ELSE IF @DocumentType = 'Bill'
+                SET @DocType = 'FNSEB';
+        END
+        ELSE IF @Exchange = 'BSEDERV'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'FBSE';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MBF';
+            ELSE IF @DocumentType = 'STT'
+                SET @DocType = 'SFB';
+            ELSE IF @DocumentType = 'Bill'
+                SET @DocType = 'FBSEB';
+        END
+        ELSE IF @Exchange = 'MCXDERV'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'FMCX';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MMF';
+            ELSE IF @DocumentType = 'Bill'
+                SET @DocType = 'FMCXB';
+        END
+        ELSE IF @Exchange = 'BSEFX'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'BSEFX';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MBFX';
+            ELSE IF @DocumentType = 'Bill'
+                SET @DocType = 'BSEFXB';
+        END
+        ELSE IF @Exchange = 'NSEFX'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'NSEFX';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MNFX';
+            ELSE IF @DocumentType = 'STT'
+                SET @DocType = 'SFN';
+            ELSE IF @DocumentType = 'Bill'
+                SET @DocType = 'NSEFXB';
+        END
+        ELSE IF @Exchange = 'MCXFX'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'MCXFX';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MMFX';
+            ELSE IF @DocumentType = 'STT'
+                SET @DocType = 'SFN';
+            ELSE IF @DocumentType = 'Bill'
+                SET @DocType = 'MCXFXB';
+        END
+        ELSE IF @Exchange = 'MCX'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'MCX';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MARMCX';
+        END
+        ELSE IF @Exchange = 'NCDEX'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'NCDEX';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MARNCX';
+        END
+        ELSE IF @Exchange = 'ICEX'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'MCX';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MARMCX';
+        END
+        ELSE IF @Exchange = 'NCME'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'MCX';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MARMCX';
+        END
+        ELSE IF @Exchange = 'NSEL'
+        BEGIN
+            IF @DocumentType = 'Contract'
+                SET @DocType = 'NSEL';
+            ELSE IF @DocumentType = 'Margin'
+                SET @DocType = 'MARNSEL';
+        END
+    END
+
+    RETURN @DocType;
+END;
+GO
+
+CREATE   FUNCTION [dbo].[fn_SplitString] (@input NVARCHAR(MAX), @delimiter CHAR(1))
+RETURNS @output TABLE (Position INT, Value NVARCHAR(MAX))
+AS
+BEGIN
+	DECLARE @start INT, @end INT, @position INT
+
+	SET @start = 1
+	SET @position = 1
+
+	WHILE @start <= LEN(@input)
+	BEGIN
+		SET @end = CHARINDEX(@delimiter, @input, @start)
+
+		IF @end = 0
+			SET @end = LEN(@input) + 1
+
+		INSERT INTO @output (Position, Value)
+		VALUES (@position, SUBSTRING(@input, @start, @end - @start))
+
+		SET @start = @end + 1
+		SET @position = @position + 1
+	END
+
+	RETURN
+END
+GO
+
+Create FUNCTION [dbo].[fnDecryptN](@strT VarChar(10))  RETURNS VarChar(10)  as  Begin       declare @strEKey varChar(500)       declare @strRtn varChar(500)       declare @ix numeric       set @strRtn = ''       set @strEKey = 'TPLUSBACKOFFICE'       set @ix = 1       While @ix <= LEN(@strT)           Begin              set @strRtn = @strRtn + Char(Ascii(substring(@strT, @ix, 1)) - Ascii(substring(@strEKey, (@ix % Len (@strEKey)) + 1, 1)) + 65)              set @ix = @ix +1            End           Return @strRtn  End 
+GO
+
+Create FUNCTION [dbo].[fnEncryptN](@strT VarChar(10))  RETURNS VarChar(10)  as  Begin       declare @strEKey varChar(500)       declare @strRtn varChar(500)       declare @ix numeric       set @strRtn = ''       set @strEKey = 'TPLUSBACKOFFICE'       set @ix = 1       While @ix <= LEN(@strT)           Begin              set @strRtn = @strRtn + Char(Ascii(substring(@strT, @ix, 1)) + Ascii(substring(@strEKey, (@ix % Len (@strEKey)) + 1, 1)) - 65)              set @ix = @ix +1            End           Return @strRtn  End 
+GO
+
+CREATE   function [dbo].[RemoveSpecialChars] (@s Nvarchar(MAX)) returns Nvarchar(MAX)
+   with schemabinding
+begin
+   if @s is null
+      return null
+   declare @s2 Nvarchar(MAX)
+   set @s2 = ''
+   declare @l int
+   set @l = len(@s)
+   declare @p int
+   set @p = 1
+   while @p <= @l begin
+      declare @c int
+      set @c = ascii(substring(@s, @p, 1))
+      if @c between 48 and 57 or @c between 65 and 90 or @c between 97 and 122 OR @c = 32
+         set @s2 = @s2 + char(@c)
+      set @p = @p + 1
+      end
+   if len(@s2) = 0
+      return null
+   return @s2
+   end
+GO
+
+CREATE OR ALTER FUNCTION dbo.fnBinaryToBase64(@bin VARBINARY(MAX))
+RETURNS NVARCHAR(MAX)
+AS
+BEGIN
+    DECLARE @Base64 NVARCHAR(MAX)
+    SET @Base64 = CAST(N'' AS XML).value('xs:base64Binary(xs:hexBinary(sql:variable("@bin")))','NVARCHAR(MAX)')
+    RETURN @Base64
+END
+GO
+
+CREATE OR ALTER PROCEDURE [dbo].[SP_ParameterXMLRep] (@vcXML XML, @o_vcParameterOutput VARCHAR(MAX) OUTPUT)
+WITH ENCRYPTION
+AS
+BEGIN
+	SET @o_vcParameterOutput = ''
+	DECLARE @jsonCutterOutput VARCHAR(MAX)='', @strDanSql NVARCHAR(MAX)=''
+	DECLARE @JsonCutterXML XML
+	DECLARE @J_Ui VARCHAR(MAX) = '', @strSql VARCHAR(MAX) = '', @X_Filter VARCHAR(max) = '', @X_GFilter VARCHAR(max) = '', @J_Api VARCHAR(
+			max) = '', @strString VARCHAR(MAX) = '', @X_Data VARCHAR(MAX) = '', @X_Filter_Multiple VARCHAR(MAX)=''
+	SELECT @J_Ui = ISNULL(x.value('(J_Ui)[1]', 'VARCHAR(MAX)'), ''), @strSql = ISNULL(x.value('(Sql)[1]', 'VARCHAR(MAX)'), ''), 
+		@X_Filter = cast(@vcXML.query('/dsXml/X_Filter') AS VARCHAR(max)), 
+		@X_GFilter = cast(@vcXML.query('/dsXml/X_GFilter') AS VARCHAR(max)), 
+		@J_Api = ISNULL(x.value('(J_Api)[1]', 'VARCHAR(MAX)'), ''), 
+		@X_Data = cast(@vcXML.query('/dsXml/X_Data') AS VARCHAR(max)),
+		@X_Filter_Multiple = cast(@vcXML.query('/dsXml/X_Filter_Multiple') AS VARCHAR(max))
+	FROM @vcXML.nodes('/dsXml') AS XTbl(x)
+	
+	DECLARE @strtradeplustempdb VARCHAR(50) = ''
+	SELECT @strtradeplustempdb = sp_sysvalue
+	FROM WebParameter(NOLOCK)
+	WHERE sp_parmcd = 'TRADEPLUSTEMPDB'
+	IF OBJECT_ID('tempdb..#tbl_jsonoutput') IS NOT NULL
+		DROP TABLE #tbl_jsonoutput
+	CREATE TABLE #tbl_jsonoutput (SerialNo INT, ColumnName VARCHAR(50), ColumnValue VARCHAR(MAX), MasterTag VARCHAR(100), JSONLEVEL INT, MASTERLEVEL INT
+		)
+	IF @J_Ui <> ''
+	BEGIN
+	    SET @J_Ui = '{' + @J_Ui + '}'
+		BEGIN TRY
+		    SET @strDanSql = 'EXEC '+@strtradeplustempdb+'.DBO.sp_JsonCutter'+' '''+@J_Ui+''' , @jsonCutterOutput OUTPUT';
+            EXEC sp_executesql @strDanSql, N'@jsonCutterOutput VARCHAR(MAX) OUTPUT', @jsonCutterOutput OUTPUT;
+            SET @JsonCutterXML= CAST(@jsonCutterOutput AS XML)
+            INSERT INTO #tbl_jsonoutput(SerialNo, ColumnName, ColumnValue, MasterTag, JsonLevel, MasterLevel)
+		    SELECT X1.* FROM(
+            SELECT JsonCutter.value('(SerialNo)[1]', 'int') AS SerialNo ,
+	        JsonCutter.value('(ColumnName)[1]', 'VARCHAR(1000)') AS ColumnName ,
+            JsonCutter.value('(ColumnValue)[1]', 'VARCHAR(max)') AS ColumnValue,
+		    JsonCutter.value('(MasterTag)[1]', 'VARCHAR(50)') AS MasterTag,
+	        JsonCutter.value('(JsonLevel)[1]', 'INT') AS JsonLevel,
+	        JsonCutter.value('(MasterLevel)[1]', 'INT') AS MasterLevel
+            FROM @JsonCutterXML.nodes('/JsonCutter') AS XTbl(JsonCutter)) X1
+		   
+		    /*
+			SET @strString = 'SELECT SerialNo, ColumnName, ColumnValue, MasterTag,JSONLEVEL, MASTERLEVEL FROM ' + 
+				@strtradeplustempdb + '.DBO.FN_JSONCUTTER(''' + @J_Ui + ''') '
+			INSERT INTO #tbl_jsonoutput (SerialNo, ColumnName, ColumnValue, MasterTag, JSONLEVEL, MASTERLEVEL)
+			EXEC (@strString)
+			*/
+		END TRY
+		BEGIN CATCH
+			PRINT '1'
+		END CATCH
+	END
+	IF @J_Api <> ''
+	BEGIN
+		SET @J_Api = '{' + @J_Api + '}'
+		BEGIN TRY
+			SET @strDanSql = 'EXEC '+@strtradeplustempdb+'.DBO.sp_JsonCutter'+' '''+@J_Api+''' , @jsonCutterOutput OUTPUT';
+            EXEC sp_executesql @strDanSql, N'@jsonCutterOutput VARCHAR(MAX) OUTPUT', @jsonCutterOutput OUTPUT;
+            SET @JsonCutterXML= CAST(@jsonCutterOutput AS XML)
+            INSERT INTO #tbl_jsonoutput(SerialNo, ColumnName, ColumnValue, MasterTag, JsonLevel, MasterLevel)
+		    SELECT X1.* FROM(
+            SELECT JsonCutter.value('(SerialNo)[1]', 'int') AS SerialNo ,
+	        JsonCutter.value('(ColumnName)[1]', 'VARCHAR(1000)') AS ColumnName ,
+            JsonCutter.value('(ColumnValue)[1]', 'VARCHAR(max)') AS ColumnValue,
+		    JsonCutter.value('(MasterTag)[1]', 'VARCHAR(50)') AS MasterTag,
+	        JsonCutter.value('(JsonLevel)[1]', 'INT') AS JsonLevel,
+	        JsonCutter.value('(MasterLevel)[1]', 'INT') AS MasterLevel
+            FROM @JsonCutterXML.nodes('/JsonCutter') AS XTbl(JsonCutter)) X1
+			/*SET @strString = 'SELECT SerialNo, ColumnName, ColumnValue, MasterTag,JSONLEVEL, MASTERLEVEL FROM ' + 
+				@strtradeplustempdb + '.DBO.FN_JSONCUTTER(''' + @J_Api + ''') '
+			INSERT INTO #tbl_jsonoutput (SerialNo, ColumnName, ColumnValue, MasterTag, JSONLEVEL, MASTERLEVEL)
+			EXEC (@strString)*/
+		END TRY
+		BEGIN CATCH
+			PRINT '1'
+		END CATCH
+	END
+	IF ISNULL(@X_Filter, '') <> ''
+	BEGIN
+		DECLARE @X_FilterXml XML
+		SET @X_FilterXml = CAST(@X_Filter AS XML);
+		INSERT INTO #tbl_jsonoutput (ColumnName, ColumnValue, MasterTag)
+		SELECT nodes.node.value('local-name(.)', 'NVARCHAR(50)') AS TagName, nodes.node.value('.', 'NVARCHAR(MAX)') AS TagValue, 
+			'X_Filter'
+		FROM @X_FilterXml.nodes('//*') AS nodes(node);
+	END
+	IF ISNULL(@X_GFilter, '') <> ''
+	BEGIN
+		DECLARE @X_GFilterXml XML
+		SET @X_GFilterXml = CAST(@X_GFilter AS XML);
+		INSERT INTO #tbl_jsonoutput (ColumnName, ColumnValue, MasterTag)
+		SELECT nodes.node.value('local-name(.)', 'NVARCHAR(50)') AS TagName, nodes.node.value('.', 'NVARCHAR(MAX)') AS TagValue, 
+			'X_GFilter'
+		FROM @X_GFilterXml.nodes('//*') AS nodes(node);
+	END
+	IF ISNULL(@X_Filter_Multiple, '') <> ''
+	BEGIN
+		DECLARE @X_Filter_MultipleXml XML
+		SET @X_Filter_MultipleXml = CAST(@X_Filter_Multiple AS XML);
+		INSERT INTO #tbl_jsonoutput (ColumnName, ColumnValue, MasterTag)
+		SELECT nodes.node.value('local-name(.)', 'NVARCHAR(50)') AS TagName, nodes.node.value('.', 'NVARCHAR(MAX)') AS TagValue, 
+			'X_Filter_Multiple'
+		FROM @X_Filter_MultipleXml.nodes('//*') AS nodes(node);
+	END
+	
+	IF ISNULL(@X_Data, '') <> ''
+	BEGIN
+		DECLARE @i_vcPayloadJson XML
+		SET @i_vcPayloadJson = CAST(@X_Data AS XML);
+		DECLARE @tbl_xmlCutter TABLE (SerialNo INT identity(1, 1), ColumnName VARCHAR(100), ColumnValue VARCHAR(MAX), MasterTag VARCHAR(50), JsonLevel INT
+			)
+		DECLARE @sql NVARCHAR(MAX), @XCOUNTER1 INT = 0, @OLDTAG VARCHAR(50) = '', @TagCounter INT = 0, @tabcount1 INT = 0
+		DECLARE @tabname VARCHAR(MAX) = ''
+		DECLARE db_CursorxmlTag CURSOR
+		FOR
+		SELECT TagName, count(*) AS counta
+		FROM (
+			SELECT c.value('local-name(.)', 'NVARCHAR(MAX)') AS TagName
+			FROM @i_vcPayloadJson.nodes('//*[(*)]') AS t(c)
+			) x1
+		WHERE TagName = 'item'
+		GROUP BY TagName
+		OPEN db_CursorxmlTag
+		FETCH NEXT
+		FROM db_CursorxmlTag
+		INTO @tabname, @tabcount1
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+			SET @TagCounter = 1
+			WHILE @TagCounter <= @tabcount1
+			BEGIN
+				SET @sql = 
+					'SELECT ''SecondLevelData'' as MasterTag,  
+          c.value(''local-name(.)'', ''NVARCHAR(MAX)'') AS ColumnName,
+          ISNULL(c.value(''(./text())[1]'', ''NVARCHAR(MAX)''),'''') AS ColumnValue, 
+		  JsonLevel = '''+ CAST(@TagCounter AS VARCHAR) + '''
+ FROM @i_vcPayloadJson.nodes(''/X_Data/items/item[' + CAST(
+						@TagCounter AS VARCHAR) + ']/*'') AS t(c) '
+				
+				INSERT INTO @tbl_xmlCutter (MasterTag, ColumnName, ColumnValue, JsonLevel)
+				EXEC sp_executesql @sql, N'@i_vcPayloadJson XML', @i_vcPayloadJson
+				SET @TagCounter = @TagCounter + 1
+			END
+			SET @OLDTAG = @tabname
+			FETCH NEXT
+			FROM db_CursorxmlTag
+			INTO @tabname, @tabcount1
+		END
+		CLOSE db_CursorxmlTag
+		DEALLOCATE db_CursorxmlTag
+		INSERT INTO @tbl_xmlCutter (MasterTag, ColumnName, ColumnValue, JsonLevel)
+		SELECT 'MasterLevelData' AS MasterTag, c.value('local-name(.)', 'NVARCHAR(MAX)') AS ColumnName, isnull(c.value('(./text())[1]', 
+				'NVARCHAR(MAX)'),'') AS ColumnValue, JsonLevel = '1'
+		FROM @i_vcPayloadJson.nodes('/X_Data/*') AS t(c)
+		INSERT INTO #tbl_jsonoutput (ColumnName, ColumnValue, MasterTag, JsonLevel)
+		SELECT ColumnName, ColumnValue, MasterTag, JsonLevel
+		FROM @tbl_xmlCutter
+	END
+	DECLARE @xmlOutput XML
+	SET @xmlOutput = (
+			SELECT ColumnName, ColumnValue = CASE WHEN ColumnName = 'UserId' THEN REPLACE(ISNULL(ColumnValue,''),'|','') ELSE ISNULL(ColumnValue,'') END, MasterTag, JsonLevel
+			FROM #tbl_jsonoutput
+			FOR XML PATH('Parameter')
+			)
+	SET @o_vcParameterOutput = CAST(@xmlOutput AS VARCHAR(MAX))
+	DROP TABLE #tbl_jsonoutput
+	RETURN
+END
+GO
+
+CREATE PROCEDURE [dbo].[sp_ChangePassword] @dsXml AS XML 
+WITH ENCRYPTION
+AS
+BEGIN
+   DECLARE @tbl_Variable dbo.tb_ParamList;  
+   DECLARE @o_ParameterList varchar(max)='', @o_ParameterListxml XML;  
+   DECLARE @tb_ParamListDetail DBO.tb_ParamList ;      
+   --- PARAMETER LIST  
+   EXEC SP_ParameterXMLRep @dsXml, @o_ParameterList output 
+
+   IF ISNULL(@o_ParameterList,'') <> ''  
+   BEGIN  
+     SET @o_ParameterListxml = CAST(@o_ParameterList AS XML)  
+     
+     INSERT INTO @tb_ParamListDetail(ParameterName,  ParameterValue, HeaderName)   
+     SELECT Parameter.value('(ColumnName)[1]', 'VARCHAR(MAX)') AS Client_Code ,  
+		 Parameter.value('(ColumnValue)[1]', 'VARCHAR(MAX)') AS ColumnValue,  
+		 Parameter.value('(MasterTag)[1]', 'VARCHAR(MAX)') AS MasterTag  
+     FROM @o_ParameterListxml.nodes('/Parameter') AS XTbl(Parameter)  
+   END  
+   DECLARE @StrOption VARCHAR(50)='', @RequestFrom VARCHAR(1)='W'
+   SELECT @StrOption = ParameterValue  From @tb_ParamListDetail  WHERE ParameterName = 'Option' 
+   
+   DECLARE @ClientCode Varchar(20)='', @OldPassword NVARCHAR(50) = ''  , @NewPassword NVARCHAR(50)='',
+   @otp VARCHAR(10)='', @otp_D VARCHAR(10)='', @otp_Expiry VARCHAR(25)
+     
+   SELECT @ClientCode = ParameterValue  From @tb_ParamListDetail  WHERE ParameterName = 'ClientCode' 
+   SELECT @OldPassword = ParameterValue  From @tb_ParamListDetail  WHERE ParameterName = 'OldPassword'
+   SELECT @NewPassword = ParameterValue  From @tb_ParamListDetail  WHERE ParameterName = 'NewPassword' 
+   SELECT @otp = ParameterValue  From @tb_ParamListDetail  WHERE ParameterName = 'otp' 
+   SELECT @RequestFrom = ParameterValue  From @tb_ParamListDetail  WHERE ParameterName = 'RequestFrom' 
+   
+   IF ISNULL(@RequestFrom,'') =''
+   BEGIN
+    SET @RequestFrom  = ''
+   END	
+   
+   IF @StrOption = 'ChangePassword'
+   BEGIN
+     IF ISNULL(@otp,'') = ''
+	 BEGIN
+       IF EXISTS(SELECT * FROM Client_master WITH(NOLOCK) Where cm_cd = @ClientCode And cm_pwd = DBO.fn_EncryptStringTW(@OldPassword))
+	   BEGIN
+	     UPDATE Client_master Set cm_pwd = DBO.fn_EncryptStringTW(@NewPassword)  
+	     WHERE cm_cd = @ClientCode And cm_pwd = DBO.fn_EncryptStringTW(@OldPassword)
+	     SELECT  '{"Flag":"S","Message":"Password changed successfully!"}'
+	     RETURN 1
+	   END
+       ELSE
+	   BEGIN
+	     Select '{"Flag":"F","Message":"Old password not matched."}'
+	     Return 1
+       END
+	 END   
+	 ELSE IF ISNULL(@otp,'') <> ''
+	 BEGIN
+	   SELECT @otp_D = OTP_OTP, @otp_Expiry = CAST(CAST(OTP_ValidTillDate AS DATE) AS VARCHAR)+' '+OTP_ValidTillTime 
+	   FROM OTP_Master(NOLOCK) WHERE OTP_ClientCode = @ClientCode
+	   AND OTP_SentDate = CONVERT(VARCHAR,GETDATE(),112) AND OTP_Status = 'P' AND OTP_Product = (CASE WHEN @RequestFrom = 'W' THEN  'tradeweb' ELSE 
+       'TradeMobile' END)	   
+	   AND OTP_Identity in(select max(OTP_Identity) from OTP_Master(NOLOCK) WHERE OTP_ClientCode = @ClientCode
+	   AND OTP_SentDate = CONVERT(VARCHAR,GETDATE(),112) and OTP_Product =(CASE WHEN @RequestFrom = 'W' THEN  'tradeweb' ELSE 
+       'TradeMobile' END) and OTP_Item = 'MO')
+	   and OTP_Item = 'MO'
+
+	   IF GETDATE() > CAST(@otp_Expiry AS datetime)
+	   BEGIN
+	     SELECT '{"Flag":"F","Message":"OTP is Expire"}'
+	     RETURN 1
+	   END
+	   IF ISNULL(@otp,'') <> isnull(@otp_D,'')
+	   BEGIN
+	     SELECT '{"Flag":"F","Message":"Wrong OTP"}'
+	     RETURN 1
+	   END
+	   ELSE
+	   BEGIN
+	     UPDATE Client_master Set cm_pwd = @NewPassword
+	     WHERE cm_cd = @ClientCode 
+		 
+		 UPDATE OTP_Master SET OTP_Status = 'E' 
+		 WHERE OTP_ClientCode = @ClientCode
+	     AND OTP_SentDate = CONVERT(VARCHAR,GETDATE(),112) AND OTP_Status = 'P' AND OTP_Product =(CASE WHEN @RequestFrom = 'W' THEN  'tradeweb' ELSE 
+        'TradeMobile' END)
+	     AND OTP_Identity IN(SELECT MAX(OTP_Identity) from OTP_Master(NOLOCK) WHERE OTP_ClientCode = @ClientCode
+	     AND OTP_SentDate = CONVERT(VARCHAR,GETDATE(),112) and OTP_Product =(CASE WHEN @RequestFrom = 'W' THEN  'tradeweb' ELSE 
+        'TradeMobile' END)  and OTP_Item = 'MO')
+		 AND OTP_Item = 'MO'
+
+	     SELECT  '{"Flag":"S","Message":"Password changed successfully!"}'
+	     RETURN 1
+	   END
+	 END
+   END
+END   
+GO
+
+CREATE OR ALTER PROCEDURE [dbo].[SP_InitializeLogin] @dsXml AS XML
+WITH ENCRYPTION
+AS
+BEGIN
+  DECLARE @DPID VARCHAR(500) = ''
+  DECLARE @CompanyName VARCHAR(50) = '', @strBase64 NVARCHAR(MAX)=''
+			
+  SELECT @DPID = em_cd, @CompanyName = em_name from Entity_Master with (nolock) where em_cd =(select min(em_cd) from Entity_master) 			
+  DECLARE @PasswordMaxLength INT = (SELECT MIN(MAX_LENGTH) FROM SYS.COLUMNS WHERE NAME LIKE 'CM_PWD')
+
+
+  SELECT   @strBase64 = 
+   (SELECT CAST(img_logo AS VARBINARY(MAX)) 
+    FOR XML PATH(''), BINARY BASE64) 
+  FROM Images(NOLOCK) 
+  WHERE img_desc = 'Company Logo'
+
+  SELECT @DPID AS CompanyCode, @CompanyName AS CompanyName, @PasswordMaxLength AS PasswordMaxLength, CompanyLogo = @strBase64, @DPID AS DPID
+END
+GO
+
+CREATE OR ALTER PROCEDURE stpr_GenerateMobileGrid @i_xmldata VARCHAR(MAX), @strtag VARCHAR(50), 
+@strReportCode VARCHAR(50), @strReportCategroy VARCHAR(50), @strRequestFrom VARCHAR(1) WITH ENCRYPTION  AS
+BEGIN
+  DECLARE @DynamicColumns NVARCHAR(MAX);
+  DECLARE @strXMLString VARCHAR(MAX) = @i_xmldata
+  
+  SET @strXMLString = REPLACE(@strXMLString, '<' + @strtag + '>', '<XMLDATA1>');
+  SET @strXMLString = REPLACE(@strXMLString, '</' + @strtag + '>', '</XMLDATA1>');
+  SET @strXMLString = '<root>' + @strXMLString + '</root>';
+  SET @DynamicColumns = '';
+
+  DECLARE @text1 VARCHAR(MAX)='';
+  
+  DECLARE @tbl_String TABLE(TextValue VARCHAR(MAX))
+  DECLARE @InputString NVARCHAR(MAX) 
+  
+  DECLARE @tbl_StringMain TABLE (SerialNo INT IDENTITY(1,1),
+  TextValue VARCHAR(MAX), Heading VARCHAR(100))	 
+  
+  /*
+  INSERT INTO @tbl_StringMain (TextValue, Heading)
+  SELECT Filler2, ColumnHeading
+  FROM tbl_ReportGridViewFormat  WITH (NOLOCK) 
+  WHERE  ReportCode  =  @strReportCode
+    AND ReportCategroy = @strReportCategroy
+    AND (ProductID = @strRequestFrom OR ProductID  = '')
+	AND PRODUCTCODE = '' 
+	AND ISNULL(ColumnName,'') = '' and ISNULL(Filler2,'') <> ''  AND ColumnVisible = 0
+    ORDER BY Orderby
+
+  DECLARE @iSerialNo INT, @strTextValue VARCHAR(MAX)='', @strHeading VARCHAR(MAX)=''
+  DECLARE Cur0 CURSOR FOR 
+  SELECT * from @tbl_StringMain
+  OPEN Cur0
+  FETCH NEXT FROM Cur0 INTO @iSerialNo, @strTextValue, @strHeading
+  WHILE @@FETCH_STATUS = 0
+  BEGIN
+  	DELETE FROM @tbl_String
+    SET @InputString =  @strTextValue;
+
+    WITH Extracted AS (
+    SELECT
+        ValueStart = CHARINDEX('<<', @InputString),
+        ValueEnd = CHARINDEX('>>', @InputString)
+    UNION ALL
+    SELECT
+        CHARINDEX('<<', @InputString, ValueEnd + 2),
+        CHARINDEX('>>', @InputString, ValueEnd + 2)
+    FROM Extracted
+    WHERE CHARINDEX('<<', @InputString, ValueEnd + 2) > 0)
+  
+    INSERT INTO @tbl_String
+    SELECT ExtractedValue = SUBSTRING(@InputString,ValueStart + 2,ValueEnd - ValueStart - 2)
+    FROM Extracted
+    WHERE ValueStart > 0 AND ValueEnd > 0;
+
+    
+    DECLARE Cur1 CURSOR FOR 
+    SELECT TextValue from @tbl_String
+    OPEN Cur1 
+    FETCH NEXT FROM Cur1 INTO @text1
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+      SET @InputString = REPLACE(@InputString,'<<'+@text1+'>>','X1.value(''('+@text1+')[1]'', ''NVARCHAR(MAX)'') ')
+      FETCH NEXT FROM Cur1 INTO @text1
+    END 
+   CLOSE Cur1 
+   DEALLOCATE Cur1 
+
+   UPDATE A SET A.TextValue = @InputString
+   FROM @tbl_StringMain A
+   WHERE SERIALNO = @iSerialNo
+
+   FETCH NEXT FROM Cur0 INTO @iSerialNo, @strTextValue, @strHeading
+  END 
+  CLOSE Cur0
+  DEALLOCATE Cur0
+  */
+  DECLARE @xmlData XML = CAST(@strXMLString AS XML);
+
+  WITH DistinctNodes AS (
+   SELECT DISTINCT
+        NodeName = X.n.value('local-name(.)', 'NVARCHAR(100)')
+    FROM 
+        @xmlData.nodes('/root/XMLDATA1/*') AS X(n))
+
+  SELECT 
+    @DynamicColumns = @DynamicColumns+','+
+        'LTRIM(RTRIM(X1.value(''(' + XX.NodeName + ')[1]'', ''NVARCHAR(MAX)''))) AS [' + XX1.ColumnHeading + ']'
+    
+  FROM DistinctNodes XX JOIN 
+    tbl_ReportGridViewFormat XX1 WITH (NOLOCK) 
+    ON XX.NodeName = XX1.ColumnName
+  WHERE 
+    XX1.ReportCode = @strReportCode
+    AND XX1.ReportCategroy = @strReportCategroy
+   -- AND (XX1.ProductID = @strRequestFrom OR XX1.ProductID  = '')
+	AND XX1.PRODUCTCODE = '' AND ColumnName <> '' AND ColumnVisible = 0
+	ORDER BY ORDERBY
+
+  SELECT @DynamicColumns = @DynamicColumns+','+TextValue+' AS [' + Heading + ']'
+  FROM @tbl_StringMain
+  ORDER BY SerialNo
+
+
+  SELECT @DynamicColumns = SUBSTRING(@DynamicColumns,2,LEN(@DynamicColumns)-1)
+
+  IF @DynamicColumns IS NULL
+  BEGIN
+     PRINT 'No matching columns found.';
+     RETURN;
+  END;
+
+  DECLARE @sql NVARCHAR(MAX);
+  SET @sql = '
+  SELECT ' + @DynamicColumns + '
+  FROM @xmlData.nodes(''/root/XMLDATA1'') AS T(X1)';
+  --SELECT @sql
+  EXEC sp_executesql @sql, N'@xmlData XML', @xmlData;
+  
+END
+GO
+
+CREATE OR ALTER PROCEDURE stpr_Rpt_LedgerNew @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, @o_vcErrorMessage VARCHAR(MAX) OUTPUT 
+WITH ENCRYPTION
+AS
+BEGIN
+ /*
+ ///////////////////////////////////////////////////////////////////////////////////////////
+ // Create By     : VAIBHAV GARG
+ // Created Date  : 20-NOV-2023
+ // Description   : "AccountType":IF VALUE = 'EM'  THEN INCLUDE MARGIN 
+ //                                 VALUE = 'MTF' THEN INCLUDE MTF
+ //                                 VALUE = 'CX' THEN INCLUDE COMM TRARING
+ //                                 VALUE = 'CM' THEN INCLUDE COMM MARGIN A/C
+ // Reviewed By   : 
+ // Review Date   : 
+ //////////////////////////////////////////////////////////////////////////////////////////
+*/
+ --- Parameter Declaration
+  DECLARE @dtFromDate VARCHAR(8), @dtToDt VARCHAR(8), @strUserId VARCHAR(500) = '', @strExchSeg VARCHAR(100),
+  @XMLData XML, @strAccountType VARCHAR(500)='', @strTable VARCHAR(50)='', @strsql VARCHAR(MAX) = '',
+  @blnTplusCommex BIT, @StrCommexConn VARCHAR(MAX) = '', @strCommTable VARCHAR(100)='', @strCommClientMaster VARCHAR(100)='',
+  @strCommCompanyExchange VARCHAR(100)='', @strsql1 VARCHAR(500)='', @strsqlstart VARCHAR(MAX)='', @strsqlLast VARCHAR(500)='',
+  @strsqlHeader VARCHAR(MAX)='', @strSqlMain VARCHAR(MAX)='', @strSqlExecute VARCHAR(MAX)='', @strOutputType VARCHAR(1), 
+  @strProduct VARCHAR(50)='', @strSelectTag VARCHAR(1)='', @strSelectUsers VARCHAR(500)='', @strSplFilter VARCHAR(MAX)='',
+  @strCompanyCode VARCHAR(1)='A', @strRequestFrom VARCHAR(1)='W'
+  
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+
+  SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+  
+  SELECT @dtFromDate = ISNULL(x.value('(FromDt)[1]', 'VARCHAR(8)'),''),
+  @strProduct = ISNULL(x.value('(Product)[1]', 'VARCHAR(50)'),''),
+  @dtToDt = ISNULL(x.value('(ToDt)[1]', 'VARCHAR(8)'),''),
+  @strUserId  = ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+  @strExchSeg = ISNULL(x.value('(ExchSeg)[1]', 'VARCHAR(500)'),''),
+  @strAccountType = ISNULL(x.value('(AccountType)[1]', 'VARCHAR(500)'),''),
+  @strSelectTag = ISNULL(x.value('(SelectTag)[1]', 'VARCHAR(1)'),''),
+  @strSelectUsers = ISNULL(x.value('(SelectUsers)[1]', 'VARCHAR(500)'),''),
+  @strOutputType = ISNULL(x.value('(OutputType)[1]', 'VARCHAR(1)'),''),
+  @strSplFilter = ISNULL(x.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''),
+  @strCompanyCode  = ISNULL(x.value('(CompanyCode)[1]', 'VARCHAR(1)'),''),
+  @strRequestFrom  = ISNULL(x.value('(RequestFrom)[1]', 'VARCHAR(1)'),'')
+  FROM @XMLData.nodes('/root') AS XTbl(x) 
+  
+  IF ISNULL(@strRequestFrom,'') = ''
+  BEGIN
+    SET @strRequestFrom = 'W'
+  END
+  
+  IF ISNULL(@strCompanyCode,'') = ''
+  BEGIN
+    SET @strCompanyCode = 'A'
+  END
+ 
+
+  
+  DECLARE @tbl_ReportOptions TABLE(ReportType VARCHAR(50))
+  
+  INSERT INTO @tbl_ReportOptions (ReportType)
+  SELECT VALUE FROM ReturnTable(@strAccountType,',')
+  
+  SET @strTable = ' Ledger '
+  --SET @blnTplusCommex = dbo.mfnGetSysSplFeatureCommodity('TCM');
+  SET @blnTplusCommex = 1
+  IF @blnTplusCommex = 1
+  BEGIN
+    SELECT @StrCommexConn = LTRIM(RTRIM(OP_DataBase)) 
+	FROM Other_Products(NOLOCK) WHERE OP_Product = 'Commex' and RTRIM(LTRIM(op_status)) = 'A'
+	
+    IF @StrCommexConn IS NOT NULL AND @StrCommexConn <> ''
+    BEGIN
+      SET @strCommTable = @StrCommexConn + '.DBO.ledger';
+      SET @strCommClientMaster = @StrCommexConn + '.DBO.Client_master';
+      SET @strCommCompanyExchange = @StrCommexConn + '.DBO.CompanyExchangeSegments';
+    END
+  END
+  ELSE
+  BEGIN
+    SET @strCommTable = 'ledger';
+    SET @strCommClientMaster = 'Client_master';
+    SET @strCommCompanyExchange = 'CompanyExchangeSegments';
+  END  
+  
+  DECLARE @tbl_LenderReort TABLE(SERIALNO INT IDENTITY(1,1), ClientCode varchar(16), Date varchar(10), ExchSeg varchar(100), 
+  Voucher varchar(50), Particular nvarchar(500), Debitflag varchar(20), Chequeno varchar(50), 
+  DebitAmount MONEY, CreditAmount MONEY, Balance MONEY, BalanceTag VARCHAR(2), Documenttype varchar(100), Common varchar(100),
+  Ldate varchar(15), CESCD varchar(100), LookUp varchar(max))
+  
+  DECLARE @tbl_LedgerDetail table(tag INT,
+  ld_clientcd VARCHAR(50),ld_dt VARCHAR(15),ExchSeg VARCHAR(50), Voucher VARCHAR(100),
+  ld_amount MONEY,ld_particular VARCHAR(500),ld_debitflag VARCHAR(10), ld_chequeno VARCHAR(50),
+  ld_documenttype VARCHAR(100),ld_common VARCHAR(100),Ldate VARCHAR(15),ld_dpid VARCHAR(100),LookUp VARCHAR(MAX), ld_accyear VARCHAR(50), ld_documentno VARCHAR(50))
+  
+  SET @strsqlstart = ' DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) 
+                  SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+  IF @strProduct = 'Trading'
+  BEGIN  
+    SET @strsql = @strsql +' SELECT 1 as tag, A.Client_Code AS ld_clientcd,    '''+@dtFromDate+''' AS ld_dt,
+                  '''' AS [ExchSeg], '''' AS ''Voucher'',
+                  CAST(SUM(CASE SIGN(DATEDIFF(DAY, '''+@dtFromDate+''', ld_dt)) WHEN -1 THEN ld_amount ELSE 0 END) AS DECIMAL(15, 2)) AS ld_amount,
+                  ''Opening Balance'' AS ld_particular,
+                  CASE SIGN(SUM(ld_amount)) WHEN 1 THEN ''D'' ELSE ''C'' END AS ld_debitflag,
+                  '''' AS ld_chequeno, ''O'' AS ld_documenttype, '''' AS ld_common, '''+@dtFromDate+''' AS Ldate, 
+                  '''' AS ld_dpid, '''' AS LookUp, '''' as ld_accyear, '''' as ld_documentno
+                  FROM @tbl_UserList A, @@##client_master@@## (NOLOCK), @@##Ledger@@## (NOLOCK) LEFT OUTER JOIN @@##Companyexchangesegments@@## (NOLOCK) ON (LD_DPID = CES_Cd) @@##MTF##@@  
+				  WHERE A.Client_Code = cm_cd AND SUBSTRING(LD_DPID,1,1) = '''+@strCompanyCode+''' ##@@Condition@@## '
+	IF @strSplFilter <> ''
+    BEGIN
+	  SET @strsql =   @strsql+' AND '+@strSplFilter
+    END	
+    SET @strsql =   @strsql+' AND ld_dt < '''+@dtFromDate+''' '
+    IF ISNULL(@strExchSeg,'') <> ''
+    BEGIN
+      SET @strsql =   @strsql+' AND ld_dpid IN(SELECT VALUE FROM ReturnTable('''+@strExchSeg+''', '','')) '
+    END
+	
+	--HAVING SUM(ld_amount) <> 0
+	
+    SET @strsql =   @strsql+' GROUP BY Client_Code
+                 UNION ALL 
+                 SELECT 2 as tag, A.Client_Code AS ld_clientcd, ld_dt,
+                 RTRIM(CES_Exchange) + ''-'' + CES_Segment AS [ExchSeg], ld_documenttype + ''/'' + ld_documentno AS ''Voucher'',
+                 CAST(ld_amount AS DECIMAL(15, 2))  AS ld_amount, ld_particular, ld_debitflag, ld_chequeno,  ld_documenttype,  ld_common, ld_dt as Ldate, 
+                 ld_dpid, CASE WHEN ld_documentType = ''B'' THEN SUBSTRING(LD_DPID, 2, 1) + ''/'' + SUBSTRING(LD_DPID, 3, 1) + ''/'' 
+				 + ld_common + ''/'' + ld_commondt ELSE '''' END AS LookUp, ld_accyear, ld_documentno
+                 FROM @tbl_UserList A,  @@##client_master@@##(NOLOCK) CM1, @@##Ledger@@## (NOLOCK) LEFT OUTER JOIN @@##Companyexchangesegments@@## (NOLOCK) ON (LD_DPID = CES_Cd) @@##MTF##@@ 
+                 WHERE A.Client_Code = cm_cd AND SUBSTRING(LD_DPID,1,1) = '''+@strCompanyCode+'''  ##@@Condition@@## '
+    IF @strSplFilter <> ''
+    BEGIN
+	  SET @strsql =   @strsql+' AND '+@strSplFilter
+    END	
+	
+    SET @strsql =   @strsql+' AND ld_dt >= '''+@dtFromDate+''' AND ld_dt <= '''+@dtToDt+''''
+    IF ISNULL(@strExchSeg,'') <> ''
+    BEGIN
+      SET @strsql =   @strsql+' AND ld_dpid IN(SELECT VALUE FROM ReturnTable('''+@strExchSeg+''', '','')) '
+    END
+  
+    SET @strSqlExecute = @strsql
+    SET @strSqlExecute = replace(@strSqlExecute,'##@@Condition@@##',' AND ld_clientcd = cm_cd  ')
+    SET @strSqlExecute = replace(@strSqlExecute,'@@##MTF##@@',' ')
+    SET @strSqlExecute = replace(@strSqlExecute,'@@##client_master@@##',' Client_Master ')
+    SET @strSqlExecute = replace(@strSqlExecute,'@@##Ledger@@##',' Ledger ')
+    SET @strSqlExecute = replace(@strSqlExecute,'@@##Companyexchangesegments@@##',' Companyexchangesegments ')
+   
+    BEGIN TRY
+	  INSERT INTO @tbl_LedgerDetail( tag,ld_clientcd,ld_dt,ExchSeg,Voucher,ld_amount,ld_particular,ld_debitflag,ld_chequeno,ld_documenttype,
+	  ld_common,Ldate,ld_dpid,LookUp,ld_accyear, ld_documentno)
+	  EXEC(@strsqlstart+' '+@strSqlExecute)
+    END TRY
+    BEGIN CATCH
+	  SET @o_vcErrorFlag = 'E'
+	  SET @o_vcErrorMessage = ERROR_MESSAGE()
+	  RETURN 1
+    END CATCH
+  
+    IF EXISTS(SELECT 1 FROM @tbl_ReportOptions WHERE ReportType = 'EM')
+    BEGIN
+      SET @strSqlExecute = @strsql
+      SET @strSqlExecute = replace(@strSqlExecute,'##@@Condition@@##',' AND ld_clientcd = cm_brkggroup  ') 
+	  SET @strSqlExecute = replace(@strSqlExecute,'@@##MTF##@@',' ')
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##client_master@@##',' Client_Master ')
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##Ledger@@##',' Ledger ')
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##Companyexchangesegments@@##',' Companyexchangesegments ')
+
+	  BEGIN TRY
+        INSERT INTO @tbl_LedgerDetail( tag,ld_clientcd,ld_dt,ExchSeg,Voucher,ld_amount,ld_particular,ld_debitflag,ld_chequeno,
+	    ld_documenttype,ld_common,Ldate,ld_dpid,LookUp,ld_accyear, ld_documentno)
+	    EXEC(@strsqlstart+' '+@strSqlExecute)
+	  END TRY
+      BEGIN CATCH
+	    SET @o_vcErrorFlag = 'E'
+	    SET @o_vcErrorMessage = ERROR_MESSAGE()
+	    RETURN 1
+      END CATCH  
+    END
+  
+    IF EXISTS(SELECT 1 FROM @tbl_ReportOptions WHERE ReportType = 'MTF')
+	AND EXISTS(SELECT 1 FROM SYS.TABLES WHERE NAME= 'MrgTdgFin_Clients')
+    BEGIN
+      set @strSqlExecute = @strsql
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##MTF##@@',' , MrgTdgFin_Clients(NOLOCK) ')
+      SET @strSqlExecute = replace(@strSqlExecute,'##@@Condition@@##',' AND ld_clientcd = MTFC_FillerB AND MTFC_CMCD = CM_CD AND MTFC_FillerB <> '''' ' ) 
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##client_master@@##',' Client_Master ')
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##Ledger@@##',' Ledger ')
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##Companyexchangesegments@@##',' Companyexchangesegments ')
+   
+	  BEGIN TRY
+        INSERT INTO @tbl_LedgerDetail( tag,ld_clientcd,ld_dt,ExchSeg,Voucher,ld_amount,ld_particular,ld_debitflag,ld_chequeno,
+	    ld_documenttype,ld_common,Ldate,ld_dpid,LookUp,ld_accyear, ld_documentno)
+	    EXEC(@strsqlstart+' '+@strSqlExecute)
+	  END TRY
+      BEGIN CATCH
+	    SET @o_vcErrorFlag = 'E'
+	    SET @o_vcErrorMessage = ERROR_MESSAGE()
+	    RETURN 1
+      END CATCH  
+    END
+
+
+    IF EXISTS(SELECT 1 FROM @tbl_ReportOptions WHERE ReportType = 'CX') AND @StrCommexConn <> ''
+    BEGIN
+      set @strSqlExecute = @strsql
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##MTF##@@',' ')
+      SET @strSqlExecute = replace(@strSqlExecute,'##@@Condition@@##',' AND ld_clientcd = cm_cd ' ) 
+    
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##client_master@@##',@strCommClientMaster)
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##Ledger@@##',@strCommTable)
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##Companyexchangesegments@@##',@strCommCompanyExchange)
+    
+	  BEGIN TRY
+        INSERT INTO @tbl_LedgerDetail( tag,ld_clientcd,ld_dt,ExchSeg,Voucher,ld_amount,ld_particular,ld_debitflag,ld_chequeno,
+	    ld_documenttype,ld_common,Ldate,ld_dpid,LookUp,ld_accyear, ld_documentno)
+	    EXEC(@strsqlstart+' '+@strSqlExecute)
+	  END TRY
+      BEGIN CATCH
+	    SET @o_vcErrorFlag = 'E'
+	    SET @o_vcErrorMessage = ERROR_MESSAGE()
+	    RETURN 1
+      END CATCH  
+    END
+  
+    IF EXISTS(SELECT 1 FROM @tbl_ReportOptions WHERE ReportType = 'CM') AND @StrCommexConn <> ''
+    BEGIN
+      set @strSqlExecute = @strsql
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##MTF##@@',' ')
+      SET @strSqlExecute = replace(@strSqlExecute,'##@@Condition@@##',' AND ld_clientcd = cm_brkggroup ' ) 
+    
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##client_master@@##',@strCommClientMaster)
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##Ledger@@##',@strCommTable)
+      SET @strSqlExecute = replace(@strSqlExecute,'@@##Companyexchangesegments@@##',@strCommCompanyExchange)
+   
+	  BEGIN TRY
+        INSERT INTO @tbl_LedgerDetail( tag,ld_clientcd,ld_dt, ExchSeg, Voucher, ld_amount,ld_particular,ld_debitflag,ld_chequeno,
+	   ld_documenttype,ld_common,Ldate,ld_dpid,LookUp,ld_accyear, ld_documentno)
+	    EXEC(@strsqlstart+' '+@strSqlExecute)
+	  END TRY
+      BEGIN CATCH
+	    SET @o_vcErrorFlag = 'E'
+	    SET @o_vcErrorMessage = ERROR_MESSAGE()
+	    RETURN 1
+      END CATCH  
+    END
+  END
+  ELSE IF @strProduct = 'DP'
+  BEGIN
+  
+   DECLARE @strCrossCon VARCHAR(50)='', @strEstroCon VARCHAR(50)='', @strDefaultConn VARCHAR(50)='', @strCrossServer VARCHAR(50), @strEstroServer VARCHAR(50),
+   @strDefaultServer VARCHAR(50)=''
+   SELECT @strCrossCon = RTRIM(LTRIM(OP_DataBase)), @strCrossServer = RTRIM(LTRIM(OP_Server))  FROM Other_Products where OP_Product = 'Cross' and RTRIM(LTRIM(op_status)) = 'A'
+   SELECT @strEstroCon = RTRIM(LTRIM(OP_DataBase)), @strEstroServer = RTRIM(LTRIM(OP_Server))  FROM Other_Products where OP_Product = 'Estro' and RTRIM(LTRIM(op_status)) = 'A'
+   IF @strCrossCon = ''
+   BEGIN
+     SET @strDefaultConn = @strEstroCon
+	 SET @strDefaultServer = @strEstroServer
+   END
+   ELSE
+   BEGIN
+     SET @strDefaultConn = @strCrossCon
+	 SET @strDefaultServer = @strCrossServer
+   END
+   
+   SET @strsql = @strsql +' UPDATE A SET A.DPClientCode = B.da_actno FROM @tbl_UserList A, Dematact B WHERE A.Client_Code = B.da_clientcd AND da_defaultyn=''Y'' '
+   SET @strsql = @strsql +' UPDATE A SET A.DPClientCode = A.Client_code FROM @tbl_UserList A WHERE  ISNULL(DPClientCode,'''') = '''''
+   SET @strsql = @strsql +' SELECT 1 as tag, A.DPClientCode AS ld_clientcd,    CONVERT(VARCHAR,'''+@dtFromDate+''',112) AS ld_dt,
+                  '''' AS [ExchSeg], '''' AS ''Voucher'',
+                  CAST(SUM(CASE SIGN(DATEDIFF(DAY, '''+@dtFromDate+''', CAST(CONVERT(VARCHAR,ld_dt,112) AS DATE))) WHEN -1 THEN ld_amount ELSE 0 END) AS DECIMAL(15, 2)) AS ld_amount,
+                  ''Opening Balance'' AS ld_particular,
+                  CASE SIGN(SUM(ld_amount)) WHEN 1 THEN ''D'' ELSE ''C'' END AS ld_debitflag,
+                  '''' AS ld_chequeno, ''O'' AS ld_documenttype, '''' AS ld_common,  CONVERT(VARCHAR,'''+@dtFromDate+''',112) AS Ldate, 
+                  '''' AS ld_dpid, '''' AS LookUp, '''' as ld_accyear, '''' as ld_documentno
+                  FROM @tbl_UserList A, @@##client_master@@## (NOLOCK), @@##Ledger@@## (NOLOCK)
+				  WHERE A.DPClientCode = cm_cd AND cm_cd = ld_clientcd '
+  
+    SET @strsql =   @strsql+' AND CAST(CONVERT(VARCHAR,ld_dt,112) AS DATE) < '''+@dtFromDate+''' '
+    
+    SET @strsql =   @strsql+' GROUP BY DPClientCode
+                 HAVING SUM(ld_amount) <> 0
+                 UNION ALL 
+                 SELECT 2 as tag, A.DPClientCode AS ld_clientcd, ld_dt = CAST(CONVERT(VARCHAR,ld_dt,112) AS DATE),
+                 '''' AS [ExchSeg], ld_documenttype + ''/'' + ld_documentno AS ''Voucher'',
+                 CAST(ld_amount AS DECIMAL(15, 2))  AS ld_amount, ld_particular, ld_debitflag, ld_chequeno,  ld_documenttype,  ld_common, CAST(CONVERT(VARCHAR,ld_dt,112) AS DATE) as Ldate, 
+                 ld_dpid, CASE WHEN ld_documentType = ''B'' THEN SUBSTRING(LD_DPID, 2, 1) + ''/'' + SUBSTRING(LD_DPID, 3, 1) + ''/'' 
+				 + ld_common + ''/'' + ld_commondt ELSE '''' END AS LookUp, ld_accyear, ld_documentno
+                 FROM @tbl_UserList A,  @@##client_master@@##(NOLOCK) CM1, @@##Ledger@@## (NOLOCK)  
+                 WHERE A.DPClientCode = cm_cd  AND cm_cd = ld_clientcd '
+  
+    SET @strsql =   @strsql+' AND CAST(CONVERT(VARCHAR,ld_dt,112) AS DATE) >= '''+@dtFromDate+''' AND CAST(CONVERT(VARCHAR,ld_dt,112) AS DATE) <= '''+@dtToDt+''''
+    
+    SET @strSqlExecute = @strsql
+    SET @strSqlExecute = replace(@strSqlExecute,'@@##client_master@@##',@strDefaultConn+'.dbo.Client_Master ')
+    SET @strSqlExecute = replace(@strSqlExecute,'@@##Ledger@@##',@strDefaultConn+'.dbo.Ledger ')
+    
+    BEGIN TRY
+	  INSERT INTO @tbl_LedgerDetail( tag,ld_clientcd,ld_dt,ExchSeg,Voucher,ld_amount,ld_particular,ld_debitflag,ld_chequeno,ld_documenttype,
+	  ld_common,Ldate,ld_dpid,LookUp,ld_accyear, ld_documentno)
+	  EXEC(@strsqlstart+' '+@strSqlExecute)
+    END TRY
+    BEGIN CATCH
+	  SET @o_vcErrorFlag = 'E'
+	  SET @o_vcErrorMessage = ERROR_MESSAGE()
+	  RETURN 1
+    END CATCH
+  END
+  
+
+  IF EXISTS(SELECT 1 FROM @tbl_LedgerDetail)
+  BEGIN
+   INSERT INTO @tbl_LenderReort( ClientCode, Date, ExchSeg, Voucher, Particular, Debitflag, Chequeno,
+   DebitAmount, CreditAmount, Balance, BalanceTag, Documenttype, Common, Ldate, CESCD, LookUp)
+   SELECT ld_clientcd, ld_dt, ExchSeg, Voucher, ld_particular, ld_debitflag, ld_chequeno,
+	              DebitAmount = CASE WHEN ld_amount>0 THEN ld_amount ELSE 0 END, 
+				  CreditAmount =  ABS(CASE WHEN ld_amount < 0 THEN ld_amount ELSE 0 END),
+	              Balance = (sum(ld_amount) OVER(PARTITION  BY ld_clientcd  ORDER BY tag, LD_DT, ld_particular, ld_accyear, ld_documentno,ld_documenttype)),
+	              BalanceTag = CASE WHEN (sum(ld_amount) OVER(PARTITION  BY ld_clientcd  
+				  ORDER BY tag, LD_DT, ld_particular, ld_accyear, ld_documentno,ld_documenttype))>0 THEN 'Dr' ELSE'Cr' END,
+	              ld_documenttype, ld_common,Ldate,
+	              ld_dpid,LookUp
+   FROM( SELECT tag = 1,ld_clientcd,ld_dt,ExchSeg,Voucher,ld_amount = SUM(ld_amount) ,
+   ld_particular,ld_debitflag = CASE SIGN(SUM(ld_amount)) WHEN 1 THEN 'D' ELSE 'C' END,
+   ld_chequeno, ld_documenttype,ld_common,Ldate,ld_dpid,LookUp,ld_accyear, ld_documentno 
+   FROM @tbl_LedgerDetail WHERE TAG = 1 GROUP BY ld_clientcd, ld_dt, ExchSeg, Voucher , ld_particular, ld_chequeno,
+   ld_documenttype,ld_common,Ldate,ld_dpid,LookUp ,ld_accyear, ld_documentno
+   UNION ALL 
+   SELECT tag,ld_clientcd,ld_dt,ExchSeg,Voucher,ld_amount,ld_particular,ld_debitflag,ld_chequeno,
+   ld_documenttype,ld_common,Ldate,ld_dpid,LookUp,ld_accyear, ld_documentno
+   FROM @tbl_LedgerDetail WHERE TAG = 2) XMAIN 
+   ORDER BY ld_clientcd, TAG, ld_dt
+   
+
+  END
+  
+  IF @strOutputType = 'X'
+  BEGIN
+    DECLARE @XMLDATA1 XML
+	IF @strRequestFrom = 'W'
+	BEGIN
+      SET @XMLDATA1 = (SELECT SERIALNO, ClientCode, Date = convert(varchar,cast(Date as date),112), ExchSeg, Voucher, Particular, Debitflag, Chequeno,
+	  DebitAmount, CreditAmount, Balance = (cast(Balance*-1 as Numeric(20,2))), BalanceTag, Documenttype, Common, Ldate, CESCD, LookUp FROM @tbl_LenderReort 
+	  ORDER BY SerialNo desc FOR XML PATH('Ledger'))
+	END
+	ELSE IF @strRequestFrom = 'M'
+	BEGIN
+	
+	  SET @XMLDATA1 = (SELECT SERIALNO, ClientCode, Date = convert(varchar,cast(Date as date),112), ExchSeg, Voucher, Particular, 
+	  Amount = (CASE WHEN DebitAmount > 0 THEN DebitAmount*-1 ELSE  CreditAmount END),
+	  Balance = (cast(Balance*-1 as Numeric(20,2)))--+' '+(CASE WHEN Balance < 0 THEN 'Cr' ELSE 'Dr' END)
+	  FROM @tbl_LenderReort 
+	  ORDER BY SerialNo desc FOR XML PATH('Ledger'))
+	END
+	SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+  END
+   IF @strOutputType = 'G'
+   BEGIN
+    SELECT SERIALNO, ClientCode, Date = convert(varchar,cast(Date as date),112), ExchSeg, Voucher, Particular, Debitflag, 
+	Chequeno,
+	DebitAmount, CreditAmount, Balance, BalanceTag, Documenttype, Common, Ldate, CESCD, LookUp  
+	FROM @tbl_LenderReort ORDER BY SerialNo
+   END	
+  SET @o_vcErrorFlag  = 'S'
+  --SET @o_vcErrorMessage = 'Process Completed'
+  RETURN 1
+END
+GO
+
+
+CREATE OR ALTER PROCEDURE stpr_Rpt_HoldingNew @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, @o_vcErrorMessage VARCHAR(MAX) OUTPUT 
+WITH ENCRYPTION
+AS
+BEGIN
+ /*
+ ///////////////////////////////////////////////////////////////////////////////////////////
+ // Create By     : VAIBHAV GARG
+ // Created Date  : 20-NOV-2023
+ // Description   : 
+ // Reviewed By   : 
+ // Review Date   : 
+ //////////////////////////////////////////////////////////////////////////////////////////
+*/
+  DECLARE @dtAsOnDate VARCHAR(8), @strUserId VARCHAR(50), @strProduct VARCHAR(50), @strOutputType VARCHAR(1)='', @XMLData XML,
+  @strSelectTag VARCHAR(1)='', @strSelectUsers VARCHAR(500)='', @StrString VARCHAR(MAX)='', @strSplFilter VARCHAR(MAX)='', @strCompanyCode VARCHAR(1),
+  @strScripCode VARCHAR(20)=''
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+  DECLARE @dp_Server VARCHAR(50)='', @dp_Database VARCHAR(50)='', @dp_Owner  VARCHAR(50)='', @strHairCut VARCHAR(1)=''
+  
+  SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+  
+  SELECT @dtAsOnDate = ISNULL(x.value('(AsOnDate)[1]', 'VARCHAR(8)'),''),
+  @strProduct = ISNULL(x.value('(Product)[1]', 'VARCHAR(50)'),''),
+  @strUserId = ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+  @strSelectTag = ISNULL(x.value('(SelectTag)[1]', 'VARCHAR(1)'),''),
+  @strSelectUsers = ISNULL(x.value('(SelectUsers)[1]', 'VARCHAR(500)'),''),
+  @strOutputType = ISNULL(x.value('(OutputType)[1]', 'VARCHAR(1)'),''),
+  @strSplFilter = ISNULL(x.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''),
+  @strCompanyCode = ISNULL(x.value('(CompanyCode)[1]', 'VARCHAR(1)'),''),
+  @strHairCut = ISNULL(x.value('(HairCut)[1]', 'VARCHAR(1)'),''),
+  @strScripCode = ISNULL(x.value('(ScripCode)[1]', 'VARCHAR(20)'),'')
+  
+  FROM @XMLData.nodes('/root') AS XTbl(x) 
+  
+  
+  IF ISNULL(@strCompanyCode,'') = ''
+  BEGIN
+    SET @strCompanyCode = 'A'
+  END
+ 
+  
+  DECLARE @tbl_HoldingDate TABLE(HoldingDate VARCHAR(8))
+  
+  CREATE TABLE #tbl_HoldingRep (ClientCode VARCHAR(50), ClientName VARCHAR(100),
+  BranchCode VARCHAR(50), Product VARCHAR(50), ScripCode VARCHAR(15),
+  ScripName VARCHAR(100), ISIN VARCHAR(20),Qty MONEY, ClosingPrice MONEY,
+  MarketValue MONEY, Haircut MONEY, NetValue MONEY)
+
+
+
+  IF @strProduct IN('Trading','BOTH')
+  BEGIN
+
+	SET @StrString = ' DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) '
+    +' INSERT INTO @tbl_UserList(Client_Code) '
+    +' SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+	+' SELECT CmCd As ClientCode, cm_name As ClientName, cm_brboffcode As BranchCode, DType As Product, '
+	+' SSCD as ScripCode, ScripName , im_isin As ISIN, Qty As Qty, '
+	+' 0, 0, 100, 0 '
+    +' FROM ( '
+	+' SELECT dm_clientcd CMCD, dm_scripcd SSCD, SS_Name As ScripName,  ''Ben'' DType, sum(dm_qty) * -1 Qty   '
+    +' FROM Demat(NOLOCK), OurDps(NOLOCK), Settlements(NOLOCK), Client_master(NOLOCK), securities(NOLOCK)  '
+    +' WHERE dm_clientcd = cm_cd and dm_ourdp = od_cd And dm_stlmnt = se_stlmnt '
+	+' AND ISNULL(od_ActPurpose, '''') <> ''W'' '
+    +' AND dm_type = ''BC'' and od_acttype = ''B'' and dm_locked = ''N'' and dm_transfered = ''N'' and ss_cd = dm_scripcd '
+    +' AND dm_clientcd in(select client_code from  @tbl_UserList) AND dm_companycode = '''+@strCompanyCode+'''     '
+
+    SET @StrString =   @StrString+' GROUP BY dm_clientcd, dm_scripcd, SS_Name '
+    +' UNION ALL '
+    +' SELECT dm_clientcd CMCD, dm_scripcd SSCD,  SS_Name As ScripName,  '
+    +' ''EXP'' DType, sum(dm_qty) * -1 Qty '
+    +' From Demat(NOLOCK), OurDps(NOLOCK), Settlements(NOLOCK), Client_master(NOLOCK), securities (NOLOCK) '
+    +' Where dm_clientcd = cm_cd and dm_ourdp = od_cd And dm_stlmnt = se_stlmnt and dm_type = ''BC'''
+    +' and od_acttype in (''P'', ''R'') and ss_cd = dm_scripcd  '
+	+' and dm_clientcd in(select client_code from  @tbl_UserList) AND dm_companycode = '''+@strCompanyCode+'''      '
+
+    SET @StrString =   @StrString+' and se_payoutdt > '''+@dtAsOnDate+''' '
+    +' GROUP BY dm_clientcd, dm_scripcd, SS_Name '
+	+' UNION ALL '
+	+' SELECT dm_clientcd CMCD, dm_scripcd SSCD,  SS_Name As ScripName,  '
+    +' ''POOL'' DType, sum(dm_qty) * -1 Qty '
+    +' From Demat(NOLOCK), OurDps(NOLOCK), Settlements(NOLOCK), Client_master(NOLOCK), securities (NOLOCK) '
+    +' Where dm_clientcd = cm_cd and dm_ourdp = od_cd And dm_stlmnt = se_stlmnt and dm_type = ''BC'''
+    +' and od_acttype in (''P'', ''R'') and ss_cd = dm_scripcd and dm_locked = ''N'' '
+	+' and dm_clientcd in(select client_code from  @tbl_UserList)  AND dm_companycode = '''+@strCompanyCode+'''     '
+
+    SET @StrString =   @StrString+' and dm_transfered = ''N'' and  se_payoutdt <= '''+@dtAsOnDate+''' '
+    +' GROUP BY dm_clientcd, dm_scripcd, SS_Name '
+	
+    +' UNION ALL '
+    +' SELECT dm_clientcd CMCD, dm_scripcd SSCD, SS_Name As ScripName, ''UNDEL'' Dtype, sum(dm_qty) * -1 Qty  '
+    +' FROM Demat(NOLOCK), OurDps(NOLOCK), Settlements(NOLOCK), Client_master(NOLOCK), securities (NOLOCK) '
+    +' Where dm_ourdp = od_cd And dm_stlmnt = se_stlmnt and dm_type = ''CB'' and od_acttype in (''P'', ''R'') '
+    +' and dm_clientcd in(select client_code from  @tbl_UserList)  AND dm_companycode = '''+@strCompanyCode+'''     '
+
+    SET @StrString =   @StrString+' and dm_clientcd = cm_cd and dm_locked = ''N'' and dm_transfered<> ''S'' '
+	+' and se_payoutdt > '''+@dtAsOnDate+'''  '
+    +' and ss_cd = dm_scripcd Group By dm_clientcd, dm_scripcd, SS_Name '
+    +' UNION ALL '
+    +' SELECT CUP_clientcd cmcd, CUP_scripcd sscd, SS_Name As ScripName, ''CUSPA'' Dtype, sum(case CUP_DRCR  when ''C'' then CUP_Qty else CUP_Qty * (-1) end) Qty  '
+    +' From CUSAPledge_TRX(NOLOCK), Client_master(NOLOCK), securities (NOLOCK) '
+    +' Where CUP_dt <= '''+@dtAsOnDate+''' and CUP_TRXFlag = ''P''  and ss_cd = CUP_scripcd and cm_cd = CUP_clientcd  '
+    +' and cm_cd in(select client_code from  @tbl_UserList)  AND CUP_companycode = '''+@strCompanyCode+'''    '
+
+    SET @StrString =   @StrString+' GROUP BY CUP_clientcd , CUP_scripcd, SS_Name '
+    +' Having (sum(case CUP_DRCR  when ''C'' then CUP_Qty else CUP_Qty * (-1) end)) > 0 '
+    +' UNION ALL '
+    +' SELECT MPT_clientcd cmcd, MPT_scripcd sscd, SS_Name As ScripName,  ''FOCOLL'' DType, sum(case MPT_DRCR  when ''C'' then MPT_Qty else MPT_Qty * (-1) end) Qty  '
+    +' FROM MrgPledge_TRX(NOLOCK), Client_master(NOLOCK), securities (NOLOCK) '
+    +' WHERE MPT_dt <= '''+@dtAsOnDate+''' and MPT_TRXFlag = ''P'' and MPT_clientcd = cm_cd and ss_cd = MPT_scripcd  '
+    +' AND cm_cd in(select client_code from  @tbl_UserList)   AND MPT_companycode = '''+@strCompanyCode+'''   '
+
+    SET @StrString =   @StrString+' GROUP BY MPT_clientcd, MPT_scripcd, SS_Name '
+    +' Having (sum(case MPT_DRCR  when ''C'' then MPT_Qty else MPT_Qty * (-1) end)) > 0 '
+    
+	IF EXISTS(SELECT 1 FROM SYS.TABLES WHERE NAME= 'MrgTdgFin_Pledge')
+	BEGIN
+	  SET @StrString = @StrString +' UNION ALL '
+      +' SELECT MPT_clientcd CMCD, MPT_scripcd SSCD, SS_Name As ScripName, ''MTFBENF'' DType , sum(case MPT_DRCR  when ''C'' then MPT_Qty else MPT_Qty * (-1) end) '
+      +' From MrgTdgFin_Pledge(NOLOCK), Ourdps(NOLOCK), Client_master(NOLOCK), securities (NOLOCK) '
+      +' Where MPT_OurDP = od_cd and od_acttype = ''G'' and MPT_dt <= '''+@dtAsOnDate+''' and MPT_TRXFlag = ''P'' '
+      +' and MPT_clientcd = cm_cd and ss_cd = MPT_scripcd and cm_cd in(select client_code from  @tbl_UserList) AND MPT_companycode  = '''+@strCompanyCode+'''     '
+	
+      SET @StrString =   @StrString+' Group By MPT_clientcd , MPT_scripcd, SS_Name  '
+      +' Having sum(case MPT_DRCR  when ''C'' then MPT_Qty else MPT_Qty * (-1) end) > 0 '
+      +' UNION ALL '
+      +' SELECT MPT_clientcd CMCD, MPT_scripcd SSCD, SS_Name As ScripName, ''MTFCOLL'' Dtype ,sum(case MPT_DRCR  when ''C'' then MPT_Qty else MPT_Qty * (-1) end) Qty  '
+      +' From MrgTdgFin_Pledge(NOLOCK), Ourdps(NOLOCK), Client_master(NOLOCK), securities(NOLOCK)  '
+      +' Where MPT_OurDP = od_cd and od_acttype = ''H'' and MPT_dt <= '''+@dtAsOnDate+''' and MPT_TRXFlag = ''P''  '
+      +' and MPT_clientcd = cm_cd and ss_cd = MPT_scripcd  and cm_cd in(select client_code from  @tbl_UserList) AND MPT_companycode  = '''+@strCompanyCode+'''  '
+      SET @StrString =   @StrString  +' Group By MPT_clientcd , MPT_scripcd, SS_Name '
+      +' Having sum(case MPT_DRCR  when ''C'' then MPT_Qty else MPT_Qty * (-1) end) > 0 '
+	END
+    
+	SET @StrString = @StrString +' ) A , client_master(NOLOCK) , isin(NOLOCK), Securities(NOLOCK) '
+      +' WHERE cm_schedule = (select sp_sysvalue from Sysparameter where sp_parmcd = ''cmschedule'') '
+      +' AND CMCD = cm_cd and SSCD = im_scripcd  '
+	IF @strSplFilter <> ''
+    BEGIN
+	   SET @StrString =   @StrString+' AND '+@strSplFilter
+    END	
+      SET @StrString =   @StrString+' AND im_priority in (select min(im_priority) from isin(NOLOCK) where SSCD = im_scripcd and sscd = ss_cd) '
+	  
+	IF @strScripCode <> ''
+	BEGIN
+	  SET @StrString =   @StrString+' AND ss_cd = '''+@strScripCode+''' '
+	END
+	  
+	BEGIN TRY
+
+	  INSERT INTO #tbl_HoldingRep(ClientCode, ClientName, BranchCode, Product, ScripCode, ScripName,
+	  ISIN, Qty, ClosingPrice, MarketValue, Haircut, NetValue)
+      EXEC(@StrString)
+    END TRY
+    BEGIN CATCH
+	  SET @o_vcErrorFlag  = 'E'
+      SET @o_vcErrorMessage = ERROR_MESSAGE()
+      RETURN 1
+    END CATCH
+  
+    SELECT @dp_Server = LTRIM(RTRIM(OP_Server)), @dp_Database = LTRIM(RTRIM(OP_DataBase)),
+    @dp_Owner = LTRIM(RTRIM(OP_Owner)) FROM Other_Products(NOLOCK) 
+    WHERE OP_Product = 'Cross'
+    AND op_Status = 'A'
+	
+  
+    DELETE FROM @tbl_HoldingDate
+    IF @dp_Database <> ''
+    BEGIN
+	  SET @StrString = 'select max(hld_hold_date) from '+@dp_Database+'.[dbo].Holding '
+	  INSERT INTO @tbl_HoldingDate
+	  EXEC(@StrString)
+	
+	  IF EXISTS(SELECT 1 FROM @tbl_HoldingDate WHERE HoldingDate <= @dtAsOnDate)
+	  BEGIN
+	    SET @StrString = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) 
+                SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = B.da_actno FROM @tbl_UserList A, Dematact B WHERE A.Client_Code = B.da_clientcd AND da_defaultyn=''Y'' '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = A.Client_code FROM @tbl_UserList A WHERE  ISNULL(DPClientCode,'''') = '''''
+        SET @StrString = @StrString +' SELECT CmCd As ClientCode, cm_name As ClientName, cm_brboffcode As BranchCode, DType As Product, '
+	    +' ss_cd as ScripCode, ScripName , im_isin As ISIN, hld_ac_pos As Qty, 0, 0, 100, 0 '
+        +' FROM (SELECT Client_code cmcd,  im_scripcd ss_cd, SS_Name As ScripName, ISNULL(cm_poaforpayin,''N'')+''DP'' Dtype, hld_ac_pos As hld_ac_pos, im_isin '
+        +' FROM '+@dp_Database+'.[dbo].Holding, Isin(NOLOCK), Securities(NOLOCK), @tbl_UserList, '+@dp_Database+'.DBO.CLIENT_MASTER(NOLOCK) CM1   '
+        +' where hld_ac_type = ''11'' '
+	    +' and hld_isin_code = im_isin  '
+        +' AND ss_cd = im_scripcd '
+		+' AND DPClientCode = CM1.CM_CD '
+	    +' AND hld_ac_code = DPClientCode  and  im_priority = (Select min(im_priority) from ISIN(NOLOCK) Where im_scripcd = ss_cd)) A, client_master(NOLOCK) '
+        +' WHERE cm_schedule = (select sp_sysvalue from Sysparameter where sp_parmcd = ''cmschedule'') '
+        +' AND CMCD = cm_cd  '
+	    IF @strSplFilter <> ''
+        BEGIN
+	      SET @StrString =   @StrString+' AND '+@strSplFilter
+        END	
+      END
+	  ELSE
+	  BEGIN
+	    SET @StrString = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) 
+                        SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+	    SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = B.da_actno FROM @tbl_UserList A, Dematact B WHERE A.Client_Code = B.da_clientcd AND da_defaultyn=''Y'' '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = A.Client_code FROM @tbl_UserList A WHERE  ISNULL(DPClientCode,'''') = '''''
+        SET @StrString = @StrString +' Select td_ac_code As ClientCode, cm_name As ClientName, cm_brboffcode As BranchCode,  '
+		+' ISNULL(cm_poaforpayin,''N'')+''DP'' Dtype, ss_cd, ss_name AS ScripName, '
+	    +' td_isin_code As ISIN,  Qty = ABS(Qty) , 0, 0, 100, 0 '
+        +' from( Select td_ac_code, td_isin_code, cm_poaforpayin, sum(OpenQty) as Qty '
+        +' FROM( SELECT td_ac_code = Client_code, td_isin_code, cm_poaforpayin = ISNULL(cm_poaforpayin,''N'') ,'
+        +' SUM(CASE WHEN td_debit_credit=''C'' THEN -td_qty ELSE td_qty END) as OpenQty  '
+        +' FROM '+@dp_Database+'.DBO.Trxdetail(nolock), @tbl_UserList, '+@dp_Database+'.DBO.CLIENT_MASTER(NOLOCK) CM1 '
+		+' where td_ac_code =  DPClientCode and td_curdate < '''+@dtAsonDate+''' '
+        +' AND td_booking_type not in (''13'')  '
+		+' AND DPClientCode = CM1.CM_CD '
+        +' GROUP BY Client_code, td_isin_code, ISNULL(cm_poaforpayin,''N'')  '
+        +' HAVING SUM(CASE WHEN td_debit_credit = ''C'' THEN td_qty ELSE -td_qty END) <> 0) x1  '
+        +' group by td_ac_code, td_isin_code, cm_poaforpayin '
+        +' UNION ALL  '
+        +' SELECT td_ac_code = Client_code, td_isin_code, cm_poaforpayin = ISNULL(cm_poaforpayin,''N''), OpenQty = (Case td_debit_credit  when ''D'' then td_qty else -td_qty end) '
+        +' FROM '+@dp_Database+'.DBO.Trxdetail(nolock), @tbl_UserList, '+@dp_Database+'.DBO.CLIENT_MASTER(NOLOCK) CM1 ' 
+		+' where td_ac_code = DPClientCode   '
+        +' and td_curdate = '''+@dtAsonDate+'''' 
+		+' AND DPClientCode = CM1.CM_CD '
+        +' AND td_booking_type not in (''13'')) x , '+@dp_Database+'.DBO.Security(NOLOCK) SC, Client_master cm, Isin(NOLOCK), Securities(NOLOCK) '
+        +' WHERE X.td_isin_code = SC.sc_isincode and x.td_ac_code = cm.cm_cd AND  td_isin_code = im_isin  '
+        +' AND ss_cd = im_scripcd  AND im_priority = (Select min(im_priority) from ISIN(NOLOCK) Where im_scripcd = ss_cd) '
+	    IF @strSplFilter <> ''
+        BEGIN
+	      SET @StrString =   @StrString+' AND '+@strSplFilter
+        END	
+	  
+	  END
+	  
+	  IF @strScripCode <> ''
+	  BEGIN
+	    SET @StrString =   @StrString+' AND ss_cd = '''+@strScripCode+''' '
+	  END
+     -- SELECT (@StrString)
+	  BEGIN TRY
+	    INSERT INTO #tbl_HoldingRep(ClientCode, ClientName, BranchCode, Product, ScripCode, ScripName,
+	    ISIN, Qty, ClosingPrice, MarketValue, Haircut, NetValue)
+	    EXEC(@StrString)
+	  END TRY
+	  BEGIN CATCH
+	     SET @o_vcErrorFlag  = 'E'
+         SET @o_vcErrorMessage = ERROR_MESSAGE()
+         RETURN 1
+	  END CATCH
+	 
+    END
+    SET @dp_Server = ''
+    SET @dp_Database = ''
+    SET @dp_Owner = ''
+	
+    SELECT @dp_Server = LTRIM(RTRIM(OP_Server)), @dp_Database = LTRIM(RTRIM(OP_DataBase)),
+    @dp_Owner = LTRIM(RTRIM(OP_Owner)) FROM Other_Products(NOLOCK) 
+    WHERE OP_Product = 'Estro'
+    AND op_Status = 'A'
+	
+    DELETE FROM @tbl_HoldingDate
+	
+    IF @dp_Database <> ''
+    BEGIN
+      SET @StrString = 'select CONVERT(VARCHAR,max(hld_hold_date),112) from '+@dp_Database+'.[dbo].Holding '
+      INSERT INTO @tbl_HoldingDate
+      EXEC(@StrString)
+	  
+      IF EXISTS(SELECT 1 FROM @tbl_HoldingDate WHERE HoldingDate <= @dtAsOnDate)
+      BEGIN
+	    SET @StrString = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) 
+               SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = B.da_actno FROM @tbl_UserList A, Dematact B WHERE A.Client_Code = B.da_clientcd AND da_defaultyn=''Y'' '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = A.Client_code FROM @tbl_UserList A WHERE  ISNULL(DPClientCode,'''') = '''''
+        SET @StrString = @StrString + ' SELECT CmCd As ClientCode, cm_name As ClientName, cm_brboffcode As BranchCode, DType As Product, '
+	    +' ss_cd as ScripCode, ScripName , im_isin As ISIN, hld_ac_pos As Qty, 0, 0, 100, 0 '
+        +' FROM (SELECT Client_CODE cmcd, im_scripcd ss_cd, SS_Name As ScripName, ISNULL(cm_poaforpayin,''N'')+''DP'' Dtype, hld_ac_pos As hld_ac_pos, im_isin '
+        +' FROM '+@dp_Database+'.[dbo].Holding, Isin(NOLOCK), Securities(NOLOCK), @tbl_UserList, '+@dp_Database+'.DBO.CLIENT_MASTER(NOLOCK) CM1   '
+        +' where hld_ac_type = ''22'' '
+	    +' and hld_isin_code = im_isin  '
+        +' AND ss_cd = im_scripcd '
+		+' AND DPClientCode = CM1.CM_CD '
+	    +' AND hld_ac_code = DPClientCode) A, client_master(NOLOCK) '
+        +' WHERE cm_schedule = (select sp_sysvalue from Sysparameter where sp_parmcd = ''cmschedule'') '
+        +' AND CMCD = cm_cd   '
+	    IF @strSplFilter <> ''
+        BEGIN
+	       SET @StrString =   @StrString+' AND '+@strSplFilter
+        END	
+      END
+      ELSE
+      BEGIN
+	    SET @StrString = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) 
+         SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+	   SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = B.da_actno FROM @tbl_UserList A, Dematact B WHERE A.Client_Code = B.da_clientcd AND da_defaultyn=''Y'' '
+       SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = A.Client_code FROM @tbl_UserList A WHERE  ISNULL(DPClientCode,'''') = '''''
+       SET @StrString = @StrString +' Select td_ac_code As ClientCode, cm_name As ClientName, cm_brboffcode As BranchCode,  ''DP'' Dtype, ss_cd, ss_name AS ScripName, '
+	   +' td_isin_code As ISIN,  Qty = ABS(Qty) , 0, 0, 100, 0 '
+       +' from( Select td_ac_code, td_isin_code, sum(OpenQty) as Qty '
+       +' FROM( SELECT td_ac_code = Client_CODE, td_isin_code, SUM(CASE WHEN td_debit_credit=''C'' THEN -td_qty ELSE td_qty END) as OpenQty  '
+       +' FROM '+@dp_Database+'.DBO.Trxdetail(nolock), @tbl_UserList '
+	   +' where td_ac_code =  DPClientCode and td_curdate < '''+@dtAsonDate+''' '
+       +' AND td_booking_type not in (''13'')  '
+       +' GROUP BY Client_CODE, td_isin_code  '
+       +' HAVING SUM(CASE WHEN td_debit_credit=''C'' THEN td_qty ELSE -td_qty END) <> 0) x1  '
+       +' group by td_ac_code, td_isin_code '
+       +' UNION ALL  '
+       +' SELECT td_ac_code = Client_CODE, td_isin_code, OpenQty = (Case td_debit_credit  when ''D'' then td_qty else -td_qty end) '
+       +' FROM '+@dp_Database+'.DBO.Trxdetail(nolock),  @tbl_UserList where td_ac_code =  DPClientCode  '
+       +' and td_curdate = '''+@dtAsonDate+''') x , '+@dp_Database+'.DBO.Security(NOLOCK) SC, Client_master cm, Isin(NOLOCK), Securities(NOLOCK) '
+       +' WHERE X.td_isin_code = SC.sc_isincode and x.td_ac_code = cm.cm_cd AND  td_isin_code = im_isin  '
+       +' AND ss_cd = im_scripcd  AND im_priority = (Select min(im_priority) from ISIN(NOLOCK) Where im_scripcd = ss_cd) '
+	   IF @strSplFilter <> ''
+       BEGIN
+	      SET @StrString =   @StrString+' AND '+@strSplFilter
+       END
+     END
+	 
+	  IF @strScripCode <> ''
+	  BEGIN
+	    SET @StrString =   @StrString+' AND ss_cd = '''+@strScripCode+''' '
+	  END
+	 
+     BEGIN TRY
+	   INSERT INTO #tbl_HoldingRep(ClientCode, ClientName, BranchCode, Product, ScripCode, ScripName,
+	   ISIN, Qty, ClosingPrice, MarketValue, Haircut, NetValue)
+	   EXEC(@StrString)
+     END TRY
+     BEGIN CATCH
+ 	   SET @o_vcErrorFlag  = 'E'
+       SET @o_vcErrorMessage = ERROR_MESSAGE()
+       RETURN 1
+     END CATCH
+    end
+  END
+  
+  ELSE IF @strProduct ='DP'
+  BEGIN
+
+    DECLARE @TBL_CloseRate TABLE(ISIN VARCHAR(30), CloseRate MONEY)
+	    
+	
+	CREATE TABLE #tbl_HoldingRepDP (ClientCode VARCHAR(50), ClientName VARCHAR(100), BranchCode VARCHAR(50),
+    ScripCode VARCHAR(50), ScripName VARCHAR(100), ISIN VARCHAR(20), AccountType VARCHAR(100), Qty MONEY, ClosingPrice MONEY,
+    MarketValue MONEY)
+	
+    SELECT @dp_Server = LTRIM(RTRIM(OP_Server)), @dp_Database = LTRIM(RTRIM(OP_DataBase)),
+    @dp_Owner = LTRIM(RTRIM(OP_Owner)) FROM Other_Products(NOLOCK) 
+    WHERE OP_Product = 'Cross'
+    AND op_Status = 'A'
+	
+    DELETE FROM @tbl_HoldingDate
+	
+    IF @dp_Database <> ''
+    BEGIN
+	  SET @StrString = 'select max(hld_hold_date) from '+@dp_Database+'.[dbo].Holding '
+	  INSERT INTO @tbl_HoldingDate
+	  EXEC(@StrString)
+	
+	  IF NOT EXISTS(SELECT 1 FROM @tbl_HoldingDate WHERE HoldingDate <= @dtAsOnDate)
+	  BEGIN
+	    
+		SET @StrString = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) 
+                SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = B.da_actno FROM @tbl_UserList A, Dematact B WHERE A.Client_Code = B.da_clientcd AND da_defaultyn=''Y'' '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = A.Client_code FROM @tbl_UserList A WHERE  ISNULL(DPClientCode,'''') = '''''
+        
+	  
+	    SET @StrString = @StrString+' SELECT cm_cd As ClientCode, cm_name As ClientName, cm_brboffcode As BranchCode, '
+	    +' ScripName , td_isin_code As ISIN, bt_description, BalanceQty As Qty, 0, 0 '
+        +' FROM (Select td_ac_code, td_isin_code, sc_isinname AS ScripName, bt_description , '
+        +' BalanceQty =sum(BalanceQty) '
+        +' FROM( '
+        +' SELECT td_ac_code, td_isin_code, td_ac_type ,  SUM(CASE WHEN td_debit_credit=''D'' THEN -td_qty ELSE td_qty END) as BalanceQty  '
+        +' FROM '+@dp_Database+'.DBO.Trxdetail(nolock)  '
+        +' where td_ac_code =  DPClientCode   '
+        +' and td_curdate <= '''+@dtAsonDate+''' '
+        +' GROUP BY td_ac_code, td_isin_code, td_ac_type  '
+        +' HAVING SUM(CASE WHEN td_debit_credit=''D'' THEN td_qty ELSE -td_qty END) <> 0) x1 '
+		+' LEFT OUTER JOIN  '+@dp_Database+'.DBO.Beneficiary_type BN ON(td_ac_type = BN.bt_code), '
+        +' '+@dp_Database+'.DBO.Security(NOLOCK) '
+        +' WHERE td_isin_code = sc_isincode '
+        +' GROUP BY td_ac_code, td_isin_code, bt_description , sc_isinname '
+        +'  ) A, '+@dp_Database+'.[dbo].client_master(NOLOCK) '
+        +' WHERE cm_schedule = (select sp_sysvalue from Sysparameter where sp_parmcd = ''cmschedule'') '
+        +' AND td_ac_code = cm_cd  '
+	  END	
+	  ELSE
+	  BEGIN
+	    SET @StrString = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) 
+                SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = B.da_actno FROM @tbl_UserList A, Dematact B WHERE A.Client_Code = B.da_clientcd AND da_defaultyn=''Y'' '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = A.Client_code FROM @tbl_UserList A WHERE  ISNULL(DPClientCode,'''') = '''''
+        
+	    SET @StrString = @StrString+' SELECT cm_cd As ClientCode, cm_name As ClientName, cm_brboffcode As BranchCode, '
+	    +' ScripName , td_isin_code As ISIN, bt_description, BalanceQty As Qty, 0, 0 '
+        +' FROM (Select td_ac_code, td_isin_code, ScripName , bt_description , BalanceQty =sum(BalanceQty)  '
+        +' FROM(  '
+        +' SELECT td_ac_code = hld_ac_code, ScripName = sc_isinname, td_isin_code = hld_isin_code, td_ac_type = hld_ac_type ,  SUM(hld_ac_pos) as BalanceQty  '
+        +' FROM '+@dp_Database+'.DBO.Holding(nolock), '+@dp_Database+'.DBO.Security(nolock), @tbl_UserList where hld_ac_code = DPClientCode '
+		+' AND hld_isin_code = sc_isincode '
+        +' GROUP BY hld_ac_code, hld_isin_code, hld_ac_type, sc_isinname  '
+        +' HAVING SUM(hld_ac_pos) <> 0) x1 LEFT OUTER JOIN  '+@dp_Database+'.DBO.Beneficiary_type BN ON(td_ac_type = BN.bt_code)  '
+        +' GROUP BY td_ac_code, td_isin_code, bt_description, ScripName  ) A, '+@dp_Database+'.[dbo].client_master(NOLOCK) '
+        +' WHERE cm_schedule = (select sp_sysvalue from Sysparameter where sp_parmcd = ''cmschedule'') '
+        +' AND td_ac_code = cm_cd  '
+	  END
+     --SELECT @StrString
+	  BEGIN TRY
+	    INSERT INTO #tbl_HoldingRepDP(ClientCode, ClientName, BranchCode, ScripName,
+	    ISIN, AccountType, Qty, ClosingPrice, MarketValue)
+	    EXEC(@StrString)
+	  END TRY
+	  BEGIN CATCH
+	   SET @o_vcErrorFlag  = 'E'
+       SET @o_vcErrorMessage = ERROR_MESSAGE()
+       RETURN 1
+	  END CATCH
+	  
+	  SET @StrString = 'SELECT rm_isin_code, rm_rate   '
+      +' FROM '+@dp_Database+'.DBO.Rate_master(NOLOCK) X '
+      +' WHERE rm_trx_date = (select max(rm_trx_date) from '+@dp_Database+'.DBO.Rate_master where rm_trx_date  <= '''+@dtAsOnDate+''' ) '
+	
+	  INSERT INTO @TBL_CloseRate(ISIN, CloseRate)
+	  EXEC(@StrString)
+	
+	  UPDATE A SET A.ClosingPrice = B.CloseRate
+	  FROM #tbl_HoldingRepDP A, @TBL_CloseRate b
+	  WHERE A.ISIN = B.ISIN
+    END
+	
+	SET @dp_Server = ''
+    SET @dp_Database = ''
+    SET @dp_Owner = ''
+	
+    SELECT @dp_Server = LTRIM(RTRIM(OP_Server)), @dp_Database = LTRIM(RTRIM(OP_DataBase)),
+    @dp_Owner = LTRIM(RTRIM(OP_Owner)) FROM Other_Products(NOLOCK) 
+    WHERE OP_Product = 'Estro'
+    AND op_Status = 'A'
+	
+    DELETE FROM @tbl_HoldingDate
+	DECLARE @dtHoldingDate VARCHAR(8)=''
+	
+    IF @dp_Database <> ''
+    BEGIN
+      SET @StrString = 'select CONVERT(VARCHAR,max(hld_hold_date),112) from '+@dp_Database+'.[dbo].Holding '
+      INSERT INTO @tbl_HoldingDate
+      EXEC(@StrString)
+	  
+	  SELECT @dtHoldingDate = HoldingDate FROM @tbl_HoldingDate
+	  
+      IF EXISTS(SELECT 1 FROM @tbl_HoldingDate WHERE HoldingDate <= @dtAsOnDate)
+      BEGIN
+	    
+		SET @StrString = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) 
+                SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = B.da_actno FROM @tbl_UserList A, Dematact B WHERE A.Client_Code = B.da_clientcd AND da_defaultyn=''Y'' '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = A.Client_code FROM @tbl_UserList A WHERE  ISNULL(DPClientCode,'''') = '''''
+        
+		SET @StrString = @StrString+ ' SELECT Client_CODE = hld_ac_code, cm_name AS ClientName, BranchCode = cm_brboffcode,  '
+		+' sscd = hld_isin_code, ScripName = sc_company_name,  AccountType =bt_description,  '
+        +' hld_ac_pos As Qty, ClosingPrice = 0, MarketValue = 0 '
+        +' FROM  '+@dp_Database+'.DBO.Holding(NOLOCK) TD LEFT OUTER JOIN  '+@dp_Database+'.DBO.Beneficiary_type BN '
+		+' ON((CASE WHEN hld_blf = ''L'' THEN CASE hld_ac_type WHEN ''22'' THEN ''17'' WHEN ''21''
+						THEN ''17'' WHEN ''29'' THEN ''18'' ELSE hld_ac_type END
+		ELSE CASE hld_ac_type WHEN ''25'' THEN ''28'' ELSE hld_ac_type END END) = BN.bt_code)'
+		+' ,  '+@dp_Database+'.DBO.Security(nolock), '+@dp_Database+'.DBO.client_master(NOLOCK), @tbl_UserList '
+        +' where /* hld_ac_type = ''22'' '
+        +' AND */ hld_ac_code = DPClientCode '
+        +' and hld_isin_code = sc_isincode '
+        +' AND hld_ac_code = CM_CD  AND hld_hold_date ='''+@dtHoldingDate+''' '
+	    IF @strSplFilter <> ''
+        BEGIN
+	       SET @StrString =   @StrString+' AND '+@strSplFilter
+        END	
+      END
+      ELSE
+      BEGIN
+	    
+		SET @StrString = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) 
+                SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = B.da_actno FROM @tbl_UserList A, Dematact B WHERE A.Client_Code = B.da_clientcd AND da_defaultyn=''Y'' '
+        SET @StrString = @StrString +' UPDATE A SET A.DPClientCode = A.Client_code FROM @tbl_UserList A WHERE  ISNULL(DPClientCode,'''') = '''''
+        
+		SET @StrString = @StrString+' Select td_ac_code As ClientCode, cm_name As ClientName, cm_brboffcode As BranchCode,  td_isin_code As ISIN, sc_company_name AS ScripName,  '
+         +' bt_description,   Qty = ABS(Qty) , 0, 0 '
+         +' from( Select td_ac_code, td_isin_code, td_ac_type,  sum(OpenQty) as Qty  '
+         +' FROM( SELECT td_ac_code = td_ac_code, td_isin_code, td_ac_type, SUM(CASE WHEN td_debit_credit=''C'' THEN -td_qty ELSE td_qty END) as OpenQty  '
+         +' FROM  '+@dp_Database+'.DBO.Trxdetail(nolock), @tbl_UserList '
+         +' where td_ac_code = DPClientCode and CONVERT(VARCHAR,td_curdate,112) < '''+@dtAsonDate+''''
+         +' AND td_booking_type not in (''13'')   '
+         +' GROUP BY td_ac_code, td_isin_code, td_ac_type   '
+         +' HAVING SUM(CASE WHEN td_debit_credit = ''C'' THEN td_qty ELSE -td_qty END) <> 0) x1   '
+         +' group by td_ac_code, td_isin_code , td_ac_type '
+         +' UNION ALL   '
+         +' SELECT td_ac_code , td_isin_code, td_booking_type, OpenQty = (Case td_debit_credit  when ''D'' then td_qty else -td_qty end)  '
+         +' FROM  '+@dp_Database+'.DBO.Trxdetail(nolock), @tbl_UserList   where td_ac_code = DPClientCode  and td_booking_type not in (''13'')   '
+         +' and td_curdate = '''+@dtAsonDate+''') x LEFT OUTER JOIN  '+@dp_Database+'.DBO.Beneficiary_type BN ON(X.td_ac_type = BN.bt_code), '+@dp_Database+'.DBO.Security(NOLOCK) SC, '+@dp_Database+'.DBO.Client_master cm '
+         +' WHERE X.td_isin_code = SC.sc_isincode and x.td_ac_code = cm.cm_cd  '
+	   IF @strSplFilter <> ''
+       BEGIN
+	      SET @StrString =   @StrString+' AND '+@strSplFilter
+       END
+     END
+	-- select @StrString
+	 BEGIN TRY
+	   INSERT INTO #tbl_HoldingRepDP(ClientCode, ClientName, BranchCode, 
+	    ISIN, ScripName, AccountType, Qty, ClosingPrice, MarketValue)
+	   EXEC(@StrString)
+     END TRY
+     BEGIN CATCH
+ 	   SET @o_vcErrorFlag  = 'E'
+       SET @o_vcErrorMessage = ERROR_MESSAGE()
+       SELECT ERROR_MESSAGE()
+	   RETURN 1
+     END CATCH
+      
+    DELETE FROM @TBL_CloseRate
+	 
+    SET @StrString = 'SELECT rm_isin_code, rm_rate   '
+    +' FROM '+@dp_Database+'.DBO.Rate_master(NOLOCK) X '
+    +' WHERE rm_trx_date = (select max(rm_trx_date) from '+@dp_Database+'.DBO.Rate_master where rm_trx_date  <= '''+@dtAsOnDate+''' ) '
+	
+	 INSERT INTO @TBL_CloseRate(ISIN, CloseRate)
+	 EXEC(@StrString)
+	
+	UPDATE A SET A.ClosingPrice = B.CloseRate
+	FROM #tbl_HoldingRepDP A, @TBL_CloseRate b
+	WHERE A.ISIN = B.ISIN
+	
+	
+   END   
+  END
+  IF @strProduct = 'TRADING'
+  BEGIN
+  If(@strHairCut=0)
+    Begin
+    UPDATE #tbl_HoldingRep set Haircut = Case When vm_exchange = 'N' Or vm_exchange = 'Z' 
+    then vm_applicable_var 
+    ELSE vm_margin_rate END  
+	FROM VarMargin(NOLOCK) WHERE vm_scripcd = ScripCode and vm_Exchange = 'B'  
+    AND vm_dt = (select max(vm_dt) FROM VarMargin(NOLOCK) where vm_scripcd = ScripCode and vm_exchange = 'B'  
+		--and vm_dt >= DATEADD(DAY,-180,@dtAsOnDate) 
+		and vm_dt  <=  @dtAsOnDate)
+
+    UPDATE #tbl_HoldingRep SET Haircut = CASE WHEN vm_exchange = 'N' Or vm_exchange = 'Z' then vm_applicable_var 
+    ELSE vm_margin_rate END  
+    FROM VarMargin(NOLOCK) WHERE vm_scripcd = ScripCode and vm_Exchange = 'N'  
+    AND vm_dt =(SELECT MAX(vm_dt) from VarMargin(NOLOCK) 
+		WHERE vm_scripcd = ScripCode and vm_exchange = 'N'  --and vm_dt >=DATEADD(DAY,-180,@dtAsOnDate) 
+		and vm_dt  <=  @dtAsOnDate)
+	--AND Haircut = 100
+  
+   End
+  	Else  If(@strHairCut=1)
+    Begin
+		UPDATE #tbl_HoldingRep set Haircut = a.Haircut
+		 From (Select MAX(MPS_Haircut) Haircut,MPS_scripcd from MrgPledge_Securities 
+		Where  MPS_Dt = (select max(MPS_Dt) from MrgPledge_Securities Where MPS_Dt <= @dtAsOnDate) Group by MPS_scripcd) a 
+	    Where ScripCode = a.MPS_scripcd	
+   End
+  	
+	UPDATE #tbl_HoldingRep set ClosingPrice = mk_closerate 
+    FROM Market_rates(NOLOCK) 
+    WHERE mk_scripcd = ScripCode and mk_exchange ='B' 
+    AND mk_dt = (select max(mk_dt) from Market_rates where mk_exchange = 'B' and mk_scripcd = ScripCode  
+    --and mk_dt >=DATEADD(DAY,-180,@dtAsOnDate) 
+	and mk_dt  <= @dtAsOnDate )
+	
+  
+    UPDATE #tbl_HoldingRep set ClosingPrice = mk_closerate 
+    FROM Market_rates(NOLOCK) 
+    WHERE mk_scripcd = ScripCode and mk_exchange ='N' 
+    AND mk_dt = (select max(mk_dt) from Market_rates where mk_exchange = 'N' and mk_scripcd = ScripCode  
+    --and mk_dt >=DATEADD(DAY,-180,@dtAsOnDate) 
+	and mk_dt  <= @dtAsOnDate )
+	--AND ISNULL(ClosingPrice,0) = 0 
+
+	
+  END
+  DECLARE @XMLDATA1 XML
+  IF @strOutputType = 'X'
+  BEGIN
+     IF @strProduct IN('DP')
+     BEGIN
+	   SET @XMLDATA1 = (SELECT ClientCode, ClientName, ScripName, ISIN,
+	   AccountType, Holding = Qty, ClosingPrice, MarketValue = ROUND(Qty* ClosingPrice,2)
+       FROM #tbl_HoldingRepdp FOR XML PATH('DPHolding'))
+	   SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	   DROP TABLE #tbl_HoldingRepdp
+    END
+	ELSE IF @strProduct IN('TRADING')
+	BEGIN
+	  SET @XMLDATA1 = (SELECT ClientCode, ClientName, BranchCode, ScripCode, ScripName, ISIN, sum(Case when Product = 'FOCOLL' then Qty Else 0 End) FOCOLL,
+       sum(Case when Product = 'CUSPA' then Qty Else 0 End) Cuspa,
+	   sum(Case when Product IN('YDP','NDP','DP') then Qty Else 0 End) DP,
+       sum(Case when Product = 'YDP' then Qty Else 0 End) DP_POA,
+	   sum(Case when Product = 'NDP' then Qty Else 0 End) DP_NONPOA,
+       sum(Case when Product = 'EXP' then Qty Else 0 End) EXP,
+       sum(Case when Product = 'UNDEL' then Qty Else 0 End) UNDEL,
+       sum(Case when Product = 'MTFBENF' then Qty Else 0 End) MTFBENF,
+       sum(Case when Product = 'MTFCOLL' then Qty Else 0 End) MTFCOLL,
+       sum(Case when Product = 'POOL' then Qty Else 0 End) POOL,
+       sum(Case when Product = 'BEN' then Qty Else 0 End) Ben,
+	   SUM(Qty) TotalQty, 
+	   ClosingPrice, MarketValue = SUM(ROUND( Qty  * ClosingPrice,2)), 
+	   Haircut, NetValue = SUM(round(((Qty* ClosingPrice)*(100- Haircut))/100,2))
+      FROM #tbl_HoldingRep
+	  GROUP BY ClientCode, ClientName, BranchCode, ScripCode, ScripName, ISIN, ClosingPrice, Haircut
+      ORDER BY ClientCode, ScripName FOR XML PATH('DPHolding'))
+	  SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	  DROP TABLE #tbl_HoldingRep
+	  RETURN 1
+	END
+  END
+  ELSE IF @strOutputType = 'G'
+  BEGIN
+   IF @strProduct IN('TRADING','BOTH')
+   BEGIN
+     DECLARE @tbl_invplAvgRate TABLE(ARClient VARCHAR(50), ARScrip VARCHAR(50), BuyRate MONEY)
+     
+	 /*IF EXISTS(SELECT 1 FROM SYS.TABLES WHERE NAME= 'INVPL_Holding')
+	 BEGIN
+   	   SET @StrString =  'SELECT IH_Clientcd, IH_Scripcd, BuyRate = CASE WHEN BuyQty >0 THEN BuyValue/BuyQty ELSE 0 END '
+       +' FROM( SELECT IH_Clientcd, IH_Scripcd, BuyQty = sum(case when IH_BSFlag = ''B'' THEN IH_Qty ELSE 0 END), '
+       +' sum(case when IH_BSFlag = ''B'' THEN IH_Qty*(isnull(IH_BRate,0)+isnull(IH_BChrg,0)+isnull(IH_BStt,0)) ELSE 0 END)  AS BuyValue '
+       +' FROM INVPL_Holding(NOLOCK) WHERE IH_BSFlag = ''B'' '
+       +' GROUP BY IH_Clientcd, IH_Scripcd) X1 '
+       
+       BEGIN TRY
+	     INSERT INTO @tbl_invplAvgRate(ARClient, ARScrip, BuyRate)
+	     EXEC(@StrString)
+       END TRY
+       BEGIN CATCH
+ 	     SET @o_vcErrorFlag  = 'E'
+         SET @o_vcErrorMessage = ERROR_MESSAGE()
+         SELECT ERROR_MESSAGE(), '1'
+	     RETURN 1
+       END CATCH
+	 END  
+	 */
+	 
+	 CREATE TABLE #tbl_holdingmain
+	 (ClientCode VARCHAR(50), ClientName VARCHAR(200),
+	  BranchCode VARCHAR(50), ScripCode VARCHAR(20),
+	  ScripName VARCHAR(100), ISIN VARCHAR(50), FOCOLL MONEY,
+	  Cuspa MONEY, DP MONEY, [EXP] MONEY, EXP_WITHOUT_MTF MONEY, EXP_MTF MONEY, UNDEL MONEY, MTFBENF MONEY,
+	  MTFCOLL MONEY, [POOL] MONEY,  Ben MONEY, MTFQTY MONEY,
+	  TotalQty MONEY,  AvgRate MONEY, ClosingPrice MONEY, MarketValue MONEY, Haircut MONEY,
+	  NetValue MONEY, DP_POA MONEY, DP_NONPOA MONEY)
+	  
+     INSERT INTO #tbl_holdingmain(ClientCode, ClientName, BranchCode, ScripCode, ScripName, ISIN, FOCOLL, Cuspa, DP, DP_POA, 
+	 DP_NONPOA, [EXP], UNDEL, MTFBENF, MTFCOLL, [POOL], Ben, TotalQty, ClosingPrice, MarketValue, Haircut, NetValue)
+     SELECT ClientCode, ClientName, BranchCode, ScripCode, ScripName, ISIN, sum(Case when Product = 'FOCOLL' then Qty Else 0 End) FOCOLL,
+       sum(Case when Product = 'CUSPA' then Qty Else 0 End) Cuspa,
+	   sum(Case when Product IN('YDP','NDP','DP') then Qty Else 0 End) DP,
+       sum(Case when Product = 'YDP' then Qty Else 0 End) DP_POA,
+	   sum(Case when Product = 'NDP' then Qty Else 0 End) DP_NONPOA,
+       sum(Case when Product = 'EXP' then Qty Else 0 End) EXP,
+       sum(Case when Product = 'UNDEL' then Qty Else 0 End) UNDEL,
+       sum(Case when Product = 'MTFBENF' then Qty Else 0 End) MTFBENF,
+       sum(Case when Product = 'MTFCOLL' then Qty Else 0 End) MTFCOLL,
+       sum(Case when Product = 'POOL' then Qty Else 0 End) POOL,
+       sum(Case when Product = 'BEN' then Qty Else 0 End) Ben,
+	   SUM(Qty) TotalQty, 
+	   ClosingPrice, MarketValue = SUM(ROUND( Qty  * ClosingPrice,2)), 
+	   Haircut, NetValue = SUM(round(((Qty* ClosingPrice)*(100- Haircut))/100,2))
+      FROM #tbl_HoldingRep
+	  GROUP BY ClientCode, ClientName, BranchCode, ScripCode, ScripName, ISIN, ClosingPrice, Haircut
+      ORDER BY ClientCode, ScripCode
+
+	 DELETE FROM #tbl_HoldingRep
+	 
+	 IF EXISTS(SELECT 1 FROM SYS.TABLES WHERE NAME= 'MrgTdgFin_TRX')
+	 BEGIN
+	   SET @StrString = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) '
+       +' INSERT INTO @tbl_UserList(Client_Code) '
+       +' SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') ' 
+	   +' SELECT MTtd_clientcd, cm_name AS ClientName, cm_brboffcode As BranchCode,  '
+	   +' DType = ''MTFEXPQTY'', MTtd_scripcd, SS_Name As ScripName, im_isin, MFTQty = SUM(MTtd_bqty-MTtd_sqty), '
+       +' 0, 0, 100, 0 '
+       +' FROM MrgTdgFin_TRX(NOLOCK), Client_master(NOLOCK), Settlements(NOLOCK),  '
+	   +' securities (NOLOCK), ISIN(NOLOCK)	   '
+       +' WHERE MTtd_companycode = '''+@strCompanyCode+''' '
+	   +' AND MTtd_clientcd = CM_CD '
+	   +' AND MTtd_Stlmnt = se_stlmnt and ss_cd = MTtd_scripcd '
+       +'  AND se_stdt <= '''+@dtAsonDate+''' '
+	   +' AND se_payoutdt > '''+@dtAsonDate+''' '
+	   +' AND MTtd_TrxFlag = ''N'' '
+	   +' AND cm_schedule = (select sp_sysvalue from Sysparameter where sp_parmcd = ''cmschedule'')  '
+       +' and ss_cd = im_scripcd '
+	   +' AND MTtd_clientcd IN(SELECT client_code from  @tbl_UserList) '
+	   +' and im_priority in (select min(im_priority) from isin(NOLOCK) where ss_cd = im_scripcd ) '
+	   +' GROUP BY MTtd_clientcd, MTtd_scripcd, SS_Name, cm_name, cm_brboffcode, im_isin '
+	   +' HAVING  SUM(MTtd_bqty-MTtd_sqty) > 0 '
+	 BEGIN TRY
+	    INSERT INTO #tbl_HoldingRep(ClientCode, ClientName, BranchCode, Product, ScripCode, ScripName,
+	    ISIN, Qty, ClosingPrice, MarketValue, Haircut, NetValue)
+	    EXEC(@StrString)
+	  END TRY
+	  BEGIN CATCH
+	     SET @o_vcErrorFlag  = 'E'
+         SET @o_vcErrorMessage = ERROR_MESSAGE()
+         RETURN 1
+	  END CATCH
+	 END  
+	 
+	 
+     CREATE INDEX indx_holdingmain ON #tbl_holdingmain (ClientCode, ScripCode)
+	 
+	 UPDATE A SET A.[EXP_WITHOUT_MTF] = A.[EXP] - ISNULL(Qty,0),
+	 EXP_MTF = ISNULL(Qty,0)
+	 FROM #tbl_holdingmain A, #tbl_HoldingRep B
+	 WHERE A.ClientCode = B.ClientCode
+	 AND A.ScripCode = B.ScripCode
+	 AND ISNULL(B.Qty,0) > 0 AND [EXP] > 0
+
+	 UPDATE A SET EXP_WITHOUT_MTF = ISNULL(EXP,0)
+	 FROM #tbl_holdingmain A
+	 WHERE NOT EXISTS(SELECT 1 FROM #tbl_HoldingRep B WHERE A.ClientCode = B.ClientCode
+	 AND A.ScripCode = B.ScripCode
+	 AND ISNULL(B.Qty,0) > 0 AND ISNULL(EXP,0) > 0)
+	 
+	 UPDATE A SET A.AvgRate = B.BuyRate
+	 FROM #tbl_holdingmain A, @tbl_invplAvgRate B
+	 WHERE A.ClientCode = B.ARClient 
+	 AND A.ScripCode = B.ARScrip
+	  
+	 SELECT ClientCode, ClientName, BranchCode, ScripCode, ScripName, ISIN, FOCOLL, Cuspa, DP, 
+	 [EXP], UNDEL, MTFBENF, MTFCOLL, [POOL], Ben, TotalQty = CONVERT(Numeric(20),TotalQty), AvgRate = ISNULL(AvgRate,0), 
+	 TotalCost = TotalQty*ISNULL(AvgRate,0), ClosingPrice, MarketValue, 
+	 Haircut, NetValue, DP_POA, DP_NONPOA, MTF_EXP = ISNULL(EXP_MTF,0), 
+	 MTF_WITHOUTEXP = ISNULL(EXP_WITHOUT_MTF,0)
+	 FROM #tbl_holdingmain
+	 ORDER BY ScripName, ClientCode, ScripCode
+	 
+	 DROP TABLE #tbl_holdingmain
+   END
+   ELSE IF @strProduct IN('DP')
+   BEGIN
+     SELECT ClientCode, ClientName, ScripName, ISIN,
+	 AccountType, Holding = Qty, ClosingPrice, MarketValue = ROUND(Qty* ClosingPrice,2)
+     FROM #tbl_HoldingRepdp
+	 --GROUP BY ClientCode, ClientName, BranchCode, ScripCode, ScripName, ISIN, ClosingPrice, AccountType
+     ORDER BY ScripName, ClientCode, AccountType
+	 DROP TABLE #tbl_HoldingRepdp
+   END
+   SET @o_vcErrorMessage = 'Process Completed'
+  END
+  DROP TABLE #tbl_HoldingRep
+  SET @o_vcErrorFlag  = 'S'
+  RETURN 1
+END
+GO
+
+
+CREATE PROCEDURE sp_LedgerBalance @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, @o_vcErrorMessage VARCHAR(MAX) OUTPUT
+WITH ENCRYPTION
+AS
+BEGIN
+  DECLARE @dtAsOnDate VARCHAR(8), @strUserId VARCHAR(50), @strProduct VARCHAR(50), @strOutputType VARCHAR(1)='', @XMLData XML,
+  @strSelectTag VARCHAR(1)='', @strSelectUsers VARCHAR(500)='', @strString VARCHAR(MAX)='', @strExchSeg VARCHAR(50), @strSplFilter VARCHAR(MAX)='',
+  @strCompanyCode VARCHAR(1)
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+
+  SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+  
+  BEGIN TRY
+  
+  SELECT @dtAsOnDate = ISNULL(x.value('(AsOnDate)[1]', 'VARCHAR(8)'),''),
+  @strProduct = ISNULL(x.value('(AccountType)[1]', 'VARCHAR(50)'),''),
+  @strUserId = ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+  @strExchSeg = ISNULL(x.value('(ExchSeg)[1]', 'VARCHAR(500)'),''),
+  @strSelectTag = ISNULL(x.value('(SelectTag)[1]', 'VARCHAR(1)'),''),
+  @strSelectUsers = ISNULL(x.value('(SelectUsers)[1]', 'VARCHAR(500)'),''),
+  @strOutputType = ISNULL(x.value('(OutputType)[1]', 'VARCHAR(1)'),''),
+  @strSplFilter = ISNULL(x.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''),
+  @strCompanyCode = ISNULL(x.value('(CompanyCode)[1]', 'VARCHAR(1)'),'')
+  FROM @XMLData.nodes('/root') AS XTbl(x) 
+  
+  IF ISNULL(@strCompanyCode,'') = ''
+  BEGIN
+    SET @strCompanyCode = 'A'
+  END
+  
+
+  DECLARE @strCommexConn VARCHAR(50)=''
+  DECLARE @o_tbOutPutTable TABLE(Client_Code VARCHAR(50), LedgerBalance MONEY)
+  SELECT @strCommexConn = LTRIM(RTRIM(OP_DataBase)) 
+  FROM Other_Products(NOLOCK) WHERE OP_Product = 'Commex' and RTRIM(LTRIM(op_status)) = 'A'
+	
+  SET @strString = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) '
+                  +' SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''')  '
+				  +' SELECT ld_clientcd, SUM(LenderBalance) AS LenderBalance FROM( '
+  +' SELECT ld_clientcd,  SUM(ld_amount) LenderBalance '
+  +' FROM LEDGER(NOLOCK), client_master(NOLOCK) CM  WHERE ld_clientcd = CM_CD AND ld_clientcd IN(SELECT Client_Code From @tbl_UserList)'
+  +' AND SUBSTRING(ld_dpid,1,1) ='''+@strCompanyCode+''' '
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @strString =   @strString+' AND '+@strSplFilter
+  END
+  IF ISNULL(@strExchSeg,'') <> ''
+  BEGIN
+    SET @strString =   @strString+' AND ld_dpid IN(SELECT VALUE FROM ReturnTable('''+@strExchSeg+''', '','')) '
+  END
+  SET @strString =  @strString +' GROUP BY ld_clientcd '
+  +' UNION ALL '
+  +' SELECT cm_cd, SUM(ld_amount) LenderBalance  '
+  +' FROM LEDGER(NOLOCK) ld, client_master(NOLOCK) cm  '
+  +' WHERE ld_clientcd = cm.cm_brkggroup '
+  +' and cm_cd iN(SELECT Client_Code From @tbl_UserList) AND SUBSTRING(ld_dpid,1,1) ='''+@strCompanyCode+''' '
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @strString =   @strString+' AND '+@strSplFilter
+  END
+  IF ISNULL(@strExchSeg,'') <> ''
+  BEGIN
+    SET @strString =   @strString+' AND ld_dpid IN(SELECT VALUE FROM ReturnTable('''+@strExchSeg+''', '','')) '
+  END
+  SET @strString =  @strString +' and charindex(''EM'','''+@strProduct+''') > 1 '
+  +' GROUP BY cm_cd '
+ 
+  IF EXISTS(SELECT 1 FROM SYS.TABLES WHERE NAME= 'MrgTdgFin_Clients')
+  BEGIN 
+    SET @strString = @strString +' UNION ALL ' 
+	+' SELECT MTFC_CMCD AS cm_cd, SUM(ld_amount) LenderBalance  '
+    +' FROM Ledger(NOLOCK) ld, MrgTdgFin_Clients(NOLOCK) MTF, Client_MASTER(NOLOCK)  '
+    +' WHERE ld_clientcd =  MTFC_FillerB '
+	+' AND MTFC_CMCD = CM_CD '
+    +' AND MTFC_CMCD iN(SELECT Client_Code From @tbl_UserList) AND SUBSTRING(ld_dpid,1,1) ='''+@strCompanyCode+''''
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @strString =   @strString+' AND '+@strSplFilter
+  END
+  IF ISNULL(@strExchSeg,'') <> ''
+  BEGIN
+    SET @strString =   @strString+' AND ld_dpid IN(SELECT VALUE FROM ReturnTable('''+@strExchSeg+''', '','')) '
+  END
+  SET @strString =  @strString +' AND charindex(''MTF'','''+@strProduct+''') > 1 '
+    +' GROUP BY MTFC_CMCD '
+
+  END
+  IF  @strCommexConn <> ''
+  BEGIN
+    SET @strString = @strString     +' UNION ALL '
+	+ ' SELECT cm.cm_cd, SUM(ld_amount) LenderBalance '
+    +' FROM '+@strCommexConn+'.dbo.Ledger(NOLOCK) ld, '+@strCommexConn+'.dbo.client_master cm  '
+    +' WHERE ld.ld_clientcd = cm.cm_cd '
+    +' and ld_clientcd iN(SELECT Client_Code From @tbl_UserList) AND SUBSTRING(ld_dpid,1,1) ='''+@strCompanyCode+''''
+	IF @strSplFilter <> ''
+    BEGIN
+      SET @strString =   @strString+' AND '+@strSplFilter
+    END
+	IF ISNULL(@strExchSeg,'') <> ''
+    BEGIN
+      SET @strString =   @strString+' AND ld_dpid IN(SELECT VALUE FROM ReturnTable('''+@strExchSeg+''', '','')) '
+    END
+    SET @strString =  @strString +' and charindex(''CX'','''+@strProduct+''')>1 '
+    +' group by cm.cm_cd '
+    +' UNION ALL '
+    +' SELECT cm_cd, SUM(ld_amount) LenderBalance  '
+    +' FROM '+@strCommexConn+'.dbo.Ledger(NOLOCK) ld, '+@strCommexConn+'.dbo.client_master cm   '
+    +' WHERE ld_clientcd = cm.cm_brkggroup '
+    +' and cm_cd iN(SELECT Client_Code From @tbl_UserList) AND SUBSTRING(ld_dpid,1,1) ='''+@strCompanyCode+''''
+	IF @strSplFilter <> ''
+    BEGIN
+      SET @strString =   @strString+' AND '+@strSplFilter
+    END
+	
+	IF ISNULL(@strExchSeg,'') <> ''
+    BEGIN
+      SET @strString =   @strString+' AND ld_dpid IN(SELECT VALUE FROM ReturnTable('''+@strExchSeg+''', '','')) '
+    END
+    SET @strString =  @strString +' and charindex(''CM'','''+@strProduct+''') > 1 '
+    +' GROUP BY cm_cd'
+  END	
+  SET @strString = @strString+' ) X1 '
+    +' GROUP BY ld_clientcd '
+ BEGIN TRY
+   INSERT INTO @o_tbOutPutTable(Client_Code, LedgerBalance)
+   EXEC(@strString)
+ END TRY
+ BEGIN CATCH
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = ERROR_MESSAGE()
+ END CATCH
+ SET @o_vcErrorMessage = 'Process Completed'
+ IF @strOutputType = 'X'
+  BEGIN
+    DECLARE @XMLDATA1 XML
+    SET @XMLDATA1 = (SELECT * FROM @o_tbOutPutTable FOR XML PATH('LedgerBalance'))
+	SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+  END
+  ELSE IF @strOutputType = 'G'
+  BEGIN
+    SELECT Client_Code, LedgerBalance = CAST(ABS(LedgerBalance) AS VARCHAR)+CASE WHEN LedgerBalance >= 0 THEN ' Dr' ELSE  ' Cr' END
+	FROM @o_tbOutPutTable
+  END
+  END TRY
+  BEGIN CATCH
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = ERROR_MESSAGE()
+    RETURN 1
+  END CATCH
+  SET @o_vcErrorFlag  = 'S'
+
+  RETURN 1
+END
+GO
+
+CREATE OR ALTER PROCEDURE stpr_Rpt_OSPositionNew @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, 
+@o_vcErrorMessage VARCHAR(MAX) OUTPUT 
+WITH ENCRYPTION
+AS
+BEGIN
+ /*
+ ///////////////////////////////////////////////////////////////////////////////////////////
+ // Create By     : VAIBHAV GARG
+ // Created Date  : 23-NOV-2023
+ // Description   : 
+ // Reviewed By   : 
+ // Review Date   : 
+ //////////////////////////////////////////////////////////////////////////////////////////
+*/
+  DECLARE @dtAsOnDate VARCHAR(8), @strUserId VARCHAR(50), @strProduct VARCHAR(50), @strOutputType VARCHAR(1)='', @XMLData XML,
+  @strSelectTag VARCHAR(1)='', @strSelectUsers VARCHAR(500)='', @strString VARCHAR(MAX)='', @ExchSeg VARCHAR(100)='', @strStringMin VARCHAR(MAX)='',
+  @strSplFilter VARCHAR(MAX)='', @strCompanyCode VARCHAR(1)='A'
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+  SET @o_vcErrorMessage = '' 
+  SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+
+  SELECT @dtAsOnDate = ISNULL(x.value('(AsOnDate)[1]', 'VARCHAR(8)'),''),
+  @strUserId = ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+  @ExchSeg = ISNULL(x.value('(ExchSeg)[1]', 'VARCHAR(500)'),''),
+  @strSelectTag = ISNULL(x.value('(SelectTag)[1]', 'VARCHAR(1)'),''),
+  @strSelectUsers = ISNULL(x.value('(SelectUsers)[1]', 'VARCHAR(500)'),''),
+  @strOutputType = ISNULL(x.value('(OutputType)[1]', 'VARCHAR(1)'),''),
+  @strSplFilter = ISNULL(x.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''),
+  @strCompanyCode = ISNULL(x.value('(CompanyCode)[1]', 'VARCHAR(1)'),'')
+  FROM @XMLData.nodes('/root') AS XTbl(x) 
+
+   
+  IF ISNULL(@strCompanyCode,'') = ''
+  BEGIN
+    SET @strCompanyCode = 'A'
+  END
+  
+  
+  
+  SET @strStringMin  = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50)) '
+  +' INSERT INTO @tbl_UserList(Client_Code) '
+  +' SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+  
+  CREATE TABLE #tbl_Positions (td_clientcd VARCHAR(50),
+  td_companycode VARCHAR(1), td_exchange VARCHAR(2), td_Segment VARCHAR(1), td_dt VARCHAR(8),
+  td_seriesid [numeric](18, 0), sm_seriesid [numeric](18, 0), sm_symbol VARCHAR(10),
+  sm_sname VARCHAR(30), sm_expirydt VARCHAR(8), buy [numeric](18, 0), sale [numeric](18, 0), net [numeric](18, 0), 
+  sm_multiplier MONEY, td_rate MONEY, CloseRate MONEY, ExpMarginPer MONEY, ExpMargin MONEY ) 
+  
+  BEGIN TRY
+  SET @strString  =  @strStringMin +' SELECT td_clientcd, td_companycode, td_exchange, td_Segment, td_dt, td_seriesid,  sm_seriesid, sm_symbol, '
+  +' sm_sname, sm_expirydt, td_bqty buy, td_sqty sale, td_bqty - td_sqty  net ,sm_multiplier, '
+  +' td_rate, CloseRate = 0 '
+  +' FROM TRADES (NOLOCK), @tbl_UserList X , Series_master(NOLOCK) ##@@CLIENTMASTER@@## '
+  +' WHERE td_dt <= '''+@dtAsOnDate +''' '
+  +' AND td_clientcd  =  X.Client_Code '
+  +' AND td_exchange = sm_exchange and td_segment = sm_segment and td_seriesid = sm_seriesid  '
+  +' AND td_companycode = '''+@strCompanyCode+''' '
+  +' AND ltrim(rtrim(td_groupid)) <> ''B''  '
+  +' AND td_expirydt >= '''+@dtAsOnDate+''' '
+  
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @strString =   @strString+' AND td_clientcd  =  CM_CD and cm_schedule = 49843750 '
+    SET @strString =   @strString+' AND '+@strSplFilter
+	SET @strString = REPLACE(@strString,'##@@CLIENTMASTER@@##',',CLIENT_MASTER(NOLOCK) ')
+  END
+  ELSE
+  BEGIN
+   SET @strString = REPLACE(@strString,'##@@CLIENTMASTER@@##',' ')
+  END
+  IF ISNULL(@ExchSeg,'') <> ''
+  BEGIN
+    SET @strString =   @strString+'  AND td_companycode+td_exchange+td_segment IN(SELECT VALUE FROM  ReturnTable('''+@ExchSeg+''','',''))'
+  END	
+--  SELECT @strString
+  BEGIN TRY
+    INSERT INTO #tbl_Positions( td_clientcd, td_companycode, td_exchange, td_Segment, td_dt, 
+    td_seriesid, sm_seriesid, sm_symbol, sm_sname, sm_expirydt, buy, sale, net, sm_multiplier, td_rate, CloseRate)
+	EXEC(@strString)
+  END TRY
+  BEGIN CATCH
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = ERROR_MESSAGE()
+	DROP TABLE #tbl_Positions
+    RETURN 1
+  END CATCH   
+   
+  
+
+  SET @strString  =  @strStringMin + 'SELECT ex_clientcd, ex_companycode, ex_exchange, EX_Segment, ex_dt, ex_seriesid, sm_seriesid, sm_symbol, sm_sname, sm_expirydt,  '
+  +' ex_aqty  buy ,ex_eqty  sale, ex_eqty - ex_aqty  net, sm_multiplier ,abs(ex_diffbrokrate) AS td_rate, CloseRate = 0 '
+  +' FROM Exercise(NOLOCK), Series_master(NOLOCK) ##@@CLIENTMASTER@@## '
+  +' WHERE ex_exchange = sm_exchange and ex_segment = sm_segment  '
+  +' AND ex_seriesid = sm_seriesid  and ex_companycode = ''A'' '
+  +' AND ex_clientcd  IN(SELECT Client_Code FROM @tbl_UserList) AND ex_companycode = '''+@strCompanyCode+''' '
+  +' AND ex_dt <= '''+@dtAsOnDate+''' and sm_expirydt >= '''+@dtAsOnDate+''' '
+  
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @strString =   @strString+' AND ex_clientcd  =  CM_CD  and cm_schedule = 49843750 '
+    SET @strString =   @strString+' AND '+@strSplFilter
+	SET @strString = REPLACE(@strString,'##@@CLIENTMASTER@@##',',CLIENT_MASTER(NOLOCK) ')
+  END
+  ELSE
+  BEGIN
+   SET @strString = REPLACE(@strString,'##@@CLIENTMASTER@@##',' ')
+  END
+  IF ISNULL(@ExchSeg,'') <> ''
+  BEGIN
+    SET @strString =   @strString+'  AND ex_companycode+ex_exchange+ex_segment IN(SELECT VALUE FROM  ReturnTable('''+@ExchSeg+''','',''))'
+  END	
+
+  BEGIN TRY
+    INSERT INTO #tbl_Positions( td_clientcd, td_companycode, td_exchange, td_Segment, td_dt, 
+    td_seriesid, sm_seriesid, sm_symbol, sm_sname, sm_expirydt, buy, sale, net, sm_multiplier, td_rate, CloseRate)
+	EXEC(@strString)
+  END TRY
+  BEGIN CATCH
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = ERROR_MESSAGE()
+	DROP TABLE #tbl_Positions
+    RETURN 1
+  END CATCH   
+  
+  
+  
+  DECLARE @tbl_closerate TABLE(ms_exchange VARCHAR(1), ms_segment VARCHAR(2), ms_seriesid  [numeric](18, 0), ms_lastprice MONEY)
+  
+  
+  INSERT INTO @tbl_closerate( ms_exchange, ms_segment, ms_seriesid, ms_lastprice)
+  SELECT  ms_exchange, ms_segment,  ms_seriesid, ms_lastprice from Market_summary m
+  where ms_dt = (select max(ms_dt) from Market_summary(NOLOCK) where ms_exchange = m.ms_exchange and ms_segment = m.ms_segment
+  AND ms_seriesid = M.ms_seriesid and ms_dt >= DATEADD(day,-180, @dtAsOnDate) and ms_dt <= @dtAsOnDate)
+  AND exists(select 1 from #tbl_Positions where td_seriesid  = m.ms_seriesid)
+  
+  UPDATE a set a.CloseRate = B.ms_lastprice
+  from #tbl_Positions a, @tbl_closerate B
+  WHERE A.td_exchange = B.ms_exchange
+  AND A.td_seriesid = B.ms_seriesid  
+  AND B.ms_segment = A.td_Segment
+  
+  
+  
+  IF EXISTS(SELECT 1 from(
+  SELECT VALUE as Exchange FROM ReturnTable(@ExchSeg,',')) X1
+  WHERE substring(X1.Exchange,2,1) = 'X')
+  BEGIN
+    DECLARE @SehmentCH_ClgHs VARCHAR(1)=''
+	SELECT @SehmentCH_ClgHs = (CASE WHEN CH_ClgHs = 'I' THEN 'B' ELSE CH_ClgHs END) FROM ClearingHouse(NOLOCK)
+    WHERE CH_CompanyCode = 'A' AND CH_Segment = 'F' 
+	AND CH_EffDt = (SELECT Min(CH_EffDt) FROM ClearingHouse
+	WHERE CH_CompanyCode = 'A' AND CH_Segment = 'F' AND CH_EffDt <= @dtAsOnDate)   
+  
+    DELETE FROM @tbl_closerate
+    
+	INSERT INTO @tbl_closerate( ms_exchange, ms_segment, ms_seriesid, ms_lastprice)
+    SELECT  ms_exchange, ms_segment,  ms_seriesid, ms_lastprice from Market_summary m
+    where ms_dt = (select max(ms_dt) from Market_summary(NOLOCK) where ms_exchange = @SehmentCH_ClgHs and ms_segment = m.ms_segment
+    AND ms_seriesid = M.ms_seriesid and ms_dt >= DATEADD(day,-180, @dtAsOnDate) and ms_dt <= @dtAsOnDate) 
+	AND ms_exchange = @SehmentCH_ClgHs and ms_segment = m.ms_segment
+    AND exists(select 1 from #tbl_Positions where td_seriesid  = m.ms_seriesid)
+  
+    UPDATE a set a.CloseRate = B.ms_lastprice
+    from #tbl_Positions a, @tbl_closerate B
+    WHERE @SehmentCH_ClgHs = B.ms_exchange
+    AND A.td_seriesid = B.ms_seriesid  
+    AND B.ms_segment = A.td_Segment
+  END
+ 
+  
+  ---
+
+  DECLARE @strCommDataBase VARCHAR(50)='', @strCommOwner VARCHAR(50)
+  SELECT @strCommOwner = LTRIM(RTRIM(OP_Owner)), @strCommDataBase = LTRIM(RTRIM(OP_DataBase)) 
+  FROM Other_Products(NOLOCK) WHERE OP_Product = 'Commex'
+  AND OP_Status ='A'
+  
+  
+  IF @strCommDataBase <> ''
+  BEGIN
+    SET @strString  = ' DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) 
+                  SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+    SET @strString  = @strString + ' SELECT td_clientcd, td_companycode, td_exchange, '''' td_Segment, td_dt, td_seriesid,  sm_seriesid, sm_symbol, '
+    +' sm_sname, sm_expirydt, td_bqty buy, td_sqty sale, td_bqty - td_sqty  net ,sm_multiplier, td_rate, CloseRate = 0'
+    +' FROM '+@strCommDataBase+'.'+@strCommOwner+'.TRADES (NOLOCK) , '+@strCommDataBase+'.'+@strCommOwner+'.Series_master(NOLOCK) ##@@CLIENTMASTER@@## '
+    +' WHERE td_exchange = sm_exchange and td_seriesid = sm_seriesid  '
+    +' AND td_companycode = '''+@strCompanyCode+''' '
+    +' AND ltrim(rtrim(td_groupid)) <> ''B''  '
+    +' AND td_clientcd  IN(SELECT Client_Code FROM @tbl_UserList) '
+    +' AND td_dt <= '''+@dtAsOnDate+''' and sm_expirydt >= '''+@dtAsOnDate+''' '
+	IF @strSplFilter <> ''
+    BEGIN
+      SET @strString =   @strString+' AND td_clientcd  =  CM_CD and cm_schedule = 49843750 '
+      SET @strString =   @strString+' AND '+@strSplFilter
+	  SET @strString = REPLACE(@strString,'##@@CLIENTMASTER@@##',','+@strCommDataBase+'.'+@strCommOwner+'.CLIENT_MASTER(NOLOCK) ')
+    END
+    ELSE
+    BEGIN
+     SET @strString = REPLACE(@strString,'##@@CLIENTMASTER@@##',' ')
+    END
+	
+	IF @ExchSeg <> ''
+	BEGIN
+	  SET @strString  = @strString + ' AND td_companycode+td_exchange IN(SELECT SUBSTRING(VALUE,1,2) FROM  ReturnTable('''+@ExchSeg+''','',''))'
+	END
+	
+    BEGIN TRY
+      INSERT INTO #tbl_Positions(td_clientcd, td_companycode, td_exchange, td_Segment,  td_dt, td_seriesid, sm_seriesid, sm_symbol,
+      sm_sname, sm_expirydt, buy, sale, net, sm_multiplier, td_rate, CloseRate)
+	  EXEC(@strString)
+    END TRY
+    BEGIN CATCH
+      SET @o_vcErrorFlag  = 'E'
+      SET @o_vcErrorMessage = ERROR_MESSAGE()
+      RETURN 1
+    END CATCH
+  
+    SET @strString  = ' DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) INSERT INTO @tbl_UserList(Client_Code) 
+                  SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+    SET @strString  = @strString + 'INSERT INTO #tbl_Positions(td_clientcd, td_companycode, td_exchange, td_Segment,  td_dt, td_seriesid, sm_seriesid, sm_symbol, '
+    +' sm_sname, sm_expirydt, buy, sale, net, sm_multiplier, td_rate, CloseRate) '
+    +' SELECT ex_clientcd, ex_companycode, ex_exchange, '''' AS EX_Segment, ex_dt, ex_seriesid, sm_seriesid, sm_symbol, sm_sname, sm_expirydt,  '
+    +' ex_aqty  buy ,ex_eqty  sale, ex_eqty - ex_aqty  net, sm_multiplier ,abs(ex_diffbrokrate) AS td_rate, CloseRate = 0 '
+    +' FROM '+@strCommDataBase+'.'+@strCommOwner+'.Exercise(NOLOCK), '+@strCommDataBase+'.'+@strCommOwner+'.Series_master(NOLOCK) ##@@CLIENTMASTER@@## '
+    +' WHERE ex_exchange = sm_exchange '
+    +' AND ex_seriesid = sm_seriesid  and ex_companycode = '''+@strCompanyCode+''' '
+    +' AND ex_clientcd  IN(SELECT Client_Code FROM @tbl_UserList) '
+    +' AND EX_dt <= '''+@dtAsOnDate+''' and sm_expirydt >= '''+@dtAsOnDate+''' '
+    IF @ExchSeg <> ''
+	BEGIN
+	  SET @strString  = @strString + ' AND ex_companycode+ex_exchange IN(SELECT SUBSTRING(VALUE,1,2) FROM  ReturnTable('''+@ExchSeg+''','',''))'
+	END
+	
+	IF @strSplFilter <> ''
+    BEGIN
+      SET @strString =   @strString+' AND ex_clientcd  =  CM_CD and cm_schedule = 49843750 '
+      SET @strString =   @strString+' AND '+@strSplFilter
+	  SET @strString = REPLACE(@strString,'##@@CLIENTMASTER@@##',','+@strCommDataBase+'.'+@strCommOwner+'.CLIENT_MASTER(NOLOCK) ')
+    END
+    ELSE
+    BEGIN
+     SET @strString = REPLACE(@strString,'##@@CLIENTMASTER@@##',' ')
+    END
+	
+    BEGIN TRY
+      INSERT INTO #tbl_Positions(td_clientcd, td_companycode, td_exchange, td_Segment,  td_dt, td_seriesid, sm_seriesid, sm_symbol,
+      sm_sname, sm_expirydt, buy, sale, net, sm_multiplier, td_rate, CloseRate)
+	  EXEC(@strString)
+    END TRY
+    BEGIN CATCH
+      SET @o_vcErrorFlag  = 'E'
+      SET @o_vcErrorMessage = ERROR_MESSAGE()
+      RETURN 1
+    END CATCH
+  
+    IF EXISTS(SELECT 1 FROM #tbl_Positions WHERE td_Segment = '')
+	BEGIN
+	  SET @strString  = ' SELECT  ms_exchange,  ms_seriesid, ms_lastprice from '+@strCommDataBase+'.'+@strCommOwner+'.Market_summary(NOLOCK) m '
+      +' where ms_dt = (select max(ms_dt) from '+@strCommDataBase+'.'+@strCommOwner+'.Market_summary(NOLOCK) '
+	  +' where ms_exchange = m.ms_exchange '
+      +' AND ms_seriesid = M.ms_seriesid and ms_dt >= DATEADD(day,-180, '''+@dtAsOnDate+''') and  ms_dt <= '''+@dtAsOnDate+''' ) '
+  
+      DELETE FROM @tbl_closerate 
+	  INSERT INTO @tbl_closerate(ms_exchange, ms_seriesid, ms_lastprice)
+	  EXEC(@strString)
+	END  
+	
+    UPDATE a set a.CloseRate = B.ms_lastprice 
+    from #tbl_Positions a, @tbl_closerate B
+    WHERE A.td_exchange =  B.ms_exchange
+    AND A.td_seriesid  = B.ms_seriesid
+	AND CloseRate = 0
+  END
+ 
+  declare @tbl_Segment TABLE(Segmentdpid VARCHAR(20),  CES_Exchange varchar(50), CES_Segment VARCHAR(20))
+  declare @StrSegment VARCHAR(MAX)=''
+  
+  SET @StrSegment  = 'select CES_Cd, LTRIM(RTRIM(CES_Exchange)), CES_Segment as SegmentExchange '
+  +' from CompanyExchangeSegments(NOLOCK) WHERE CES_CompanyCd ='''+@strCompanyCode+''' '
+  +' UNION ALL '
+  +' select CES_Cd, LTRIM(RTRIM(CES_Exchange)), CES_Segment as SegmentExchange '
+  +' from '+@strCommDataBase+'.'+@strCommOwner+'.CompanyExchangeSegments(NOLOCK) WHERE CES_CompanyCd ='''+@strCompanyCode+''' '
+ 
+  INSERT INTO @tbl_Segment(Segmentdpid, CES_Exchange, CES_Segment)
+  exec(@StrSegment)
+  
+  UPDATE A SET A.ExpMarginPer = B.pm_exposuremargin
+  FROM #tbl_Positions A , (SELECT distinct sm_seriesid, pm_exposuremargin
+  from Product_master PR(NOLOCK) , Series_master SR(NOLOCK)
+  WHERE  PR.pm_assetcd = SR.sm_symbol AND pm_cd = SR.sm_productcd and pm_Segment = sm_Segment
+  AND pm_type = sm_prodtype and sm_exchange = pm_exchange) b
+  where a.td_seriesid = b.sm_seriesid
+
+ DECLARE @XMLDATA1 VARCHAR(MAX)=''
+  IF @strOutputType = 'X'
+  BEGIN
+  	  SET @XMLDATA1 = (
+    SELECT td_clientcd As ClientCode, ClientName = cm_name, 
+	Exchange = (case when td_exchange = 'N'  AND ISNULL(td_Segment,'') <> ''  
+	THEN 'NSE' when td_exchange = 'B' THEN 'BSE' 
+    when td_exchange = 'M' THEN 'MCX' ELSE 'NCDEX' END), 
+	Segment = (CASE WHEN td_Segment = 'F' THEN 'F&O' WHEN td_Segment = 'K' THEN 'Curr' else 'Comm' END),
+	--Exchange = CES_Exchange, Segment = CES_Segment,
+	Symbol = sm_symbol, SymbolDesc = sm_sname, ExpiryDdate = sm_expirydt, 
+    Multiplier = sm_multiplier, 
+    SUM(buy) as Buy, 
+    ROUND(CASE SUM(buy) when 0 then 0 else abs(sum(buy*td_rate)/sum(buy))end,2)  BuyAvgRate,  
+    SUM(buy*td_rate*isnull(sm_multiplier,1.00)) BuyValue,
+    sum(sale)  as Sale, 
+    ROUND(CASE SUM(sale) when 0 then 0 else abs(sum(sale*td_rate)/sum(sale)) end,2)  SaleAvgRate, 
+    SUM(sale*td_rate*isnull(sm_multiplier,1.00)) SaleValue,
+    sum(buy-sale) As Net,  
+    ROUND(CASE SUM(buy - sale) when 0 then 0 else sum((buy -sale)*td_rate)/sum(buy-sale) end,2)  as AvgRate, 
+    --round(sum(buy-sale)*ROUND(CASE SUM(buy - sale) when 0 then 0 else sum((buy -sale)*td_rate*isnull(sm_multiplier,1.00))/sum(buy-sale) end,2),2) as NetValue,
+	round(((sum(buy-sale))* max(CloseRate)*isnull(sm_multiplier,1)),2)  NetValue,
+    max(CloseRate) as CloseRate, ProfitLoss =  round((sum(buy-sale)* max(CloseRate)*isnull(sm_multiplier,1)) - 
+    (sum(buy-sale)*   ROUND(CASE SUM(buy - sale) when 0 then 0 else sum((buy -sale)*td_rate*isnull(sm_multiplier,1.00))/sum(buy-sale) end,2)),2),
+    ExpMarginPer = ISNULL(MAX(ExpMarginPer),0), 
+	--ExpMargin  =	ROUND((MAX(ExpMarginPer) * round((sum(buy-sale)* max(CloseRate)*isnull(sm_multiplier,1)) - 
+    --(sum(buy-sale)*   ROUND(CASE SUM(buy - sale) when 0 then 0 else sum((buy -sale)*td_rate*isnull(sm_multiplier,1.00))/sum(buy-sale) end,2)),2))/100,2)
+	ExpMargin  =	ISNULL(ROUND((MAX(ExpMarginPer) * round((abs(sum(buy-sale))* max(CloseRate) * isnull(sm_multiplier,1)),2))/100,2),0)
+    FROM #tbl_Positions X /*LEFT OUTER JOIN @tbl_Segment S 
+	ON('A'+X.td_exchange+X.td_Segment = S.Segmentdpid)*/
+	,Client_master M (nolock)
+    WHERE X.td_clientcd = M.cm_cd
+    GROUP BY  td_clientcd, cm_name, td_companycode, td_exchange, sm_symbol, sm_sname, sm_expirydt, sm_multiplier, 
+	(CASE WHEN td_Segment = 'F' THEN 'F&O' WHEN td_Segment = 'K' THEN 'Curr' else 'Comm' END), td_Segment--, 
+	--CES_Exchange, CES_Segment
+    HAVING SUM(buy - sale) <> 0 
+    ORDER BY td_clientcd, (case when td_exchange = 'N'  AND ISNULL(td_Segment,'') <> ''  
+	THEN 'NSE' when td_exchange = 'B' THEN 'BSE' 
+    when td_exchange = 'M' THEN 'MCX' ELSE 'NCDEX' END), (CASE WHEN td_Segment = 'F' THEN 'F&O' WHEN td_Segment = 'K' THEN 'Curr' else 'Comm' END), 
+	sm_sname FOR XML PATH('OSPosition'))
+	SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+  END
+  ELSE IF @strOutputType = 'G'
+  BEGIN
+    SELECT td_clientcd As ClientCode, ClientName = cm_name, 
+	Exchange = (case when td_exchange = 'N'  AND ISNULL(td_Segment,'') <> ''  
+	THEN 'NSE' when td_exchange = 'B' THEN 'BSE' 
+    when td_exchange = 'M' THEN 'MCX' ELSE 'NCDEX' END), 
+	Segment = (CASE WHEN td_Segment = 'F' THEN 'F&O' WHEN td_Segment = 'K' THEN 'Curr' else 'Comm' END),
+	--Exchange = CES_Exchange, Segment = CES_Segment,
+	Symbol = sm_symbol, SymbolDesc = sm_sname, ExpiryDdate = sm_expirydt, 
+    Multiplier = sm_multiplier, 
+    SUM(buy) as Buy, 
+    ROUND(CASE SUM(buy) when 0 then 0 else abs(sum(buy*td_rate)/sum(buy))end,2)  BuyAvgRate,  
+    SUM(buy*td_rate*isnull(sm_multiplier,1.00)) BuyValue,
+    sum(sale)  as Sale, 
+    ROUND(CASE SUM(sale) when 0 then 0 else abs(sum(sale*td_rate)/sum(sale)) end,2)  SaleAvgRate, 
+    SUM(sale*td_rate*isnull(sm_multiplier,1.00)) SaleValue,
+    sum(buy-sale) As Net,  
+    ROUND(CASE SUM(buy - sale) when 0 then 0 else sum((buy -sale)*td_rate)/sum(buy-sale) end,2)  as AvgRate, 
+    --round(sum(buy-sale)*ROUND(CASE SUM(buy - sale) when 0 then 0 else sum((buy -sale)*td_rate*isnull(sm_multiplier,1.00))/sum(buy-sale) end,2),2) as NetValue,
+	round(((sum(buy-sale))* max(CloseRate)*isnull(sm_multiplier,1)),2)  NetValue,
+    max(CloseRate) as CloseRate, ProfitLoss =  round((sum(buy-sale)* max(CloseRate)*isnull(sm_multiplier,1)) - 
+    (sum(buy-sale)*   ROUND(CASE SUM(buy - sale) when 0 then 0 else sum((buy -sale)*td_rate*isnull(sm_multiplier,1.00))/sum(buy-sale) end,2)),2),
+    ExpMarginPer = ISNULL(MAX(ExpMarginPer),0), 
+	--ExpMargin  =	ROUND((MAX(ExpMarginPer) * round((sum(buy-sale)* max(CloseRate)*isnull(sm_multiplier,1)) - 
+    --(sum(buy-sale)*   ROUND(CASE SUM(buy - sale) when 0 then 0 else sum((buy -sale)*td_rate*isnull(sm_multiplier,1.00))/sum(buy-sale) end,2)),2))/100,2)
+	ExpMargin  =	ISNULL(ROUND((MAX(ExpMarginPer) * round((abs(sum(buy-sale))* max(CloseRate) * isnull(sm_multiplier,1)),2))/100,2),0)
+    FROM #tbl_Positions X /*LEFT OUTER JOIN @tbl_Segment S 
+	ON('A'+X.td_exchange+X.td_Segment = S.Segmentdpid)*/
+	,Client_master M (nolock)
+    WHERE X.td_clientcd = M.cm_cd
+    GROUP BY  td_clientcd, cm_name, td_companycode, td_exchange, sm_symbol, sm_sname, sm_expirydt, sm_multiplier, 
+	(CASE WHEN td_Segment = 'F' THEN 'F&O' WHEN td_Segment = 'K' THEN 'Curr' else 'Comm' END), td_Segment--, 
+	--CES_Exchange, CES_Segment
+    HAVING SUM(buy - sale) <> 0 
+    ORDER BY td_clientcd, (case when td_exchange = 'N'  AND ISNULL(td_Segment,'') <> ''  
+	THEN 'NSE' when td_exchange = 'B' THEN 'BSE' 
+    when td_exchange = 'M' THEN 'MCX' ELSE 'NCDEX' END), (CASE WHEN td_Segment = 'F' THEN 'F&O' WHEN td_Segment = 'K' THEN 'Curr' else 'Comm' END), 
+	sm_sname
+
+  END
+  DROP TABLE #tbl_Positions
+  END TRY
+  BEGIN CATCH
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = ERROR_MESSAGE()
+	DROP TABLE #tbl_Positions
+    RETURN 1
+  END CATCH
+  SET @o_vcErrorFlag  = 'S'
+  --SET @o_vcErrorMessage = 'Process Completed'
+  RETURN 1
+END
+GO
+
+CREATE OR ALTER PROCEDURE stpr_APICommanProcedure @dsXml VARCHAR(MAX) WITH ENCRYPTION  
+AS
+BEGIN
+  DECLARE @vcXML VARCHAR(MAX)='', @i_vcReportCode VARCHAR(50),
+  @i_vcProjectCode VARCHAR(50)='TradeWebAPI', @i_vcReportCategory VARCHAR(100)='',
+  @o_vcErrorFlag VARCHAR(1)='', @o_vcErrorMessage VARCHAR(MAX)='',@i_vcReportOption VARCHAR(100)='',
+  @strActionName VARCHAR(50), @strOption VARCHAR(50), @strFromDate VARCHAR(8)='', @strToDate VARCHAR(8)='',
+  @strUserid VARCHAR(50)='', @strRequestFrom VARCHAR(1), @strCompanyCode VARCHAR(1), @strLevel VARCHAR(1)='1', @StrBillSettlementNo VARCHAR(20)='', 
+  @StrPlScripCode VARCHAR(20)=''
+  
+  DECLARE @CommanXMLString VARCHAR(MAX) ='<FromDt>##FROMDT##</FromDt><ToDt>##ToDt##</ToDt><AsOnDate>##AsOnDate##</AsOnDate><ExchSeg>##ExchSeg##</ExchSeg><UserId>##UserId##</UserId><Product>##Product##</Product><OutputType>##OutputType##</OutputType>'
+  SET @CommanXMLString = @CommanXMLString+'<SplFilter></SplFilter><RepType>##RepType##</RepType><RepSubType>##RepSubType##</RepSubType>'
+  SET @CommanXMLString = @CommanXMLString+'<CompanyCode>##CompanyCode##</CompanyCode><SettType>##SettType##</SettType>'
+  SET @CommanXMLString = @CommanXMLString+'<SettNo>##SettNo##</SettNo><Option112A>##Option112A##</Option112A>'
+  SET @CommanXMLString = @CommanXMLString+'<OptionBF>##OptionBF##</OptionBF><ClientCode></ClientCode><ScripCode>##ScripCode##</ScripCode>'
+  SET @CommanXMLString = @CommanXMLString+'<DetailReportCode></DetailReportCode><DetailReportCategroy></DetailReportCategroy>'
+  SET @CommanXMLString = @CommanXMLString+'<FIFOTag></FIFOTag><RequestFrom>##RequestFrom##</RequestFrom><MenuOption>##MenuOption##</MenuOption>'
+    
+  IF @dsXml <> ''
+  BEGIN
+   SET @vcXML = @dsXml
+   DECLARE @strNewVal INT = 0
+   IF CHARINDEX('<J_Ui>',@vcXML) > 1
+   BEGIN
+     SET @strNewVal = 1
+   END
+   DECLARE @tbl_InputJSONTable DBO.tb_ParamList ;
+   DECLARE @o_ParameterList varchar(max)='', @o_ParameterListxml XML; 
+   DECLARE @tbl_UserList dbo.UserAccessList;
+  
+   EXEC SP_ParameterXMLRep @dsXml, @o_ParameterList OUTPUT
+   
+  
+   IF ISNULL(@o_ParameterList,'') <> ''
+   BEGIN
+	 SET @o_ParameterListxml = CAST(@o_ParameterList AS XML)
+     INSERT INTO @tbl_InputJSONTable (ParameterName,  ParameterValue, HeaderName, Jsontag) 
+     SELECT Parameter.value('(ColumnName)[1]', 'VARCHAR(MAX)') AS Client_Code ,
+     Parameter.value('(ColumnValue)[1]', 'VARCHAR(MAX)') AS ColumnValue,
+	 Parameter.value('(MasterTag)[1]', 'VARCHAR(MAX)') AS MasterTag,
+	 Parameter.value('(JsonLevel)[1]', 'VARCHAR(MAX)') AS JsonLevel
+     FROM @o_ParameterListxml.nodes('/Parameter') AS XTbl(Parameter)
+	 
+	 SELECT @strActionName = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'ActionName'
+	 SELECT @strOption = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Option'
+	 SELECT @strFromDate = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'FromDate'
+	 SELECT @strToDate = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'ToDate'
+	 SELECT TOP 1 @strUserid = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Userid'
+	 SELECT @strRequestFrom = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'RequestFrom'
+	 SELECT @strLevel = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Level'
+	 SELECT @StrBillSettlementNo = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'SettlementNo'
+	 SELECT @StrPlScripCode = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Scrip'
+	 IF ISNULL(@StrPlScripCode,'') = ''
+	 BEGIN
+	   SELECT @StrPlScripCode = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'ScripCd'
+	 END  
+	 
+	 IF ISNULL(@strFromDate,'') =''
+	 BEGIN
+	   SET @strFromDate = ''
+	 END
+	 
+	 IF ISNULL(@strToDate,'') =''
+	 BEGIN
+	   SET @strToDate = ''
+	 END
+	 
+	 IF isnull(@strFromDate,'') = '' and isnull(@strToDate,'') = ''
+	 BEGIN
+	   SELECT @strFromDate = MAX(FM_DT) FROM Fmargins(NOLOCK) 
+	 END
+	 IF ISNULL(@strUserid,'') = ''
+	 BEGIN
+	   SELECT '<Flag>E</Flag><Message>'+ERROR_MESSAGE()+'</Message>'
+	   RETURN 1
+	 END
+	 
+	 SELECT @strCompanyCode = em_cd 
+	 FROM Entity_Master with (nolock) where em_cd =(select min(em_cd) from Entity_master)
+	 
+	 SET @CommanXMLString = REPLACE(@CommanXMLString,'##FROMDT##',@strFromDate)
+	 
+ 
+	 IF ISNULL(@strToDate,'') = ''
+	 BEGIN
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ToDt##',@strFromDate)
+	 END
+	 ELSE
+	 BEGIN
+	   IF @strOption <> 'LEDGER'
+	   BEGIN
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##ToDt##',@strToDate)
+	   END
+       ELSE
+	   BEGIN
+		 SELECT @strToDate = CONVERT(VARCHAR,DATEFROMPARTS(CASE WHEN MONTH(CAST(@strToDate AS DATE)) >= 4 THEN YEAR(CAST(@strToDate AS DATE)) + 1 
+		 ELSE YEAR(CAST(@strToDate AS DATE)) END, 3, 31),112)
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##ToDt##',@strToDate)
+	   END	  
+	 END  
+	 SET @CommanXMLString = REPLACE(@CommanXMLString,'##AsOnDate##',@strFromDate)
+	 SET @CommanXMLString = REPLACE(@CommanXMLString,'##UserId##',@strUserid)
+	 SET @CommanXMLString = REPLACE(@CommanXMLString,'##CompanyCode##',@strCompanyCode)
+	 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RequestFrom##',@strRequestFrom)
+	 SET @CommanXMLString = REPLACE(@CommanXMLString,'##MenuOption##',@strOption)
+
+     
+	 IF @strActionName = 'TradeWeb' and @strOption = 'BILL'
+	 BEGIN
+	   DECLARE @strBillSegment VARCHAR(50)=''
+	   SELECT @strBillSegment = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Segment'
+	   IF isnull(@strBillSegment,'') = ''
+	   BEGIN
+	     SET @strBillSegment = 'CASH'
+		 SELECT @StrBillSettlementNo = se_stlmnt FROM Settlements(NOLOCK) 
+		 WHERE SE_STDT = @strToDate AND se_exchange = 'N' AND se_type ='Q' 
+	   END
+	   
+	   SET @i_vcReportCode = 'BILL'
+	   IF @strBillSegment = 'CASH'
+	   BEGIN
+	     SET @i_vcReportCategory ='Cash_Summary'
+       END
+	   ELSE IF @strBillSegment = 'DERV'
+	   BEGIN
+	     SET @i_vcReportCategory ='Derv_Summary'
+	   END
+	   
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##',@strBillSegment)  
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##SettNo##',@StrBillSettlementNo)  
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Summary') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##SettType##','')
+       SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##','')
+       SET @CommanXMLString = REPLACE(@CommanXMLString,'##OptionBF##','')	
+       SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+   
+	 END 
+     ELSE 
+     IF @strActionName = 'TradeWeb' and @strOption in('PROFITLOSS','PROFITLOSSSUMMARY')
+	 BEGIN
+	   DECLARE @strPLSegment VARCHAR(50)='DERV', @StrplExchange VARCHAR(20)=''
+	   SELECT @strPLSegment = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Segment'
+	   SELECT @StrPlExchange = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Exchange'
+	   
+	   SET @i_vcReportCode = 'InvestorReport'
+	   IF @strPLSegment = 'CASH'
+	   BEGIN
+	     IF @strRequestFrom = 'W'
+		 BEGIN
+	       IF @strLevel = '1'
+		   BEGIN
+		     SET @i_vcReportCategory ='Cash_ScripWise Summary'
+		     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Cash_ScripWise Summary') 
+		     SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##','') 
+		   END
+		    ELSE IF @strLevel = '2'
+		   BEGIN
+		     SET @i_vcReportCategory ='Cash_ScripWise Summary'
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Cash_ScripWise Summary') 
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##',@StrPlScripCode) 
+		   END
+		 END
+         ELSE
+		 BEGIN
+		   IF @strLevel = '1'
+		   BEGIN
+		     SET @i_vcReportCategory ='MCash_ScripWise Summary'
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Cash_ScripWise Summary') 
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##','') 
+			 IF @strOption = 'PROFITLOSSSUMMARY'
+			 BEGIN
+			   SET @i_vcReportCategory ='MCash_Summary'
+			   SET @CommanXMLString = @CommanXMLString+'<RequestSummary>Y</RequestSummary>'
+			   SET @strOption = 'PROFITLOSS'
+			 END
+			 ELSE
+			 BEGIN
+			   SET @CommanXMLString = @CommanXMLString+'<RequestSummary>N</RequestSummary>'
+			 END  
+		   END
+           ELSE IF @strLevel = '2'
+		   BEGIN
+		     SET @i_vcReportCategory ='Cash_ScripWise Summary'
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Cash_ScripWise Summary') 
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##',@StrPlScripCode) 
+		   END
+		 END
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','Market Rate') 
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##OptionBF##','N')	
+       END
+	   ELSE IF @strPLSegment = 'DERV'
+	   BEGIN
+	     IF @strRequestFrom = 'W'
+		 BEGIN
+		   IF @strLevel = '1'
+		   BEGIN
+	         SET @i_vcReportCategory ='DERV_Series Wise'
+		     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Series Wise') 
+		     SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##','')
+		   END
+           ELSE IF @strLevel = '2'
+		   BEGIN
+		     SET @i_vcReportCategory ='DERV_Series Wise Detail'
+		     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Series Wise Detail') 
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##',@StrPlScripCode) 
+		   END		   
+		 END
+         ELSE
+		 BEGIN
+		   IF @strLevel = '1'
+		   BEGIN
+		     SET @i_vcReportCategory ='MDERV_Series Wise'
+		     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Series Wise') 
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##','')
+			  IF @strOption = 'PROFITLOSSSUMMARY'
+			 BEGIN
+			   SET @i_vcReportCategory ='MDERV_Summary'
+			   SET @CommanXMLString = @CommanXMLString+'<RequestSummary>Y</RequestSummary>'
+			   SET @strOption = 'PROFITLOSS'
+			 END
+			 ELSE
+			 BEGIN
+			   SET @CommanXMLString = @CommanXMLString+'<RequestSummary>N</RequestSummary>'
+			 END  
+		   END	 
+		   ELSE IF @strLevel = '2'
+		   BEGIN
+		     SET @i_vcReportCategory ='DERV_Series Wise'
+		     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Series Wise') 
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##',@StrPlScripCode) 
+		   END
+		 END
+	     --SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','Do not Valuate') 
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','Closing Premium') 
+		 
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##OptionBF##','Y')	
+	   END
+	   
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##',@strPLSegment)  
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##SettNo##','')  
+
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##SettType##','')
+       SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##','')
+       
+       SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##',@StrPlExchange)
+	 END  
+	 ELSE 
+     IF @strActionName = 'TradeWeb' and @strOption = 'LEDGER'
+	 BEGIN
+	   DECLARE @strLedgerReportType VARCHAR(50)='', @strIncludeMTF VARCHAR(1)
+	   SELECT @strLedgerReportType = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'ReportType'
+	   SELECT @strIncludeMTF = (CASE WHEN ParameterValue = 'true' THEN 'Y' 
+	   WHEN ParameterValue = 'False' THEN 'N' else ParameterValue END) FROM @tbl_InputJSONTable WHERE ParameterName = 'IncludeMTF'
+	   if ISNULL(@strLedgerReportType,'')=''
+	   BEGIN
+	     SET @strLedgerReportType = 'Trading' 
+	   END
+	   
+	   if ISNULL(@strIncludeMTF,'')=''
+	   BEGIN
+	     SET @strIncludeMTF = 'Y' 
+	   END
+	   IF @strRequestFrom = 'W'
+	   BEGIN
+	     IF @strLevel = '1'
+		 BEGIN
+	       SET @i_vcReportCategory ='Trading_Detail'
+		   SET @i_vcReportCode = 'Ledger'
+		 END
+         ELSE IF @strLevel = '2'
+         BEGIN
+		   DECLARE @LedLookUp VARCHAR(100)=''
+		   SELECT @LedLookUp = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'LookUp' 
+		   SET @CommanXMLString = @CommanXMLString+'<LookUp>'+ISNULL(@LedLookUp,'')+'</LookUp>'
+		   SET @i_vcReportCode = 'BILL'
+		   IF SUBSTRING(@LedLookUp,3,1) ='C'
+		   BEGIN
+	         SET @i_vcReportCategory ='Cash_Summary'
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','CASH')  
+		   END
+           ELSE IF SUBSTRING(@LedLookUp,3,1) ='F'		   
+		   BEGIN
+		     SET @i_vcReportCategory ='Derv_Summary'
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','DERV')  
+		   END
+		   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Summary') 
+	       SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','') 
+	       SET @CommanXMLString = REPLACE(@CommanXMLString,'##SettType##','')
+           SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##','')
+           SET @CommanXMLString = REPLACE(@CommanXMLString,'##OptionBF##','')	
+           SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+         END		 
+	   END
+	   ELSE IF @strRequestFrom = 'M'
+	   BEGIN
+	     SET @i_vcReportCategory ='MTrading_Detail'
+		 SET @i_vcReportCode = 'Ledger'
+	   END
+	   
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   IF @strLedgerReportType IN('Trading') 
+	   BEGIN
+	     IF ISNULL(@strIncludeMTF,'N') = 'Y'
+		 BEGIN
+	       SET @CommanXMLString = @CommanXMLString+'<AccountType>MTF,CX</AccountType>'
+		 END
+         ELSE
+         BEGIN
+		   SET @CommanXMLString = @CommanXMLString+'<AccountType>EM,CX</AccountType>'
+         END 		 
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','Trading') 
+	   END 
+	   ELSE
+	   BEGIN
+	     SET @CommanXMLString = @CommanXMLString+'<AccountType>EM,MTF,CX,CM</AccountType>'
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','DP') 
+	   END 
+	 END 
+	 IF @strActionName = 'TradeWeb' and @strOption = 'LedgerBalance'
+	 BEGIN
+	   DECLARE @strLedgerBReportType VARCHAR(50)='', @strIncludeBMTF VARCHAR(1)
+	   SELECT @strLedgerBReportType = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'ReportType'
+	   SELECT @strIncludeBMTF = (CASE WHEN ParameterValue = 'true' THEN 'Y' 
+	   WHEN ParameterValue = 'False' THEN 'N' else ParameterValue END) FROM @tbl_InputJSONTable WHERE ParameterName = 'IncludeMTF'
+	   if ISNULL(@strLedgerBReportType,'')=''
+	   BEGIN
+	     SET @strLedgerBReportType = 'Trading' 
+	   END
+	   
+	   if ISNULL(@strIncludeBMTF,'')=''
+	   BEGIN
+	     SET @strIncludeBMTF = 'Y' 
+	   END
+	   IF @strRequestFrom = 'W'
+	   BEGIN
+	     SET @i_vcReportCategory ='Trading_Detail'
+	   END
+	   ELSE IF @strRequestFrom = 'M'
+	   BEGIN
+	     SET @i_vcReportCategory ='MTrading_Detail'
+	   END
+	   
+	   SET @i_vcReportCode = 'LedgerBalance'
+	    SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   IF @strLedgerReportType IN('Trading') 
+	   BEGIN
+	     IF ISNULL(@strIncludeBMTF,'N') = 'Y'
+		 BEGIN
+	       SET @CommanXMLString = @CommanXMLString+'<AccountType>EM,MTF,CX,CM</AccountType>'
+		 END
+         ELSE
+         BEGIN
+		   SET @CommanXMLString = @CommanXMLString+'<AccountType>EM,CX,CM</AccountType>'
+         END 		 
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','Trading') 
+	   END 
+	   ELSE
+	   BEGIN
+	     SET @CommanXMLString = @CommanXMLString+'<AccountType>EM,MTF,CX,CM</AccountType>'
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','DP') 
+	   END 
+	 END 
+	 ELSE
+	 IF @strActionName = 'TradeWeb' and @strOption = 'DASHBOARD'
+	 BEGIN
+	  declare @dsUserid VARCHAR(50)='', @dsReportType VARCHAR(50)='', @dsTag VARCHAR(100)='', @dsDescName VARCHAR(100)=''
+	  SELECT @dsUserid = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Userid'
+	  SELECT @dsReportType = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'ReportType'
+	  SELECT @dsTag = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Tag'
+	  SELECT @dsDescName = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'DescName'
+	  SET @CommanXMLString = '<UserId>'+@dsUserid+'</UserId><RepType>'+@dsReportType+'</RepType><Tag>'+@dsTag+'</Tag><DescName>'+@dsDescName+'</DescName>'
+	  SET @strNewVal = 2
+	  SET @i_vcReportCategory ='TRADING'
+	  SET @i_vcReportCode = 'DASHBOARD'
+	 END 
+	 ELSE
+	 IF @strActionName = 'TradeWeb' and @strOption = 'HOLDING'
+	 BEGIN
+	    DECLARE @OSProduct VARCHAR(20)=''
+	    SELECT @OSProduct = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Product'
+		
+		IF ISNULL(@OSProduct,'') = ''
+	    BEGIN
+	      SET @OSProduct = 'Trading'
+		END	 
+		
+		IF ISNULL(@OSProduct,'') = 'Trading'
+	    BEGIN
+	      SET @i_vcReportCategory = 'Trading'
+		END	 
+		ELSE IF ISNULL(@OSProduct,'') = 'DP'
+		BEGIN
+		  SET @i_vcReportCategory ='DP'
+		END
+		
+	    IF @strRequestFrom = 'W'
+	    BEGIN
+	      SET @i_vcReportCode = 'CombinedHolding'
+		  --SET @i_vcReportCategory ='TRADING'
+		END
+		
+        ELSE IF @strRequestFrom = 'M'
+	    BEGIN
+		   IF @strLevel = '1'
+		   BEGIN
+	         SET @i_vcReportCode = 'CombinedHolding'
+		     SET @i_vcReportCategory ='MTRADING'
+		   END
+           ELSE IF @strLevel = '2'
+		   BEGIN
+	         SET @i_vcReportCode = 'CombinedHolding'
+		     SET @i_vcReportCategory ='TRADING'
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##',@StrPlScripCode)
+		   END
+		END		
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##',@OSProduct)
+       --select @CommanXMLString
+	 END  	
+     ELSE
+	 IF @strActionName = 'TradeWeb' and @strOption = 'OSPosition'
+	 BEGIN
+	   DECLARE @OSSegment VARCHAR(10)='', @ex varchar(100)=''
+	   SELECT @OSSegment = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Segment'
+	   
+	   SELECT @ex =@ex +','+ ces_Cd FROM CompanyExchangeSegments(NOLOCK) 
+       WHERE  RIGHT(CES_cD,1) =  (CASE WHEN @OSSegment = 'DERV' THEN 'F'
+       WHEN @OSSegment = 'CURR' THEN 'K'
+       WHEN @OSSegment = 'COMM' THEN 'X' ELSE '' END)
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##',@ex) 
+	   IF @strRequestFrom = 'W'
+	   BEGIN
+	     SET @i_vcReportCategory ='MOBILE'
+	     SET @i_vcReportCode = 'OSPosition'
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','DERV') 
+		 SET @CommanXMLString = @CommanXMLString+'<ReportName>OPENPOS</ReportName>'
+	   END
+       ELSE
+	   BEGIN
+	     SET @i_vcReportCategory ='MOBILE'
+	     SET @i_vcReportCode = 'OSPosition'
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','DERV') 
+		 SET @CommanXMLString = @CommanXMLString+'<ReportName>OPENPOS</ReportName>'
+	   END  
+	   
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','Trading') 
+	 END 
+	 IF @strActionName = 'TradeWeb' and @strOption = 'Collateral'
+	 BEGIN
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','') 
+	   SET @i_vcReportCategory ='Pledge'
+	   SET @i_vcReportCode = 'COLLPOS'
+  	   SET @CommanXMLString = @CommanXMLString+'<ReportName>COLLPOS</ReportName>'
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','Trading') 
+	 END 
+	 
+     ELSE
+	 IF @strActionName = 'TradeWeb' and @strOption = 'CGain'
+	 BEGIN
+	   DECLARE @strOption112A VARCHAR(1)='N', @strCGReportType VARCHAR(10)=''
+	   
+	   SET @i_vcReportCode = 'CaptialGain'
+	   SELECT @strOption112A = (case when ParameterValue = 'true' then 'Y'  
+	   WHEN ParameterValue = 'False' THEN 'N' ELSE ParameterValue END)
+	   FROM @tbl_InputJSONTable WHERE ParameterName = 'Option112A'
+	   if ISNULL(@strOption112A,'') = ''
+	   BEGIN
+	     SET @strOption112A = 'N'
+	   END
+	   SELECT @strCGReportType = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'ReportType'
+	   IF ISNULL(@strCGReportType,'') = ''
+	   BEGIN
+	     SET @strCGReportType = 'Summary'
+	   END
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','CASH') 
+	   IF @strCGReportType = 'Detail'
+	   BEGIN
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Actual PL_Detail') 
+	     SET @i_vcReportCategory ='Actual PL_Detail'	 
+		 SET @CommanXMLString = @CommanXMLString+'<POS>N</POS>'
+	   END
+	   ELSE
+	   IF @strCGReportType = 'Summary'
+	   BEGIN
+	     IF @strRequestFrom = 'W'
+	     BEGIN
+		   IF @strLevel = '1'
+		   BEGIN
+	         SET @i_vcReportCategory ='Actual PL_Summary'	 
+		     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Actual PL_Summary') 
+		     SET @CommanXMLString = @CommanXMLString+'<POS>N</POS>'		
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##','') 
+		   END	 
+		   ELSE IF @strLevel = '2'
+		   BEGIN
+	         SET @i_vcReportCategory ='Actual PL_Detail'	 
+		     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Actual PL_Detail') 
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##',@StrPlScripCode) 			 
+		     SET @CommanXMLString = @CommanXMLString+'<POS>N</POS>'		
+		   END	 
+		 end
+		 ELSE
+	     IF @strRequestFrom = 'M'
+	     BEGIN
+		   IF @strLevel = '1'
+		   BEGIN
+		     SET @i_vcReportCategory ='MActual PL_Summary'
+             SET @CommanXMLString = @CommanXMLString+'<POS>N</POS>'		   
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Actual PL_Summary') 
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##','') 
+		   END
+		   ELSE IF @strLevel = '2'
+		   BEGIN
+		     SET @i_vcReportCategory ='Actual PL_Detail'
+             SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Actual PL_Detail')	
+             SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##',@StrPlScripCode) 			 
+			 SET @CommanXMLString = @CommanXMLString+'<POS>N</POS>'		
+		   END
+		 END
+	   END
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##',@strOption112A)
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##','') 
+	 END  
+     ELSE
+	 IF @strActionName = 'TradeWeb' and @strOption = 'CGainListing'
+	 BEGIN
+	   SET @CommanXMLString = @CommanXMLString+'<ReportName>CapitalGain</ReportName>'
+	   SET @i_vcReportCode = 'CapitalGain'
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','TradeListing') 
+	   IF @strRequestFrom = 'W'
+	   BEGIN
+	   	SET @i_vcReportCategory ='TradeListing'	 
+	   END
+	   ELSE 
+	   IF @strRequestFrom = 'M'
+	   BEGIN
+	     SET @i_vcReportCategory ='MTradeListing'
+	   END
+
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','ItemWise') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##','')
+	 END  
+     ELSE
+     IF @strActionName = 'TradeWeb' and @strOption = 'CGainHolding'
+	 BEGIN
+	   DECLARE @strCHOption112A VARCHAR(1)='N', @strCHReportType VARCHAR(10)=''
+	   
+	   SET @i_vcReportCode = 'CaptialGain'
+	   SELECT @strCHOption112A = (case when ParameterValue = 'true' then 'Y'  
+	   WHEN ParameterValue = 'False' THEN 'N' ELSE ParameterValue END) FROM @tbl_InputJSONTable WHERE ParameterName = 'Option112A'
+	   SELECT @strCHReportType = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'ReportType'
+	   
+	   if ISNULL(@strCHOption112A,'') = ''
+	   BEGIN
+	     SET @strCHOption112A = 'N'
+	   END
+	   IF ISNULL(@strCHReportType,'') = ''
+	   BEGIN
+	     SET @strCHReportType = 'Summary'
+	   END
+	   
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','CASH') 
+	   IF @strCHReportType = 'Detail'
+	   BEGIN
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Notional_Detail') 
+	     SET @i_vcReportCategory ='Notional_Detail'	 
+	   END
+	   ELSE
+	   IF @strCHReportType = 'Summary'
+	   BEGIN
+	     IF @strRequestFrom = 'W'
+	     BEGIN
+		   IF @strLevel = '1'
+		   BEGIN
+		     SET @i_vcReportCategory ='Notional_Summary'	 
+		     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Notional_Summary')
+		   END
+           ELSE IF @strLevel = '2'
+		   BEGIN
+		     SET @i_vcReportCategory ='Notional_Detail'	 
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Notional_Detail')
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##',@StrPlScripCode) 	
+		   END
+		 END
+	     ELSE IF @strRequestFrom = 'M'
+		 BEGIN
+		   IF @strLevel = '1'
+		   BEGIN
+		     SET @i_vcReportCategory ='MNotional_Summary'	 
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Notional_Summary')
+		   END
+           ELSE IF @strLevel = '2'
+		   BEGIN
+		     SET @i_vcReportCategory ='Notional_Detail'	 
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Notional_Detail')
+			 SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##',@StrPlScripCode) 	
+		   END
+		 END
+	   END
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##',@strCHOption112A)
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##','') 	
+	 END 
+	 ELSE
+	 IF @strActionName = 'TradeWeb' and @strOption IN('Margin','AvailableMargin')
+	 BEGIN
+	   SET @i_vcReportCode = 'Margin_NEW'
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','CASH') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##','')
+	   SET @i_vcReportCategory ='ShortFall'	 
+	   SET @CommanXMLString = @CommanXMLString+'<ReportName>Margin_NEW</ReportName>'
+	 END 
+	 ELSE
+	 IF @strActionName = 'TradeWeb' and @strOption IN('Margin1')
+	 BEGIN
+	   SET @i_vcReportCode = 'Margin1'
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','CASH') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##','')
+	   SET @i_vcReportCategory ='ShortFall'	 
+	   SET @CommanXMLString = @CommanXMLString+'<ReportName>Margin1</ReportName>'
+	 END 
+	 ELSE
+	 IF @strActionName = 'TradeWeb' and @strOption IN('Margin2')
+	 BEGIN
+	   SET @i_vcReportCode = 'Margin2'
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','CASH') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##','')
+	   SET @i_vcReportCategory ='ShortFall'	 
+	   SET @CommanXMLString = @CommanXMLString+'<ReportName>Margin2</ReportName>'
+	 END 
+	 ELSE
+	  IF @strActionName = 'TradeWeb' and @strOption = 'Download'
+	  BEGIN
+	   DECLARE @strDownloadSegment VARCHAR(50)=''
+	   SELECT @strDownloadSegment = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Segment'
+	   SET @i_vcReportCode = 'Download'
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##',@strDownloadSegment) 
+	   
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Segment##','') 
+	   DECLARE @strDocumentType VARCHAR(50)='', @strDocumentNo VARCHAR(10)='', @strdocReportType VARCHAR(50)=''
+	   SELECT @strdocReportType = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'RepType'
+	   
+	   SELECT @strDocumentType = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'DocumentType'
+	   SELECT @strDocumentNo = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'DocumentNo'
+	   IF @strDocumentType <> '' and @strRequestFrom = 'M'
+	   BEGIN
+	     SET @strDocumentType = ''
+	   END
+	  
+	   IF ISNULL(@strDocumentNo,'') <> '' AND ISNULL(@strdocReportType,'') = ''
+	   BEGIN
+	     SET @strdocReportType = 'DOCUMENT'
+	   END
+	   ELSE IF ISNULL(@strDocumentNo,'') = '' AND ISNULL(@strdocReportType,'')  = ''
+	   BEGIN
+	     SET @strdocReportType = 'LIST'
+	   END
+	  
+	   
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##',@strdocReportType) 
+	   SET @CommanXMLString = @CommanXMLString+'<ReportName>Download</ReportName><DocumentType>'+@strDocumentType+'</DocumentType><DocumentNo>'+@strDocumentNo+'</DocumentNo>'
+	   SET @i_vcReportCategory ='TRADING'	 
+	 END 
+	 ELSE
+	  IF @strActionName = 'TradeWeb' and @strOption = 'IPO'
+	  BEGIN
+	   SET @i_vcReportCode = 'IPO'
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','') 
+	   
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','') 
+	   SET @CommanXMLString = @CommanXMLString+'<ReportName>IPO_GETDATA</ReportName>'
+	   SET @i_vcReportCategory ='GETDATA'	 
+	 END 
+	 ELSE
+     IF @strActionName = 'TradeWeb' and @strOption in('CGainDiviend','CGainDividend')
+	 BEGIN
+	   SET @CommanXMLString = @CommanXMLString+'<ReportName>CapitalGain</ReportName>'
+	   SET @i_vcReportCode = 'CapitalGain'
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','CASH') 
+	   SET @i_vcReportCategory ='Dividend'	 
+	   
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Dividend') 	   
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','ItemWise') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##','')
+	 END 
+	 IF @strActionName = 'TradeListing' and @strOption = 'FIND'
+	 BEGIN
+	   DECLARE @strTRDReportType VARCHAR(20)=''
+	   SELECT @strTRDReportType = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'RepType'
+	   SET @CommanXMLString = @CommanXMLString+'<ReportName>TradeListing</ReportName>'
+	   SET @i_vcReportCode = 'TradeListing'
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ExchSeg##','')
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##','') 
+	   
+	   IF @strTRDReportType = 'SUMMARY'
+	   BEGIN
+	     SET @i_vcReportCategory ='GET_SUMMARY'	 
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','SUMMARY') 	   
+	   END
+	   ELSE
+	   BEGIN
+	     SET @i_vcReportCategory ='GET_DETAIL'	 
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','DETAIL') 	   
+	   END
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','') 
+	   SET @CommanXMLString = REPLACE(@CommanXMLString,'##Option112A##','')
+	 END 
+	 ELSE
+	 IF @strActionName = 'TradeWeb' and @strOption = 'Transaction'
+	 BEGIN
+	   DECLARE @strtrReportType VARCHAR(50)='Trades', @strtrReportView varchar(50)='ItemWise', @strtrSegment VARCHAR(50)='CASH'
+	   SELECT @strtrReportType = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'ReportType'
+	   SELECT @strtrReportView = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'ReportView'
+	   SELECT @strtrSegment = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Segment'
+	   
+	   IF @strtrSegment = 'DERV'
+	   BEGIN
+	     SET @strtrSegment = 'FO'
+	   END
+	   
+	   SET @CommanXMLString = @CommanXMLString+'<ReportName>Transaction</ReportName>'
+	   SET @i_vcReportCode = 'Transaction'
+	   
+	   IF @strtrReportType = 'Trades'
+	   BEGIN
+	     IF @strLevel = '1'
+		 BEGIN
+	       SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','TradeSummary') 	   
+		   SET @i_vcReportCategory ='TradeSummary_'+@strtrReportView	 
+		   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##',@strtrReportView) 
+		 END
+         ELSE IF @strLevel = '2' 		 
+		 BEGIN
+		   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','TradeSummary') 	   
+		   SET @i_vcReportCategory ='TradeSummary_DateWise'	 
+		   SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##','DateWise') 
+		   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##',@StrPlScripCode)
+		 END
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##',@strtrSegment) 
+	   END
+	   ELSE
+	   IF @strtrReportType = 'Deliveries'
+	   BEGIN
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Deliveries') 	   
+		 SET @i_vcReportCategory ='Deliveries_'+@strtrReportView	 
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##',@strtrReportView) 
+	   END
+	   ELSE
+	   IF @strtrReportType = 'Receipts'
+	   BEGIN
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Receipts') 	   
+		 SET @i_vcReportCategory ='Receipts'
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##',@strtrReportView) 
+	   END
+	   ELSE
+	   IF @strtrReportType = 'Payments'
+	   BEGIN
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Payments') 	   
+		 SET @i_vcReportCategory ='Payments'
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##',@strtrReportView) 
+	   END
+	   ELSE
+	   IF @strtrReportType = 'Journals'
+	   BEGIN
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Journals') 	   
+		 SET @i_vcReportCategory ='Journals'
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##',@strtrReportView) 
+	   END
+	   ELSE
+	   IF @strtrReportType = 'Bills'
+	   BEGIN
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','Bills') 	   
+		 SET @i_vcReportCategory ='Bills'
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##',@strtrReportView) 
+		 
+	   END
+	   ELSE
+	   IF @strtrReportType = 'AGTS'
+	   BEGIN
+	     SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepType##','AGTS') 	   
+		 SELECT @i_vcReportCategory = 'AGTS_'+(CASE WHEN @strtrSegment = 'FX' THEN 'FO' ELSE @strtrSegment END)
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##RepSubType##',@strtrSegment+'_'+@strtrReportView) 
+		 SET @CommanXMLString = REPLACE(@CommanXMLString,'##Product##',@strtrSegment) 
+	   END
+	 END 
+   END
+   
+   SET @CommanXMLString = REPLACE(@CommanXMLString,'##ScripCode##','')
+   
+   IF @i_vcReportCode IN('LEDGER','CombinedHolding','OSPosition',
+   'InvestorReport','CaptialGain','CapitalGain','Transaction','BILL','Margin','COLLPOS','Download','Margin_NEW','Margin1','Margin2')
+   BEGIN
+	 SET @CommanXMLString = REPLACE(@CommanXMLString,'##OutputType##','X')
+   END
+   ELSE
+   BEGIN
+	 SET @CommanXMLString = REPLACE(@CommanXMLString,'##OutputType##','G')
+   END
+ 
+   SELECT @vcXML = @CommanXMLString
+   --SELECT @vcXML
+   EXEC stpr_Rpt_GridReports @vcXML, @i_vcProjectCode, @i_vcReportCode, @i_vcReportCategory, @o_vcErrorFlag OUTPUT, @o_vcErrorMessage OUTPUT, @strNewVal
+ END
+END
+GO
+
+CREATE OR ALTER PROCEDURE [dbo].[stpr_Rpt_GridReports] @vcXML NVARCHAR(MAX)='', 
+@i_vcProjectCode VARCHAR(50), 
+@i_vcReportCode VARCHAR(50), @i_vcReportCategory VARCHAR(50), @o_vcErrorFlag VARCHAR(1) OUTPUT, @o_vcErrorMessage VARCHAR(MAX) OUTPUT,
+@strNewVal INT = 0 WITH ENCRYPTION  
+AS
+BEGIN
+ /*
+ ///////////////////////////////////////////////////////////////////////////////////////////
+ // Create By     : VAIBHAV GARG
+ // Created Date  : 12-DEC-2023
+ // Description   : 
+ // Reviewed By   : 
+ // Review Date   : 
+ //////////////////////////////////////////////////////////////////////////////////////////
+*/
+ --- Parameter Declaration
+
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+  DECLARE @strString NVARCHAR(MAX)='',
+    @OutputValue varchar(10)='',
+    @outputmessage VARCHAR(MAX)='', @vcProcedureName VARCHAR(50)=''
+  --SELECT @i_vcProjectCode, @i_vcReportCode, @i_vcReportCategory
+  SELECT TOP 1 @vcProcedureName = ProcedureName 
+  FROM tbl_ReportGridViewFormat (NOLOCK) 
+  WHERE ProductCode = @i_vcProjectCode AND ReportCode = @i_vcReportCode AND ReportCategroy = @i_vcReportCategory;
+  IF @vcProcedureName = ''
+  BEGIN
+    SELECT TOP 1 @vcProcedureName = ProcedureName 
+    FROM tbl_ReportGridViewFormat (NOLOCK) 
+    WHERE ProductCode = '' AND ReportCode = @i_vcReportCode AND ReportCategroy = @i_vcReportCategory;
+  END
+    
+  SET @vcXML = REPLACE(@vcXML,'''','''''')
+
+
+  SET @strString = 'EXEC DBO.' + @vcProcedureName + ' ''' + @vcXML + ''', @o_vcErrorFlag OUTPUT, @o_vcErrorMessage OUTPUT';
+  
+  BEGIN TRY
+    IF @strNewVal = 0 
+	BEGIN
+      IF EXISTS(SELECT 1 FROM tbl_ReportGridViewFormat(NOLOCK) 
+      WHERE ProductCode = @i_vcProjectCode AND ReportCode = @i_vcReportCode
+      AND ReportCategroy = @i_vcReportCategory)
+	  BEGIN
+        SELECT ColumnType, ColumnName, ColumnHeading, ColumnWidth, ColumnAlignement, ColumnFormat, 
+		ColumnStyle, DecimalPlace, ColumnTotal, OrderBy--, DetailProductCode, DetailReportCode, DetailReportCategroy, Detailxml
+        FROM tbl_ReportGridViewFormat(NOLOCK) 
+        WHERE ProductCode = @i_vcProjectCode AND ReportCode = @i_vcReportCode
+        AND ReportCategroy = @i_vcReportCategory
+        ORDER BY ORDERBY  
+	  END
+      ELSE	
+	  BEGIN
+	    SELECT ColumnType, ColumnName, ColumnHeading, ColumnWidth, ColumnAlignement, ColumnFormat, 
+		ColumnStyle, DecimalPlace, ColumnTotal, OrderBy--, DetailProductCode, DetailReportCode, DetailReportCategroy, Detailxml
+        FROM tbl_ReportGridViewFormat(NOLOCK) 
+        WHERE ProductCode = '' AND ReportCode = @i_vcReportCode
+        AND ReportCategroy = @i_vcReportCategory
+        ORDER BY ORDERBY  
+	  END
+    END
+	--SELECT @strString
+	EXEC sp_executesql @strString, N'@o_vcErrorFlag VARCHAR(1) OUTPUT, @o_vcErrorMessage VARCHAR(MAX) OUTPUT', @o_vcErrorFlag OUTPUT, @o_vcErrorMessage OUTPUT;
+	DECLARE @XMLData XML, @strUserId VARCHAR(50)='', @strClientName VARCHAR(150)='',
+	@strReportHeader VARCHAR(MAX)='', @AsOnDate VARCHAR(12)='', @ToDt VARCHAR(11)='',
+	@RequestFrom VARCHAR(1)='', @StrMenuOption VARCHAR(100)='', @StrProduct VARCHAR(100)='', @trxRepType VARCHAR(MAX)='', @SettRepType VARCHAR(20)=''
+	SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+  
+    SELECT @strUserId = ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+	@AsOnDate = ISNULL(x.value('(AsOnDate)[1]', 'VARCHAR(12)'),''),
+	@ToDt = ISNULL(x.value('(ToDt)[1]', 'VARCHAR(12)'),''),
+	@RequestFrom = ISNULL(x.value('(RequestFrom)[1]', 'VARCHAR(1)'),''),
+	@StrMenuOption = ISNULL(x.value('(MenuOption)[1]', 'VARCHAR(100)'),''),
+	@StrProduct = ISNULL(x.value('(Product)[1]', 'VARCHAR(100)'),''),
+	@trxRepType = ISNULL(x.value('(RepType)[1]', 'VARCHAR(100)'),''),
+	@SettRepType = ISNULL(x.value('(SettNo)[1]', 'VARCHAR(100)'),'')
+    FROM @XMLData.nodes('/root') AS XTbl(x) 	  
+    --SELECT @o_vcErrorMessage
+	IF @i_vcReportCode IN('LEDGER','CombinedHolding','OSPosition','InvestorReport','CaptialGain',
+	'CapitalGain','Transaction','Bill','Margin','COLLPOS','Download','Margin_NEW','Margin1','Margin2')
+	BEGIN
+	  DECLARE @strtag VARCHAR(50) = ''
+	  
+	  IF @i_vcReportCode = 'LEDGER'
+	  BEGIN
+	    SET @strtag = 'Ledger'
+	  END
+	  ELSE IF @i_vcReportCode = 'CombinedHolding'
+	  BEGIN
+	    SET @strtag = 'DPHolding'
+	  END
+	  ELSE IF @i_vcReportCode = 'OSPosition'
+	  BEGIN
+	    SET @strtag = 'OSPosition'
+	  END
+	  ELSE IF @i_vcReportCode = 'InvestorReport'
+	  BEGIN
+	    SET @strtag = 'ProfitLoss'
+	  END
+	  ELSE IF @i_vcReportCode IN('CaptialGain','CapitalGain','Transaction')
+	  BEGIN
+	    SET @strtag = 'CapGain'
+	  END
+	  ELSE IF @i_vcReportCode IN('BILL')
+	  BEGIN
+	    SET @strtag = 'Bill'
+	  END
+      ELSE IF @i_vcReportCode IN('Margin','Margin_NEW','Margin1','Margin2')
+	  BEGIN
+	    SET @strtag = 'Margin'
+	  END
+	  else
+	  BEGIN
+	    SET @strtag = @i_vcReportCode
+	  END
+	  EXEC stpr_GenerateMobileGrid @o_vcErrorMessage, @strtag, @i_vcReportCode, @i_vcReportCategory, @RequestFrom
+	END
+    --SELECT @i_vcReportCode, @i_vcReportCategory, @strNewVal
+	IF @strNewVal = 1 
+	BEGIN
+	
+	  DECLARE @TotalList VARCHAR(MAX)='', @RightList VARCHAR(MAX)='',@HideList VARCHAR(MAX)='',
+	  @DateFormat VARCHAR(50)='DD-MMM-YYYY',@DateFormatList VARCHAR(MAX)='', @Dec2List VARCHAR(MAX)='', @Dec4List VARCHAR(MAX)='',
+	  @DrCRColorList VARCHAR(MAX)='', @PnLColorList VARCHAR(MAX)='', @PrimaryKey VARCHAR(MAX)=''
+	 
+	  SELECT @TotalList = @TotalList+','+
+	  CASE WHEN @i_vcReportCode IN('LEDGER','CombinedHolding','OSPosition','InvestorReport',
+	  'CaptialGain','CapitalGain','Transaction','BILL','Margin','COLLPOS','Download','Margin_NEW','Margin1','Margin2') 
+	  THEN REPLACE(ColumnHeading,' ','') ELSE  ColumnName END
+      FROM tbl_ReportGridViewFormat(NOLOCK) 
+      WHERE ReportCode = @i_vcReportCode
+      AND ReportCategroy = @i_vcReportCategory
+	  and ColumnTotal ='Y' 
+	  AND ISNULL(ProductCode,'') = ''
+	 -- AND (Productid = @RequestFrom OR Productid = '')
+      
+	  SELECT @RightList = @RightList+','+ CASE WHEN @i_vcReportCode 
+	  IN('LEDGER','CombinedHolding','OSPosition','InvestorReport','CaptialGain','CapitalGain','Transaction','BILL','Margin','COLLPOS','Download','Margin_NEW',
+	  'Margin1','Margin2') 
+	  THEN  REPLACE(ColumnHeading,' ','') ELSE  ColumnName END
+      FROM tbl_ReportGridViewFormat(NOLOCK) 
+      WHERE ReportCode = @i_vcReportCode
+      AND ReportCategroy = @i_vcReportCategory
+	  and ColumnAlignement ='R'
+	  AND ISNULL(ProductCode,'') = ''
+	  --AND (Productid = @RequestFrom OR Productid = '')
+	  
+	  SELECT @DateFormatList = @DateFormatList+','+ CASE WHEN @i_vcReportCode 
+	  IN('LEDGER','CombinedHolding','OSPosition','InvestorReport','CaptialGain','CapitalGain','Transaction','BILL','Margin','COLLPOS','Download',
+	  'Margin_NEW','Margin1','Margin2') 
+	  THEN  REPLACE(ColumnHeading,' ','') ELSE  ColumnName END
+      FROM tbl_ReportGridViewFormat(NOLOCK) 
+      WHERE ReportCode = @i_vcReportCode
+      AND ReportCategroy = @i_vcReportCategory
+	  and ColumnFormat <> ''
+	  AND ISNULL(ProductCode,'') = ''
+	  --AND (Productid = @RequestFrom OR Productid = '')
+	  
+	  SELECT @Dec2List = @Dec2List+','+ CASE WHEN @i_vcReportCode 
+	  IN('LEDGER','CombinedHolding','OSPosition','InvestorReport','CaptialGain','CapitalGain','Transaction','BILL','Margin','COLLPOS','Download',
+	  'Margin_NEW','Margin1','Margin2') 
+	  THEN  REPLACE(ColumnHeading,' ','') ELSE  ColumnName END
+      FROM tbl_ReportGridViewFormat(NOLOCK) 
+      WHERE ReportCode = @i_vcReportCode
+      AND ReportCategroy = @i_vcReportCategory
+	  and DecimalPlace = 2
+	  AND ISNULL(ProductCode,'') = ''
+	  --AND (Productid = @RequestFrom OR Productid = '')
+	  
+	  SELECT @HIDEList = @HIDEList+','+ CASE WHEN @i_vcReportCode 
+	  IN('LEDGER','CombinedHolding','OSPosition','InvestorReport','CaptialGain','CapitalGain','Transaction','BILL','Margin','COLLPOS',
+	  'Download','Margin_NEW','Margin1','Margin2') 
+	  THEN  REPLACE(ColumnHeading,' ','') ELSE  ColumnName END
+      FROM tbl_ReportGridViewFormat(NOLOCK) 
+      WHERE ReportCode = @i_vcReportCode
+      AND ReportCategroy = @i_vcReportCategory
+	  and ColumnVisible = 1
+	  AND ISNULL(ProductCode,'') = ''
+	  --AND (Productid = @RequestFrom OR Productid = '')
+	  
+	  
+	  SELECT @DrCRColorList = @DrCRColorList+','+ CASE WHEN @i_vcReportCode 
+	  IN('LEDGER','CombinedHolding','OSPosition','InvestorReport','CaptialGain','CapitalGain','Transaction','BILL','Margin','COLLPOS','Download',
+	  'Margin_NEW','Margin1','Margin2') 
+	  THEN  REPLACE(ColumnHeading,' ','') ELSE  ColumnName END
+      FROM tbl_ReportGridViewFormat(NOLOCK) 
+      WHERE ReportCode = @i_vcReportCode
+      AND ReportCategroy = @i_vcReportCategory
+	  and ColumnStyle = 'B'
+	  AND ISNULL(ProductCode,'') = ''
+	  --AND (Productid = @RequestFrom OR Productid = '')	
+
+     DECLARE @MobileColumns VARCHAR(MAX)='', @TabletColumns VARCHAR(MAX)='',@WebColumns VARCHAR(MAX)=''
+	 
+	 SELECT @MobileColumns = @MobileColumns+','+ CASE WHEN @i_vcReportCode 
+	 IN('LEDGER','CombinedHolding','OSPosition','InvestorReport','CaptialGain','CapitalGain','Transaction','BILL','Margin','COLLPOS','Download',
+	 'Margin_NEW','Margin1','Margin2') 
+	 THEN  REPLACE(ColumnHeading,' ','') ELSE  ColumnName END
+     FROM tbl_ReportGridViewFormat(NOLOCK) 
+     WHERE ReportCode = @i_vcReportCode
+     AND ReportCategroy = @i_vcReportCategory
+	 AND Productid = 'M'
+	 and ColumnVisible = 0
+	 AND ISNULL(ProductCode,'') = ''
+	 ORDER BY ORDERBY
+	 
+	 SET @MobileColumns = SUBSTRING(@MobileColumns,2,LEN(@MobileColumns))
+	 
+	 SELECT @TabletColumns = @TabletColumns+','+ CASE WHEN @i_vcReportCode 
+	 IN('LEDGER','CombinedHolding','OSPosition','InvestorReport','CaptialGain','CapitalGain','Transaction',
+	 'BILL','Margin','COLLPOS','Download','Margin_NEW','Margin1','Margin2') 
+	 THEN  REPLACE(ColumnHeading,' ','') ELSE  ColumnName END
+     FROM tbl_ReportGridViewFormat(NOLOCK) 
+     WHERE ReportCode = @i_vcReportCode
+     AND ReportCategroy = @i_vcReportCategory
+	 AND Productid IN('T','M')
+	 and ColumnVisible = 0
+	 AND ISNULL(ProductCode,'') = ''
+	 ORDER BY ORDERBY
+	 
+	 SET @TabletColumns = SUBSTRING(@TabletColumns,2,LEN(@TabletColumns))
+	 
+	 SELECT @WebColumns = @WebColumns+','+ CASE WHEN @i_vcReportCode 
+	 IN('LEDGER','CombinedHolding','OSPosition','InvestorReport','CaptialGain','CapitalGain','Transaction','BILL','Margin',
+	 'COLLPOS','Download','Margin_NEW','Margin1','Margin2') 
+	 THEN  REPLACE(ColumnHeading,' ','') ELSE  ColumnName END
+     FROM tbl_ReportGridViewFormat(NOLOCK) 
+     WHERE ReportCode = @i_vcReportCode
+     AND ReportCategroy = @i_vcReportCategory
+	 and ColumnVisible = 0
+	 AND ISNULL(ProductCode,'') = ''
+	 --AND Productid NOT IN('T','M')
+	 ORDER BY ORDERBY
+	 
+	 SET @WebColumns = SUBSTRING(@WebColumns,2,LEN(@WebColumns))
+		  
+	  DECLARE @CompanyName VARCHAR(100) = Isnull((select em_name from Entity_Master with (nolock) 
+	  where em_cd =(select min(em_cd) from Entity_master)),'')
+	  DECLARE @CompanyAdd1 VARCHAR(1000) = '', @CompanyAdd2 VARCHAR(1000) = '', @CompanyAdd3 VARCHAR(1000) = ''
+
+      SELECT @CompanyName = em_name, @CompanyAdd1 = '', @CompanyAdd2 = '', @CompanyAdd3 = ''
+	  FROM Entity_Master(NOLOCK) 
+	  WHERE em_cd = (select min(em_cd) from Entity_master(NOLOCK))
+      
+	  
+	   /*SELECT @CompanyName = em_name, @CompanyAdd1 = em_add1, @CompanyAdd2 = em_add2, @CompanyAdd3 = em_add3+' '+em_add4 
+	  FROM Entity_Master(NOLOCK) 
+	  WHERE em_cd = (select min(em_cd) from Entity_master(NOLOCK))
+	  */
+	  SELECT @strClientName = um_user_name FROM User_master(NOLOCK) WHERE um_user_id = @strUserId
+	  
+	  IF ISNULL(@strClientName,'') = ''
+	  BEGIN
+	    SELECT @strClientName = CM_name FROM CLIENT_master(NOLOCK) WHERE CM_CD = @strUserId  
+	  END
+	  
+	  IF ISNULL(@ToDt,'') = ''
+	  BEGIN
+	    SET @strReportHeader = replace(@i_vcReportCategory,'_','') + ' As on Date - ' +CONVERT(VARCHAR(10), CAST(@AsOnDate AS DATE), 103)+ ' \n ' + RTRIM(@strClientName) + ' ( ' + RTRIM(@strUserId) +' )'
+	  END
+	  BEGIN
+	    SET @strReportHeader = replace(@i_vcReportCategory,'_','') + ' From Date - ' +CONVERT(VARCHAR(10), CAST(@AsOnDate AS DATE), 103)+ ' to ' + CONVERT(VARCHAR(10), CAST(@ToDt AS DATE), 103) + ' \n ' + RTRIM(@strClientName) + ' ( ' + RTRIM(@strUserId) +' )'
+	  END
+	  
+	  SELECT @StrProduct = CASE WHEN @StrProduct = 'Derv' then 'Derivative' when @StrProduct = 'CASH' then 'Cash'
+	  when @StrProduct = 'CURR' then 'Currency' ELSE @StrProduct END
+
+	  DECLARE @StrShowFilter1 VARCHAR(MAX)='', @StrShowFilter2 VARCHAR(MAX)='', @StrShowFilter3 VARCHAR(MAX)=''
+	  SELECT TOP 1 @StrShowFilter1 = ShowFilter1, @StrShowFilter2 = ShowFilter2, @StrShowFilter3 = ShowFilter3
+	  FROM tbl_TradeWebMenu(NOLOCK) WHERE  MenuTag = @StrMenuOption
+      
+	  IF ISNULL(@StrShowFilter1,'') = ''
+	  SET @StrShowFilter1 = ''
+	  
+	  IF ISNULL(@StrShowFilter2,'') = ''
+	  SET @StrShowFilter2 = ''
+	  
+	  IF ISNULL(@StrShowFilter3,'') = ''
+	  SET @StrShowFilter3 = ''
+	  
+      SET @StrShowFilter1 = REPLACE(@StrShowFilter1,'<<FROMDATE>>',CONVERT(VARCHAR(10), CAST(@AsOnDate AS DATE), 103))
+	  SET @StrShowFilter1 = REPLACE(@StrShowFilter1,'<<TODATE>>',CONVERT(VARCHAR(10), CAST(@ToDt AS DATE), 103))
+	  SET @StrShowFilter1 = REPLACE(@StrShowFilter1,'<<SEGMENT>>',@StrProduct)
+	  SET @StrShowFilter1 = REPLACE(@StrShowFilter1,'<<RepType>>',@trxRepType)
+	  SET @StrShowFilter1 = REPLACE(@StrShowFilter1,'<<SETTNO>>',@SettRepType)
+	  
+	  SET @StrShowFilter2 = REPLACE(@StrShowFilter2,'<<FROMDATE>>',CONVERT(VARCHAR(10), CAST(@AsOnDate AS DATE), 103))
+	  SET @StrShowFilter2 = REPLACE(@StrShowFilter2,'<<TODATE>>',CONVERT(VARCHAR(10), CAST(@ToDt AS DATE), 103))
+	  SET @StrShowFilter2 = REPLACE(@StrShowFilter2,'<<SEGMENT>>',@StrProduct)
+	  SET @StrShowFilter2 = REPLACE(@StrShowFilter2,'<<RepType>>',@trxRepType)
+	  SET @StrShowFilter2 = REPLACE(@StrShowFilter2,'<<SETTNO>>',@SettRepType)
+	  
+	  
+	  SET @StrShowFilter3 = REPLACE(@StrShowFilter3,'<<FROMDATE>>',CONVERT(VARCHAR(10), CAST(@AsOnDate AS DATE), 103))
+	  SET @StrShowFilter3 = REPLACE(@StrShowFilter3,'<<TODATE>>',CONVERT(VARCHAR(10), CAST(@ToDt AS DATE), 103))
+	    
+	  SET @StrShowFilter3 = REPLACE(@StrShowFilter3,'<<SEGMENT>>',@StrProduct)
+	  SET @StrShowFilter3 = REPLACE(@StrShowFilter3,'<<RepType>>',@trxRepType)
+	  SET @StrShowFilter3 = REPLACE(@StrShowFilter3,'<<SETTNO>>',@SettRepType)
+
+  
+      DECLARE @XMLStringFilter VARCHAR(MAX)=''
+	  IF @RequestFrom = 'W'
+	  BEGIN
+	    SET @XMLStringFilter = '<XmlData><TotalList>'+@TotalList+'</TotalList>
+						<RightList>'+@RightList+'</RightList>
+						<HideList>'+@HIDEList+'</HideList>
+						<DateFormat>'+@DateFormat+'</DateFormat>
+						<DateFormatList>'+@DateFormatList+'</DateFormatList>
+						<Dec2List>'+@Dec2List+'</Dec2List>
+						<Dec4List></Dec4List>
+						<DrCRColorList>'+@DrCRColorList+'</DrCRColorList>
+						<PnLColorList></PnLColorList>
+						<PrimaryKey></PrimaryKey>
+						<CompanyName>' + @CompanyName + '</CompanyName>
+						<CompanyAdd1>' + @CompanyAdd1 +'</CompanyAdd1>
+						<CompanyAdd2>' + @CompanyAdd2 + '</CompanyAdd2>
+						<CompanyAdd3>' + @CompanyAdd3 + '</CompanyAdd3>
+						<ReportHeader>'+@strReportHeader+'</ReportHeader>
+					    <PDFWidth>520</PDFWidth>
+						<PDFHeight>269</PDFHeight>
+						<MobileColumns>'+@MobileColumns+'</MobileColumns>
+						<TabletColumns>'+@TabletColumns+'</TabletColumns>
+                        <WebColumns>'+@WebColumns+'</WebColumns>
+				        <Headings>'
+	 END
+	 ELSE IF @RequestFrom = 'M'
+	 BEGIN
+	    SET @XMLStringFilter = '<XmlData>
+				        <Headings>'
+	 END
+     IF ISNULL(@StrShowFilter1,'') <> ''
+	 BEGIN
+	   SET @XMLStringFilter = @XMLStringFilter+'<Heading>'+@StrShowFilter1+'</Heading>'				
+     END                        
+     IF ISNULL(@StrShowFilter2,'') <> ''
+	 BEGIN
+	   SET @XMLStringFilter = @XMLStringFilter+'<Heading>'+@StrShowFilter2+'</Heading>'				
+     END                        
+		
+	 IF ISNULL(@StrShowFilter3,'') <> ''
+	 BEGIN
+	   SET @XMLStringFilter = @XMLStringFilter+'<Heading>'+@StrShowFilter3+'</Heading>'				
+     END                        
+	 SET @XMLStringFilter = @XMLStringFilter+'</Headings></XmlData>' 
+	END
+	SELECT [Settings] = @XMLStringFilter
+	RETURN 1
+  END TRY
+  BEGIN CATCH   
+     SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = ERROR_MESSAGE()
+    RETURN 1  
+  END CATCH
+  RETURN 1
+END
+GO
+
+CREATE OR ALTER PROCEDURE stpr_DashBoardBODProcess @strClient VARCHAR(20), @StrCompanyCode VARCHAR(1) 
+WITH ENCRYPTION
+AS
+BEGIN
+  
+  
+  DECLARE @FinancialYearStart DATE;
+  DECLARE @FinancialYearEnd DATE;
+  DECLARE @strtodate VARCHAR(20)=''
+  
+  
+    	
+  DELETE FROM tbl_DBCapitalGaindtl
+  WHERE ClientCode = '~'+@strClient;
+  
+  INSERT INTO tbl_DBCapitalGaindtl(ClientCode, ScripCode, BuyQty, BuyRate, BuyValue,
+  SaleQty, SaleRate, SaleValue, SP_TERM_PL, S_TERM_PL, L_TERM_PL, Mktdt)
+  SELECT '~'+@strClient, Scrip_Code ='', BuyQty = 0, BuyRate = 0, BuyValue = 0, SaleQty = 0, 
+  SaleRate = 0, SaleValue = 0, SP_TERM_PL = 0, S_TERM_PL = 0, L_TERM_PL = 0, GETDATE() 
+  
+  
+  SELECT @strtodate = MAX(FM_DT) FROM Fmargins(NOLOCK)
+  
+  DECLARE @InputDate DATE = @strtodate
+
+  SET @FinancialYearStart = CASE WHEN MONTH(@InputDate) >= 4 THEN DATEFROMPARTS(YEAR(@InputDate), 4, 1) 
+                            ELSE DATEFROMPARTS(YEAR(@InputDate) - 1, 4, 1) END;
+
+  SET @FinancialYearEnd = DATEADD(DAY, -1, DATEADD(YEAR, 1, @FinancialYearStart));
+  DECLARE @o_vcErrorFlag VARCHAR(1)='', @o_vcErrorMessage VARCHAR(MAX)='', 
+  @vcXML NVARCHAR(MAX) = '<FromDt>'+CONVERT(VARCHAR,@FinancialYearStart,112)+'</FromDt><ToDt>'+@strtodate+'</ToDt><UserId>'+@strClient+'</UserId><Product></Product><SelectTag></SelectTag><SelectUsers></SelectUsers><OutputType>X</OutputType><SplFilter></SplFilter><RepType>Actual PL_Summary</RepType><Option112A>N</Option112A>'
+  
+  DECLARE @xml xml
+  
+  EXEC stpr_Rpt_CapitalGain @vcXML, @o_vcErrorFlag OUTPUT, @o_vcErrorMessage OUTPUT
+  SET @xml  = CAST(@o_vcErrorMessage AS XML)	
+  
+  --SELECT @o_vcErrorMessage
+  --- CAPITAL GAIN START
+
+  DECLARE @tbl_capitalGain TABLE(ClientCode VARCHAR(50), Scrip_Code VARCHAR(10), 
+  BuyQty MONEY, BuyRate MONEY, BuyValue MONEY, SaleQty MONEY,
+  SaleRate MONEY, SaleValue MONEY, SP_TERM_PL MONEY, S_TERM_PL MONEY, L_TERM_PL MONEY)
+
+  INSERT INTO @tbl_capitalGain(ClientCode, Scrip_Code, BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue,
+  SP_TERM_PL, S_TERM_PL, L_TERM_PL)
+  SELECT CapGain.value('(ClientCode)[1]', 'VARCHAR(50)') AS ClientCode ,
+    CapGain.value('(Scrip_Code)[1]', 'VARCHAR(50)') AS ScripCode ,
+	CapGain.value('(BuyQty)[1]', 'MONEY') AS BuyQty ,
+	CapGain.value('(BuyRate)[1]', 'MONEY') AS BuyRate ,
+	CapGain.value('(BuyValue)[1]', 'MONEY') AS BuyValue ,
+	CapGain.value('(SaleQty)[1]', 'MONEY') AS SaleQty ,
+	CapGain.value('(SaleRate)[1]', 'MONEY') AS SaleRate ,
+	CapGain.value('(SaleValue)[1]', 'MONEY') AS SaleValue ,
+    CapGain.value('(SP_TERM_PL)[1]', 'MONEY') AS SP_TERM_PL,
+	CapGain.value('(S_TERM_PL)[1]', 'MONEY') AS S_TERM_PL,
+	CapGain.value('(L_TERM_PL)[1]', 'MONEY') AS L_TERM_PL
+    FROM @xml.nodes('/CapGain') AS XTbl(CapGain)
+
+  IF ISNULL(@strClient,'') <> ''
+  BEGIN
+    DELETE FROM tbl_DBCapitalGaindtl
+    WHERE ClientCode = @strClient;
+	
+  END
+  ELSE
+  BEGIN
+    TRUNCATE TABLE tbl_DBCapitalGaindtl;
+  END
+
+
+  INSERT INTO tbl_DBCapitalGaindtl(ClientCode, ScripCode, BuyQty, BuyRate, BuyValue,
+  SaleQty, SaleRate, SaleValue, SP_TERM_PL, S_TERM_PL, L_TERM_PL, Mktdt)
+  SELECT ClientCode, Scrip_Code, BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue,
+  SP_TERM_PL, S_TERM_PL, L_TERM_PL, GETDATE() FROM @tbl_capitalGain
+  
+  ---- CAPITAL GAIN END
+
+  --- START PROFIT AND LOSS DERV  
+
+  SET @o_vcErrorMessage =''
+  set @vcXML = '<FromDt>'+CONVERT(VARCHAR,@FinancialYearStart,112)+'</FromDt><ToDt>'+@strtodate+'</ToDt><ExchSeg></ExchSeg><UserId>'+@strClient+'</UserId><Product>DERV</Product><SelectTag></SelectTag><SelectUsers></SelectUsers><OutputType>X</OutputType><SplFilter></SplFilter><RepType>Series Wise</RepType><RepSubType>Closing Premium</RepSubType><OptionBF>Y</OptionBF><FIFOTag>N</FIFOTag>'
+  EXEC stpr_Rpt_ProfitLossNewDerv @vcXML, @o_vcErrorFlag OUTPUT, @o_vcErrorMessage OUTPUT
+  set @xml = CAST(@o_vcErrorMessage AS XML)	
+
+  DECLARE @tbl_Profit TABLE(ClientCode VARCHAR(30), Exchange VARCHAR(1),  
+  ScripCode VARCHAR(10), OpenQty MONEY, BuyQty MONEY, SaleQty MONEY, 
+  ExQty MONEY, AsQty MONEY, NETQTY MONEY, RelPL MONEY, UnRelPL MONEY, MTM MONEY, Segment VARCHAR(1))
+
+  IF ISNULL(@strClient,'') <> ''
+  BEGIN
+    DELETE FROM tbl_DBProfitLossDervdtl
+    WHERE ClientCode = @strClient;
+  END
+  ELSE
+  BEGIN
+    TRUNCATE TABLE tbl_DBProfitLossDervdtl;
+  END
+
+  INSERT INTO @tbl_Profit(ClientCode, Exchange, ScripCode, OpenQty, BuyQty, SaleQty, ExQty, AsQty, NETQTY, RelPL,
+  UnRelPL, MTM, Segment)
+  SELECT CapGain.value('(ClientCode)[1]', 'VARCHAR(50)') AS ClientCode ,
+    CapGain.value('(Exchange)[1]', 'VARCHAR(50)') AS Exchange ,
+    CapGain.value('(seriesid)[1]', 'VARCHAR(50)') AS seriesid ,
+	CapGain.value('(BF_QTY)[1]', 'MONEY') AS BF_QTY,
+	CapGain.value('(BOT_QTY)[1]', 'MONEY') AS BOT_QTY,
+	CapGain.value('(SOLD_QTY)[1]', 'MONEY') AS SOLD_QTY,
+	CapGain.value('(EX_QTY)[1]', 'MONEY') AS EX_QTY,
+	CapGain.value('(AS_QTY)[1]', 'MONEY') AS AS_QTY,
+	CapGain.value('(NET_QTY)[1]', 'MONEY') AS NETQTY,
+	CapGain.value('(RelPL)[1]', 'MONEY') AS RelPL,
+	CapGain.value('(UnRelPL)[1]', 'MONEY') AS UnRelPL,
+	CapGain.value('(MTM)[1]', 'MONEY') AS MTM,
+	CapGain.value('(Segment)[1]', 'VARCHAR(1)') AS Segment
+    FROM @xml.nodes('/ProfitLoss') AS XTbl(CapGain)
+
+  INSERT INTO tbl_DBProfitLossDervdtl(ClientCode, Exchange, ScripCode, OpenQty, BuyQty, SaleQty, 
+  ExQty, AsQty,NETQTY,RelPL,UnRelPL,Mktdt, MTM, Segment)
+  SELECT ClientCode, Exchange, ScripCode, OpenQty, BuyQty, SaleQty, ExQty, AsQty, NETQTY, RelPL,
+  UnRelPL, GETDATE(), MTM, Segment FROM @tbl_Profit
+
+  ---- END
+
+  --  START NOTIONAL HOLDING
+
+  SET @vcXML = '<FromDt></FromDt><ToDt>'+@strtodate+'</ToDt><UserId>'+@strClient+'</UserId><Product></Product>'
+  +'<SelectTag></SelectTag><SelectUsers></SelectUsers><OutputType>X</OutputType><SplFilter></SplFilter><RepType>Notional_Summary</RepType>'
+  +'<RepSubType></RepSubType><Option112A>N</Option112A>'
+  DECLARE @strString NVARCHAR(MAX)=''
+  SET @vcXML = REPLACE(@vcXML,'''','''''')
+  SET @strString = 'EXEC DBO.stpr_Rpt_CapitalGainNotional' + ' ''' + @vcXML + ''', @o_vcErrorFlag OUTPUT, @o_vcErrorMessage OUTPUT';
+  EXEC sp_executesql @strString, N'@o_vcErrorFlag VARCHAR(1) OUTPUT, @o_vcErrorMessage VARCHAR(MAX) OUTPUT', @o_vcErrorFlag OUTPUT, @o_vcErrorMessage OUTPUT;
+  
+  DECLARE @tbl_OpenPosition TABLE(td_SRNO INT, ClientCode VARCHAR(20), ScripCode VARCHAR(20), TradeDate VARCHAR(20),
+  td_Stlmnt VARCHAR(20),
+  BuyQty MONEY, BuyRate MONEY, BuyValue MONEY, CloseRate MONEY, CurrentValue MONEY, ShortTerm MONEY, 
+  LongTerm MONEY)
+  IF @o_vcErrorFlag = 'S'
+  BEGIN
+    SET @xml = CAST(@o_vcErrorMessage AS XML)
+	SELECT @xml
+    INSERT INTO @tbl_OpenPosition(td_SRNO, ClientCode, ScripCode, TradeDate, td_Stlmnt, BuyQty, BuyRate, BuyValue,
+    CloseRate, CurrentValue, ShortTerm, LongTerm)
+    SELECT CapGain.value('(td_SRNO)[1]', 'INT') AS td_SRNO,
+	CapGain.value('(ClientCode)[1]', 'VARCHAR(50)') AS ClientCode ,
+    CapGain.value('(ScripCode)[1]', 'VARCHAR(50)') AS ScripCode ,
+    CapGain.value('(TradeDate)[1]', 'VARCHAR(20)') AS TradeDate,
+	CapGain.value('(td_Stlmnt)[1]', 'VARCHAR(20)') AS td_Stlmnt,
+    CapGain.value('(BuyQty)[1]', 'MONEY') AS BuyQty,
+    CapGain.value('(BuyRate)[1]', 'MONEY') AS BuyRate,
+    CapGain.value('(BuyValue)[1]', 'MONEY') AS BuyValue,
+    CapGain.value('(CloseRate)[1]', 'MONEY') AS CloseRate,
+    CapGain.value('(CurrentValue)[1]', 'MONEY') AS CurrentValue,
+    CapGain.value('(ShortTerm)[1]', 'MONEY') AS ShortTerm,
+	CapGain.value('(LongTerm)[1]', 'MONEY') AS LongTerm
+    FROM @xml.nodes('/CapGain') AS XTbl(CapGain)
+  END  
+  
+  IF ISNULL(@strClient,'') <> ''
+  BEGIN
+    DELETE FROM tbl_DBCapitalGainHoldingdtl
+    WHERE ClientCode = @strClient;
+  END
+  ELSE
+  BEGIN
+    TRUNCATE TABLE tbl_DBCapitalGainHoldingdtl;
+  END
+  
+  INSERT INTO tbl_DBCapitalGainHoldingdtl(ClientCode, ScripCode, TradeDate, BuyQty, BuyRate, BuyValue,
+  CloseRate, CurrentValue, ShortTerm, LongTerm, Mktdt)
+  SELECT ClientCode, ScripCode, ISNULL(CONVERT(VARCHAR,TradeDate,112),0),  BuyQty, BuyRate, BuyValue,
+   CloseRate, CurrentValue, ShortTerm, LongTerm, GETDATE()
+  FROM @tbl_OpenPosition WHERE ISNULL(ScripCode,'') <> ''
+
+  ---- END 
+
+  DECLARE @TBL_Holding TABLE(ClientCode VARCHAR(20), ScripCode VARCHAR(10), ISIN VARCHAR(20), 
+  FOCOLL money, Cuspa MONEY, DP MONEY, DP_POA MONEY, DP_NONPOA MONEY, EXPStk MONEY,
+  UNDEL MONEY, MTFBENF MONEY, MTFCOLL MONEY, POOL MONEY, Ben MONEY, TotalQty MONEY,
+  ClosingPrice MONEY, MarketValue MONEY, Haircut MONEY, NetValue MONEY)
+     
+  SET @vcXML ='<AsOnDate>'+@strtodate+'</AsOnDate><UserId>'+@strClient+'</UserId><Product>Trading</Product><SelectTag></SelectTag><SelectUsers></SelectUsers><OutputType>X</OutputType><SplFilter></SplFilter><CompanyCode>'+@StrCompanyCode+'</CompanyCode>'
+  EXEC stpr_Rpt_HoldingNew @vcXML, @o_vcErrorFlag OUTPUT, @o_vcErrorMessage OUTPUT 
+	   
+  SET @xml = CAST(@o_vcErrorMessage AS XML)
+  INSERT INTO @TBL_Holding(ClientCode, ScripCode, ISIN, FOCOLL, Cuspa, DP, DP_POA, DP_NONPOA, EXPStk,
+  UNDEL, MTFBENF, MTFCOLL, POOL, Ben, TotalQty, ClosingPrice, MarketValue, Haircut, NetValue)
+  SELECT X1.* FROM(
+  SELECT DPHolding.value('(ClientCode)[1]', 'VARCHAR(50)') AS ClientCode ,
+  DPHolding.value('(ScripCode)[1]', 'VARCHAR(100)') AS ScripCode ,
+  DPHolding.value('(ISIN)[1]', 'VARCHAR(100)') AS ISIN,
+  DPHolding.value('(FOCOLL)[1]', 'MONEY') AS FOCOLL,
+  DPHolding.value('(Cuspa)[1]', 'MONEY') AS Cuspa,
+  DPHolding.value('(DP)[1]', 'MONEY') AS DP,
+  DPHolding.value('(DP_POA)[1]', 'MONEY') AS DP_POA,
+  DPHolding.value('(DP_NONPOA)[1]', 'MONEY') AS DP_NONPOA,
+  DPHolding.value('(EXP)[1]', 'MONEY') AS EXPStk,
+  DPHolding.value('(UNDEL)[1]', 'MONEY') AS UNDEL,
+  DPHolding.value('(MTFBENF)[1]', 'MONEY') AS MTFBENF,
+  DPHolding.value('(MTFCOLL)[1]', 'MONEY') AS MTFCOLL,
+  DPHolding.value('(POOL)[1]', 'MONEY') AS POOL,
+  DPHolding.value('(Ben)[1]', 'MONEY') AS Ben,
+  DPHolding.value('(TotalQty)[1]', 'MONEY') AS TotalQty,
+  DPHolding.value('(ClosingPrice)[1]', 'MONEY') AS ClosingPrice,
+  DPHolding.value('(MarketValue)[1]', 'MONEY') AS MarketValue,
+  DPHolding.value('(Haircut)[1]', 'MONEY') AS Haircut,
+  DPHolding.value('(NetValue)[1]', 'MONEY') AS NetValue
+  FROM @xml.nodes('/DPHolding') AS XTbl(DPHolding)) X1
+  
+  IF ISNULL(@strClient,'') <> ''
+  BEGIN
+    DELETE FROM tbl_DBHoldingDtl
+    WHERE ClientCode = @strClient;
+  END
+  ELSE
+  BEGIN
+    TRUNCATE TABLE tbl_DBHoldingDtl;
+  END
+  
+  INSERT INTO tbl_DBHoldingDtl(ClientCode, ScripCode, ISIN, FOCOLL, Cuspa, DP, DP_POA, DP_NONPOA, EXPStk,
+  UNDEL, MTFBENF, MTFCOLL, POOL, Ben, TotalQty, ClosingPrice, MarketValue, Haircut, NetValue, Mktdt)
+  SELECT ClientCode, ScripCode, ISIN, FOCOLL, Cuspa, DP, DP_POA, DP_NONPOA, EXPStk,
+  UNDEL, MTFBENF, MTFCOLL, POOL, Ben, TotalQty, ClosingPrice, MarketValue, Haircut, NetValue, GETDATE()
+  FROM @TBL_Holding
+  
+  /*
+  SET @vcXML = '<FromDt>'+CONVERT(VARCHAR,@FinancialYearStart,112)+'</FromDt><ToDt>'+CONVERT(VARCHAR,GETDATE(),112)+'></ToDt><ExchSeg></ExchSeg><UserId>'+@strClient+'</UserId><AccountType>EM,MTF,CX,CM</AccountType><Product>Trading</Product><SelectTag></Se
+  lectTag><SelectUsers></SelectUsers><OutputType>X</OutputType><SplFilter></SplFilter><CompanyCode>'+@StrCompanyCode+'</CompanyCode>'
+  EXEC stpr_Rpt_LedgerNew @vcXML , @o_vcErrorFlag OUTPUT, @o_vcErrorMessage OUTPUT
+  SET @xml = CAST(@o_vcErrorMessage AS XML)
+  	 
+  DECLARE @TBL_Ledger TABLE(SerialNo int, ClientCode VARCHAR(20), TransactionDate VARCHAR(11), ExchSeg VARCHAR(20), 
+  Voucher VARCHAR(20), Particular VARCHAR(500), DebitAmount MONEY, CreditAmount MONEY,
+  Balance MONEY, BalanceTag VARCHAR(10))
+  
+  INSERT INTO @TBL_Ledger(SerialNo, ClientCode, TransactionDate, ExchSeg, Voucher, Particular,
+  DebitAmount, CreditAmount, Balance, BalanceTag)
+  SELECT Ledger.value('(SerialNo)[1]', 'int') AS SerialNo ,
+  Ledger.value('(ClientCode)[1]', 'VARCHAR(50)') AS ClientCode ,
+  Ledger.value('(Date)[1]', 'VARCHAR(11)') AS TransactionDate,
+  Ledger.value('(ExchSeg)[1]', 'VARCHAR(100)') AS ExchSeg,
+  Ledger.value('(Voucher)[1]', 'VARCHAR(100)') AS Voucher,
+  Ledger.value('(Particular)[1]', 'VARCHAR(500)') AS Particular,
+  Ledger.value('(DebitAmount)[1]', 'MONEY') AS DebitAmount,
+  Ledger.value('(CreditAmount)[1]', 'MONEY') AS CreditAmount,
+  Ledger.value('(Balance)[1]', 'MONEY') AS Balance,
+  Ledger.value('(BalanceTag)[1]', 'VARCHAR(500)')
+  FROM @xml.nodes('/Ledger') AS XTbl(Ledger)
+  
+  IF ISNULL(@strClient,'') <> ''
+  BEGIN
+    DELETE FROM tbl_DBLedgerBal
+    WHERE ClientCode = @strClient;
+  END
+  ELSE
+  BEGIN
+    TRUNCATE TABLE tbl_DBLedgerBal;
+  END
+  
+  INSERT INTO tbl_DBLedgerBal(ClientCode, TransactionDate, ExchSeg, Voucher, Particular,
+  DebitAmount, CreditAmount, Balance, BalanceTag, Mktdt)
+  SELECT ClientCode, TransactionDate, ExchSeg, Voucher, Particular,
+  DebitAmount, CreditAmount, Balance, BalanceTag, GETDATE()
+  FROM @TBL_Ledger
+  ORDER BY TransactionDate, SerialNo
+  */
+  
+END  
+GO
+
+CREATE OR ALTER PROCEDURE stpr_DashBoardFlashProcedure @dsXml VARCHAR(MAX)  
+WITH ENCRYPTION AS
+BEGIN 
+  DECLARE @tbl_InputJSONTable DBO.tb_ParamList ;
+  DECLARE @o_ParameterList varchar(max)='', @o_ParameterListxml XML; 
+  DECLARE @tbl_UserList dbo.UserAccessList;
+  DECLARE @StrCashActive VARCHAR(1) ='N', @StrfnoActive VARCHAR(1) ='N', @StrcURRActive VARCHAR(1) ='N'
+  EXEC SP_ParameterXMLRep @dsXml, @o_ParameterList OUTPUT
+  
+  IF ISNULL(@o_ParameterList,'') <> ''
+  BEGIN
+	SET @o_ParameterListxml = CAST(@o_ParameterList AS XML)
+    INSERT INTO @tbl_InputJSONTable (ParameterName,  ParameterValue, HeaderName, Jsontag) 
+    SELECT Parameter.value('(ColumnName)[1]', 'VARCHAR(MAX)') AS Client_Code ,
+    Parameter.value('(ColumnValue)[1]', 'VARCHAR(MAX)') AS ColumnValue,
+	Parameter.value('(MasterTag)[1]', 'VARCHAR(MAX)') AS MasterTag,
+	Parameter.value('(JsonLevel)[1]', 'VARCHAR(MAX)') AS JsonLevel
+    FROM @o_ParameterListxml.nodes('/Parameter') AS XTbl(Parameter)
+  END	  
+  DECLARE @InputDate DATE = GETDATE(), @FinancialYearStart DATE=''
+  
+  SELECT @InputDate = MAX(FM_DT) FROM Fmargins(NOLOCK) 
+  
+  SET @FinancialYearStart = CASE WHEN MONTH(@InputDate) >= 4 THEN DATEFROMPARTS(YEAR(@InputDate), 4, 1) 
+                            ELSE DATEFROMPARTS(YEAR(@InputDate) - 1, 4, 1) END;
+  
+  DECLARE @StrRequestFrom VARCHAR(1)='M', @strJson VARCHAR(MAX)='', @strUserid VARCHAR(50)=''
+  DECLARE @TBL_json TABLE(SerialNo int, Jsonvalue VARCHAR(MAX), ParentName VARCHAR(MAX))
+
+  SELECT @strRequestFrom = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'RequestFrom'
+  SELECT @strUserid = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Userid'
+  
+  DECLARE @strJsonMain VARCHAR(MAX)='', @strJsonMain1 VARCHAR(MAX)='', @strNetValue MONEY =  0,@strJsonMain2 VARCHAR(MAX)='',
+  @strNetValue1 Money = 0, @strNetValue2 money = 0, @strJson1 VARCHAR(MAX)=''
+   
+
+  IF NOT EXISTS(SELECT 1 FROM tbl_DBCapitalGaindtl(NOLOCK) WHERE ClientCode = '~'+@strUserid AND CAST(mktdt AS DATE) = CAST(GETDATE() AS DATE))
+  BEGIN
+    DECLARE @StrCompanyCode VARCHAR(1)= ISNULL((SELECT top 1 LTRIM(RTRIM(em_cd)) from Entity_master(NOLOCK) 
+    WHERE em_cd =(select min(em_cd) from Entity_master(NOLOCK))),'A')
+ 
+    DECLARE @StrCompanyCount INT = 0;
+    SELECT @StrCompanyCount = ISNULL(SUM(ISNULL(cnt,0)),0) 
+    FROM (SELECT COUNT(0) Cnt From Entity_master(NOLOCK) 
+    WHERE em_bse <> 'N' and isNull(em_bclearingno,'') in ('189') 
+    UNION ALL 
+    SELECT count(0) Cnt From Entity_master(NOLOCK) 
+    WHERE em_nse <> 'N' and isNull(em_nclearingno,'') in ('07277')) a
+    IF @StrCompanyCount > 0
+    BEGIN
+	  SET @StrCompanyCode = 'B'
+    END
+    EXEC stpr_DashBoardBODProcess @strUserid, @StrCompanyCode
+  END
+   
+  SET @strJsonMain1 = '[{"name": "","slogan": "","navigateTo": "", "boxSize":"full",
+  "pieData": [{"name": "Available Margin","color": "black","navigateTo": "","textSize": 15,
+  "gridItems": [{"label": {"pieColor": "#00008B","text": "Ledger", "size": 14,"color": "black","marginTop": 0},
+  "value": {"pieColor": "#fff8e7","text": "##LNETVALUE##","size": 16,"color": "#4f4fe4","marginTop": 0},"navigateTo": "Ledger"},
+  {"label": {"pieColor": "#1F75FE","text": "Pledge","size": 14,"color": "black","marginTop": 0},"value": {"text": "##PNETVALUE##","size": 16,"color": 
+  "green","marginTop": 0},
+  "navigateTo": "Collateral"},
+  {"label": {"pieColor": "#1F75FE","text": "Total","size": 14,"color": "black","marginTop": 0,"showPie":false},"value": 
+  {"text": "##TNETVALUE##","size": 16,"color": "##AMTcolor##","marginTop": 0},
+  "navigateTo": ""}]}],
+  "grids":[{"name":"Available Margin","color":"black","navigateTo":"","textSize":##textSize##,
+	  "gridItems":[{"label":{"text":"Ledger","size":##label##,"color":"black","marginTop":0},
+	  "value":{"text":"##LNETVALUE##","size":##text##,"color":"##Lcolor##","marginTop":0}, "navigateTo":"Ledger"},
+	        {"label":{"text":"Pledge","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##PNETVALUE##","size":##text##,"color":"##Pcolor##","marginTop":0}, "navigateTo":"Collateral"},
+					  {"label":{"text":"Total","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##TNETVALUE##","size":##text##,"color":"##AMTcolor##","marginTop":0}}]},
+					  {"name":"Margin","color":"black","navigateTo":"","textSize":##textSize##,
+	  "gridItems":[{"label":{"text":"Margin Utilized","size":##label##,"color":"black","marginTop":0},
+	  "value":{"text":"##MRRNETVALUE##","size":##text##,"color":"##MRRNETVALUEcolor##","marginTop":0},"navigateTo":"Margin1"},
+					  {"label":{"text":"Available","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##PLTMNETVALUE##","size":##text##,"color":"##PLTMNETVALUEcolor##","marginTop":0},"navigateTo":"Margin2"},
+					  {"label":{"text":"Excess/Short","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##ESTMNETVALUE##","size":##text##,"color":"##ESTMNETVALUEcolor##","marginTop":0},"navigateTo":"AvailableMargin"}]},'
+  IF @StrRequestFrom = 'W'
+  BEGIN
+    SET @strJsonMain1 = REPLACE(@strJsonMain1,'"Margin1"','""')
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'"Margin2"','""')
+  END
+  
+  IF EXISTS(SELECT TOP 1 * FROM TRX(NOLOCK) WHERE td_clientcd = @strUserid)				  
+  BEGIN
+	SET @StrCashActive = 'Y'
+	SET @strJsonMain1 = @strJsonMain1+' {"name":"Equity P/L","color":"black","navigateTo":"CGain","textSize":##textSize##,
+	  "gridItems":[{"label":{"text":"Long Term","size":##label##,"color":"black","marginTop":0},
+	  "value":{"text":"##LTNETVALUE##","size":##text##,"color":"##LTNETVALUEcolor##","marginTop":0}},
+	        {"label":{"text":"Short Term","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##STNETVALUE##","size":##text##,"color":"##STNETVALUEcolor##","marginTop":0}},
+					  {"label":{"text":"Trading","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##TTNETVALUE##","size":##text##,"color":"##TTNETVALUEcolor##","marginTop":0}},
+					  {"label":{"text":"Dividend","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##DivNETVALUE##","size":##text##,"color":"##DivNETVALUEcolor##","marginTop":0},"navigateTo":"CGainDividend"},
+					  {"label":{"text":"Total","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##PTTNETVALUE##","size":##text##,"color":"##PTTNETVALUEcolor##","marginTop":0}}]},'
+					  
+	
+    SELECT  @strNetValue2 = CONVERT(numeric(12,2),SUM(L_TERM_PL))  
+    FROM tbl_DBCapitalGaindtl(NOLOCK) WHERE ClientCode = @strUserId
+    
+	
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##LTNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##LTNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	
+	SET @strNetValue2 = 0
+	SELECT  @strNetValue2 = CONVERT(numeric(12,2),SUM(S_TERM_PL))  
+    FROM tbl_DBCapitalGaindtl(NOLOCK) WHERE ClientCode = @strUserId
+	
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##STNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##STNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	
+	SET @strNetValue2 = 0
+	
+	SELECT  @strNetValue2 = CONVERT(numeric(12,2),SUM(SP_TERM_PL))  
+    FROM tbl_DBCapitalGaindtl(NOLOCK) WHERE ClientCode = @strUserId
+    
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##TTNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##TTNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	  
+	SET @strNetValue2 = 0
+	  
+	SELECT @strNetValue2 = ISNULL(SUM(DV_Amount),0) 
+    FROM INVPL_DIVIDEND(NOLOCK)
+	WHERE DV_Amount > 0 AND DV_ClientCd = @strUserId
+	AND DV_Dt BETWEEN @FinancialYearStart AND @InputDate
+	  
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##DivNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##DivNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	  
+      
+	SELECT  @strNetValue2 = CONVERT(numeric(12,2),ISNULL(@strNetValue2,0)+SUM(ISNULL(SP_TERM_PL,0)+ISNULL(S_TERM_PL,0)+ISNULL(L_TERM_PL,0)))  
+    FROM tbl_DBCapitalGaindtl(NOLOCK) WHERE ClientCode = @strUserId
+      
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##PTTNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##PTTNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+						  
+  END
+
+  SET @strJsonMain1 = @strJsonMain1+' {"name":"Derivative P/L","color":"black","navigateTo":"PROFITLOSS","textSize":##textSize##, '
+  IF EXISTS(SELECT TOP 1 * FROM trades(NOLOCK) WHERE td_clientcd = @strUserid AND td_Segment = 'F')				  
+  BEGIN
+	SET @StrfnoActive = 'Y'
+	SET @strJsonMain1 = @strJsonMain1+' "gridItems":[{"label":{"text":"F&O","size":##label##,"color":"black","marginTop":0},
+	  "value":{"text":"##FONETVALUE##","size":##text##,"color":"##FONETVALUEcolor##","marginTop":0}}, '
+	  
+	SET @strNetValue2 = 0
+	
+	SELECT @strNetValue2 = CONVERT(numeric(12,2),sum(MTM) )
+	FROM tbl_DBProfitLossDervdtl(NOLOCK) WHERE ClientCode = @strUserId AND Segment = 'F'
+	
+	
+    SET @strJsonMain1 = REPLACE(@strJsonMain1,'##FONETVALUE##',ISNULL(@strNetValue2,0))
+	
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##FONETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+  END
+  ELSE
+  BEGIN
+    SET @strJsonMain1 = @strJsonMain1+' "gridItems":[{"label":{"text":"F&O","size":##label##,"color":"black","marginTop":0},
+	  "value":{"text":"0","size":##text##,"color":"green","marginTop":0}}, '
+  END
+  
+  IF EXISTS(SELECT TOP 1 * FROM trades(NOLOCK) WHERE td_clientcd = @strUserid AND td_Segment = 'K')				  
+  BEGIN
+	SET @StrcURRActive = 'Y'
+	SET @strJsonMain1 = @strJsonMain1+'{"label":{"text":"Currency","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##CURNETVALUE##","size":##text##,"color":"##CURNETVALUEcolor##","marginTop":0}},'
+    SET @strNetValue2 = 0
+	
+	SELECT @strNetValue2 = CONVERT(numeric(12,2),sum(MTM) )
+	FROM tbl_DBProfitLossDervdtl(NOLOCK) WHERE ClientCode = @strUserId AND Segment = 'K'
+	
+    SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CURNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CURNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+  END	
+  
+	
+	
+  DECLARE @strCommodityUser VARCHAR(50)='', @strActiveStatus VARCHAR(50)='', @String NVARCHAR(MAX)=''
+  DECLARE @tbl_Commodity TABLE(ClientCode VARCHAR(50))
+  SELECT @strCommodityUser = LTRIM(RTRIM(OP_DataBase)) 
+  FROM Other_Products(NOLOCK) WHERE OP_Product='Commex' AND OP_Status = 'A'
+	
+  SET @String = 'SELECT top 1 td_clientcd FROM '+@strCommodityUser+'.DBO.trades(NOLOCK) WHERE  td_clientcd = '''+@strUserid+''' AND td_exchange = ''M'''
+	
+  INSERT INTO @tbl_Commodity(ClientCode)
+  EXEC(@String)
+	
+  SELECT @strActiveStatus = ClientCode FROM @tbl_Commodity
+	
+  IF ISNULL(@strActiveStatus,'') <> ''
+  BEGIN
+	SET @strJsonMain1 = @strJsonMain1+'{"label":{"text":"MCX Commodity","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##MCNETVALUE##","size":##text##,"color":"##MCNETVALUEcolor##","marginTop":0}},'
+    SET @strNetValue2 = 0
+	
+	SELECT @strNetValue2 = CONVERT(numeric(12,2),sum(MTM) )
+	FROM tbl_DBProfitLossDervdtl(NOLOCK) WHERE ClientCode = @strUserId AND Segment = 'X' AND Exchange = 'M'
+
+	
+    SET @strJsonMain1 = REPLACE(@strJsonMain1,'##MCNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##MCNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+  END	
+	
+  SET @strJsonMain1 = @strJsonMain1+'{"label":{"text":"Total","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##CPTTNETVALUE##","size":##text##,"color":"##CPTTNETVALUEcolor##","marginTop":0}}]},'
+  SET @strNetValue2 = 0
+	
+  SELECT @strNetValue2 = CONVERT(numeric(12,2),sum(MTM))
+  FROM tbl_DBProfitLossDervdtl(NOLOCK) WHERE ClientCode = @strUserId
+	--AND ScripCode <> '0'
+  GROUP BY ClientCode
+	
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CPTTNETVALUE##',ISNULL(@strNetValue2,0))
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CPTTNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+						  
+					  
+  IF ISNULL(@StrCashActive,'N') = 'Y'
+  BEGIN
+	SET @strJsonMain1 = @strJsonMain1+'{"name":"Holding","color":"black","navigateTo":"CGainHolding","textSize":##textSize##,
+	  "gridItems":[{"label":{"text":"Invested","size":##label##,"color":"black","marginTop":0},
+	  "value":{"text":"##INNETVALUE##","size":##text##,"color":"##INNETVALUEcolor##","marginTop":0}},
+	        {"label":{"text":"Current","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##CUNETVALUE##","size":##text##,"color":"##CUNETVALUEcolor##","marginTop":0}},
+					  {"label":{"text":"Long Term","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##HLTNETVALUE##","size":##text##,"color":"##HLTNETVALUEcolor##","marginTop":0}},
+					  {"label":{"text":"Short Term","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##HSTNETVALUE##","size":##text##,"color":"##HSTNETVALUEcolor##","marginTop":0}},
+					  {"label":{"text":"Total","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##HTNETVALUE##","size":##text##,"color":"##HTNETVALUEcolor##","marginTop":0}}]},'
+					  
+    SET @strNetValue2 = 0
+	
+	SELECT  @strNetValue2 = CONVERT(numeric(12,2),sum(BuyValue) )  
+	FROM tbl_DBCapitalGainHoldingdtl WHERE ClientCode = @strUserId 
+	
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##INNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##INNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	
+	SET @strNetValue2 = 0
+	
+	SELECT  @strNetValue2 = CONVERT(numeric(12,2),sum(CurrentValue) )  
+	FROM tbl_DBCapitalGainHoldingdtl WHERE ClientCode = @strUserId 
+	
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CUNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CUNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	
+	SET @strNetValue2 = 0
+	
+	SELECT  @strNetValue2 = CONVERT(numeric(12,2),sum(LongTerm) )  
+	FROM tbl_DBCapitalGainHoldingdtl WHERE ClientCode = @strUserId 
+	
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##HLTNETVALUE##',ISNULL(@strNetValue2,0))
+	
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##HLTNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	
+	SET @strNetValue2 = 0
+	
+	SELECT  @strNetValue2 = CONVERT(numeric(12,2),sum(ShortTerm) )  
+	FROM tbl_DBCapitalGainHoldingdtl WHERE ClientCode = @strUserId 
+	
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##HSTNETVALUE##',ISNULL(@strNetValue2,0))
+	
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##HSTNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	
+	SET @strNetValue2 = 0
+	
+	SELECT  @strNetValue2 = CONVERT(numeric(12,2),sum(ShortTerm+LongTerm) )  
+	FROM tbl_DBCapitalGainHoldingdtl WHERE ClientCode = @strUserId 
+    
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##HTNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##HTNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+  END
+	 
+  SET @strJsonMain1 = @strJsonMain1+'{"name":"Position (OBG)","color":"black","navigateTo":"","textSize":##textSize##,'
+     
+  IF ISNULL(@StrCashActive,'N') = 'Y'
+  BEGIN 
+    SET @strJsonMain1 = @strJsonMain1+'"gridItems":[{"label":{"text":"Cash","size":##label##,"color":"black","marginTop":0},
+	"value":{"text":"##CSHNETVALUE##","size":##text##,"color":"##CSHNETVALUEcolor##","marginTop":0},"navigateTo":"Transaction"},'
+	 
+	SET @strNetValue2 = 0
+	SELECT @strNetValue2 = SUM(CASE WHEN td_bsflag = 'B' THEN td_bqty*td_rate ELSE td_sqty * td_rate*-1 END)
+    FROM TRX(NOLOCK) 
+    WHERE td_clientcd = @strUserId
+    AND TD_DT IN (SELECT MAX(TD_DT) FROM trx(NOLOCK))
+	   
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CSHNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CSHNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+			 
+  END
+	 
+  IF ISNULL(@StrfnoActive,'N') = 'Y'
+  BEGIN 
+    SET @strJsonMain1 = @strJsonMain1+'{"label":{"text":"F&O","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##FOHNETVALUE##","size":##text##,"color":"##FOHNETVALUEcolor##","marginTop":0},"navigateTo":"OSPosition"},'
+    SET @strNetValue2 = 0
+	
+    --SELECT @strNetValue2 = ISNULL(SUM((ISNULL(po_postlongqty,0)-ISNULL(po_postshortqty,0))*po_settleprice),0)   
+	SELECT @strNetValue2 = ISNULL(SUM(ISNULL(po_futvalue,0)+ISNULL(po_Diffvalue,0)+ISNULL(po_netpremium,0)),0)   
+    FROM Fpositions(NOLOCK) X WHERE po_clientcd = @strUserId
+    AND po_dt IN(SELECT MAX(po_dt) FROM Fpositions(NOLOCK) WHERE po_companycode = X.po_companycode 
+    AND po_exchange = X.po_exchange AND po_Segment = X.po_Segment)
+    --AND ISNULL(po_postlongqty,0)-ISNULL(po_postshortqty,0) <> 0
+    AND po_Segment = 'F'
+       
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##FOHNETVALUE##',ISNULL(@strNetValue2,0))
+    SET @strJsonMain1 = REPLACE(@strJsonMain1,'##FOHNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+				  
+  END					  
+	 
+  IF ISNULL(@StrcURRActive,'N') = 'Y'
+  BEGIN 
+    SET @strJsonMain1 = @strJsonMain1+'{"label":{"text":"Currency","size":##label##,"color":"black","marginTop":0},
+                      "value":{"text":"##CUHNETVALUE##","size":##text##,"color":"##CUHNETVALUEcolor##","marginTop":0},"navigateTo":"OSPosition"}'
+    SET @strNetValue2 = 0
+	
+    SELECT @strNetValue2 = ISNULL(SUM(ISNULL(po_futvalue,0)+ISNULL(po_Diffvalue,0)+ISNULL(po_netpremium,0)),0)  
+    FROM Fpositions(NOLOCK) X WHERE po_clientcd = @strUserId
+    AND po_dt IN(SELECT MAX(po_dt) FROM Fpositions(NOLOCK) WHERE po_companycode = X.po_companycode 
+    AND po_exchange = X.po_exchange AND po_Segment = X.po_Segment)
+    --AND ISNULL(po_postlongqty,0)-ISNULL(po_postshortqty,0) > 0
+    AND po_Segment = 'K'
+    
+	
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CUHNETVALUE##',ISNULL(@strNetValue2,0))
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CUHNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+  END
+	 
+  SET @strJsonMain1 = @strJsonMain1+']}]}]'
+   
+    ---- LEDGER BALANCE
+    
+  SELECT @strNetValue = ISNULL(SUM(ld_Amount),0)*-1
+  FROM Ledger(NOLOCK) WHERE ld_clientcd = @strUserId
+	
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##LNETVALUE##',cast((ISNULL(@strNetValue,0)) as VARCHAR))
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##Lcolor##',CASE WHEN @strNetValue < 0 THEN 'red' ELSE 'green' END)
+	
+	---- Collateral BALANCE
+	
+  SELECT @strNetValue1 = SUM(round(((FOCOLL *ClosingPrice) * (100- Haircut))/100,2))
+  FROM tbl_DBHoldingDtl(NOLOCK) WHERE  ClientCode = @strUserId
+    
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##PNETVALUE##',cast(ISNULL(@strNetValue1,0) as VARCHAR))
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##Pcolor##',CASE WHEN @strNetValue1 < 0 THEN 'red' ELSE 'green' END)
+	
+	---- TOTAL AVAIABLE MARGIN
+	
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##TNETVALUE##',cast(CONVERT(numeric(19,2),isnull(@strNetValue1,0))+
+  CONVERT(numeric(19,2),isnull(@strNetValue,0)) as VARCHAR))
+	 
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##AMTcolor##',CASE WHEN CONVERT(numeric(19,2),isnull(@strNetValue1,0))+
+  CONVERT(numeric(19,2),isnull(@strNetValue,0)) < 0 THEN 'red' ELSE 'green' END)
+	
+  SET @strNetValue2 = 0
+  DECLARE @TBL_MarginRequire TABLE(SerialNo int identity(1,1), TAG VARCHAR(50), Amount Money)
+	
+
+  INSERT INTO @TBL_MarginRequire(TAG, Amount)
+  SELECT TAG = '[Margin Require]', SUM(AMOUNT) AS AMOUNT FROM(
+  SELECT Amount = fm_TotalMrgn
+  FROM Fmargins(NOLOCK) WHERE fm_dt IN(SELECT MAX(fm_dt) FROM Fmargins(NOLOCK))
+  AND fm_clientcd = @strUserId) X1
+  UNION ALL
+  SELECT TAG = '[Ledger Balance]', Amount = SUM(LD_AMOUNT)*-1 FROM ledger(NOLOCK)
+  WHERE ld_clientcd = @strUserId
+  Group By ld_clientcd
+  --HAVING SUM(LD_AMOUNT) <= 0
+  UNION ALL
+  SELECT TAG = '[collateral Balance]', Amount = SUM(ROUND(((FOCOLL*ClosingPrice) * (100-Haircut))/100,2)) FROM tbl_DBHoldingDtl(NOLOCK)
+  WHERE ClientCode = @strUserId
+	
+	
+
+  SET @strNetValue2 = 0
+  SELECT @strNetValue2 = AMOUNT FROM @TBL_MarginRequire WHERE TAG = '[Margin Require]'
+	
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##MRRNETVALUE##',ISNULL(@strNetValue2,0))
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##MRRNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	
+  SET @strNetValue2 = 0
+  SELECT @strNetValue2 = AMOUNT FROM @TBL_MarginRequire WHERE TAG = '[Ledger Balance]'
+	
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CCMNETVALUE##',ISNULL(@strNetValue2,0))
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##CCMNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	
+  SET @strNetValue2 = 0
+  SELECT @strNetValue2 = AMOUNT FROM @TBL_MarginRequire WHERE TAG = '[collateral Balance]'
+	
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##PLMNETVALUE##',ISNULL(@strNetValue2,0))
+	
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##PLMNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	
+  SET @strNetValue2 = 0
+  SELECT @strNetValue2 = SUM(AMOUNT) FROM @TBL_MarginRequire WHERE TAG IN('[collateral Balance]','[Ledger Balance]')
+	
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##PLTMNETVALUE##',ISNULL(@strNetValue2,0))
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##PLTMNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+	
+  SET @strNetValue2 = 0
+  SELECT @strNetValue2 = SUM(CASE WHEN TAG ='[Margin Require]' THEN Amount*-1 ELSE AMOUNT END) 
+  FROM @TBL_MarginRequire 
+	
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##ESTMNETVALUE##',ISNULL(@strNetValue2,0))
+  SET @strJsonMain1 = REPLACE(@strJsonMain1,'##ESTMNETVALUEcolor##',CASE WHEN @strNetValue2 < 0 THEN 'red' ELSE 'green' END)
+  
+  IF @StrRequestFrom = 'M'
+  BEGIN
+    SET @strJsonMain1 = REPLACE(@strJsonMain1,'##textSize##','13')
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##label##','12')
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##text##','14')
+  END
+  ELSE
+  BEGIN
+    SET @strJsonMain1 = REPLACE(@strJsonMain1,'##textSize##','25')
+    SET @strJsonMain1 = REPLACE(@strJsonMain1,'##label##','12')
+	SET @strJsonMain1 = REPLACE(@strJsonMain1,'##text##','15')
+  END 	
+  SELECT @strJsonMain1
+END	
+GO
+
+CREATE OR ALTER PROCEDURE stpr_GetClientsFromMobile @dsXml VARCHAR(MAX) 
+WITH ENCRYPTION  AS
+BEGIN 
+  DECLARE @tbl_InputJSONTable DBO.tb_ParamList ;
+  DECLARE @o_ParameterList varchar(max)='', @o_ParameterListxml XML; 
+  DECLARE @tbl_UserList dbo.UserAccessList;
+  
+  EXEC SP_ParameterXMLRep @dsXml, @o_ParameterList OUTPUT
+  
+  IF ISNULL(@o_ParameterList,'') <> ''
+  BEGIN
+	SET @o_ParameterListxml = CAST(@o_ParameterList AS XML)
+    INSERT INTO @tbl_InputJSONTable (ParameterName,  ParameterValue, HeaderName, Jsontag) 
+    SELECT Parameter.value('(ColumnName)[1]', 'VARCHAR(MAX)') AS Client_Code ,
+    Parameter.value('(ColumnValue)[1]', 'VARCHAR(MAX)') AS ColumnValue,
+	Parameter.value('(MasterTag)[1]', 'VARCHAR(MAX)') AS MasterTag,
+	Parameter.value('(JsonLevel)[1]', 'VARCHAR(MAX)') AS JsonLevel
+    FROM @o_ParameterListxml.nodes('/Parameter') AS XTbl(Parameter)
+  END	  
+  
+  DECLARE @StrRequestFrom VARCHAR(1)='M', @strOption VARCHAR(50)=''
+  
+  SELECT @strOption = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Option'
+  
+  DECLARE @strMobile VARCHAR(12) = '', @strTrading VARCHAR(MAX) = '', @strDemat VARCHAR(MAX) = '', @jsonv VARCHAR(MAX)=''
+  
+  IF @strOption = 'GetClientsFromMobile'
+  BEGIN
+    SET @strMobile = (SELECT ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Mobile')
+
+    DECLARE @TempTable TABLE (ClientCode VARCHAR(20),Product NVARCHAR(10));
+
+    INSERT INTO @TempTable 
+    SELECT LTRIM(RTRIM(cm_cd)), 'Trading'  
+    FROM Client_master(NOLOCK) WHERE LTRIM(RTRIM(cm_mobile)) = @strMobile
+
+    DECLARE @StrString VARCHAR(MAX), @dp_Server VARCHAR(50)='', @dp_Database VARCHAR(50)='', @dp_Owner  VARCHAR(50)=''
+
+    SELECT TOP 1 @dp_Server = LTRIM(RTRIM(OP_Server)), @dp_Database = LTRIM(RTRIM(OP_DataBase)), @dp_Owner = LTRIM(RTRIM(OP_Owner)) 
+    FROM Other_Products(NOLOCK) 
+    WHERE op_Status = 'A' AND OP_Product IN ('Cross', 'Estro')
+
+    IF @dp_Database <> ''
+    BEGIN
+      SET @StrString = 'SELECT LTRIM(RTRIM(cm_cd)), ''Demat'' FROM '+@dp_Database+'.[dbo].Client_master(NOLOCK) WHERE LTRIM(RTRIM(cm_mobile)) = ''' + @strMobile + ''''
+	  INSERT INTO @TempTable 
+      EXEC(@StrString)
+    END
+
+    SELECT @strTrading = @strTrading+',"'+LTRIM(RTRIM(ClientCode))+'"'  
+    from @TempTable where Product = 'Trading'
+    SELECT @strDemat = @strDemat+',"'+LTRIM(RTRIM(ClientCode))+'"'  
+    from @TempTable where Product = 'Demat'
+
+    SET @jsonv = '{"Trading": ##Trading##,"Demat": ##Demat##}'
+    SET @jsonv = REPLACE(@jsonv,'##Trading##','['+SUBSTRING(@strTrading,2,LEN(@strTrading))+']')
+    SET @jsonv = REPLACE(@jsonv,'##Demat##','['+SUBSTRING(@strDemat,2,LEN(@strDemat))+']')
+    SELECT @jsonv
+  END
+  ELSE IF @strOption = 'UserProfile'
+  BEGIN
+    DECLARE @UserProfilejson VARCHAR(MAX) ='', @ProfileUser VARCHAR(50)=''
+	SELECT TOP 1 @ProfileUser = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Userid'
+	
+    SET @UserProfilejson =(SELECT [Personal Detail] = (select [Code] = ltrim(rtrim(CM_CD)),
+         [Name] = ltrim(rtrim(CM_NAME)), 	
+         [Mobile] = CASE WHEN ISNULL(cm_MOBILE,'') <> '' THEN RIGHT('XXXXXX', LEN(ltrim(rtrim(cm_MOBILE))) - 4) + RIGHT(ltrim(rtrim(cm_MOBILE)), 4)
+         ELSE '' END, [Email] = CASE WHEN ISNULL(cm_email,'') <> '' THEN LEFT(ltrim(rtrim(cm_email)), 3) + '****@' + 
+         SUBSTRING(ltrim(rtrim(cm_email)), CHARINDEX('@', ltrim(rtrim(cm_email))) + 1, LEN(ltrim(rtrim(cm_email)))) else '' end,
+         [Gender] = CASE WHEN cm_sex = 'M' THEN 'Male' WHEN cm_sex = 'F' THEN 'Female' WHEN cm_sex = 'O' THEN 'Other' END,
+		 [PAN] = RIGHT('XXXXXX', LEN(ltrim(rtrim(cm_panno))) - 4) + RIGHT(ltrim(rtrim(cm_panno)), 4)
+         FROM CLIENT_MASTER(NOLOCK)
+         WHERE cm_cd = @ProfileUser FOR JSON PATH),
+         [Address Details] = (select [Address1] = ltrim(rtrim(cm_add1)),
+         [Address2] = ltrim(rtrim(cm_add2)), [Address3] = ltrim(rtrim(CM_ADD3)), [City] = ltrim(rtrim(cm_add4)),
+         [State] = ltrim(rtrim(cm_state))+' - '+ltrim(rtrim(cm_pincode)),
+         [Country] = ltrim(rtrim(cm_bankactno)) 
+         FROM CLIENT_MASTER(NOLOCK),  Client_Info(NOLOCK)
+         WHERE cm_cd = cm2_Cd
+         AND CM_cD = @ProfileUser  FOR JSON PATH),
+         [Bank Details] = (SELECT [Name] = ltrim(rtrim(mas.bk_name)), [Account No] = RIGHT('XXXXXXXXXX', LEN(ltrim(rtrim(ba_actno))) - 4) + RIGHT(ltrim(rtrim(ba_actno)), 4) , 
+					[IFSC] = ltrim(rtrim(ba_ifsccode)), [MICR] 
+					= ltrim(rtrim(ba_micr)),[AccountType] 
+					= case when ltrim(rtrim(ba_acttype)) = 'SB' THEN 'Saving' else ltrim(rtrim(ba_acttype)) end
+				FROM Bankact x, Bank_master mas
+				WHERE x.ba_micr = mas.bk_micr AND x.ba_ifsccode = mas.bk_IFCCode
+					AND ba_default = 'Y' and ba_clientcd = @ProfileUser FOR JSON PATH),
+         [Demat Details] = (SELECT [DP ID] = ltrim(rtrim(da_dpid)), [DP Account No] = RIGHT('XXXXXXXXXX', LEN(ltrim(rtrim(da_actno))) - 4) + RIGHT(ltrim(rtrim(da_actno)), 4)
+				FROM Dematact(NOLOCK)
+				WHERE da_clientcd = @ProfileUser AND da_status = 'A'
+				and da_defaultyn = 'Y'   FOR JSON PATH) FOR JSON PATH)
+    SELECT @UserProfilejson				
+  END
+  ELSE IF @strOption = 'RegisterPublicKey'
+  BEGIN
+    Declare @strPublicKey NVARCHAR(MAX)='', @StrClientCD VARCHAR(50)=''
+	SELECT @strPublicKey = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'PublicKey' 
+    SELECT TOP 1 @StrClientCD = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Userid' 	
+	IF ISNULL(@strPublicKey,'') <> ''
+	BEGIN
+	  IF EXISTS(SELECT 1 FROM tbl_UserLoginToken(NOLOCK) WHERE Userid = @StrClientCD) 
+	  BEGIN
+	    UPDATE A SET PublicKey = @strPublicKey
+	    FROM tbl_UserLoginToken A
+	    WHERE Userid = @StrClientCD AND ISNULL(PublicKey,'') <> @strPublicKey
+	
+	    SELECT [Flag] = 'E', [Message] = 'Already Register', [PublicKey] = PublicKey
+	    FROM tbl_UserLoginToken(NOLOCK) WHERE Userid = @StrClientCD AND ISNULL(PublicKey,'') <> ''
+	  END  
+	  ELSE
+      BEGIN	
+	    INSERT INTO tbl_UserLoginToken(Userid, PublicKey, secretPin, cn_filler1, cn_filler2, cn_filler3, cn_filler4, 
+	    cn_Nfiller1, cn_Nfiller2, cn_Nfiller3, cn_Nfiller4, mkrdt, mkrid)
+	    VALUES(@StrClientCD, @strPublicKey, '','','','','',0,0,0,0, GETDATE(), @StrClientCD)
+	    SELECT [Flag] = 'S', [Message] = 'Process Completed', [PublicKey] = @strPublicKey
+	  END
+    END
+	ELSE
+	BEGIN
+	  SELECT [Flag] = 'E', [Message] = 'Already Register', [PublicKey] = PublicKey
+	  FROM tbl_UserLoginToken(NOLOCK) WHERE Userid = @StrClientCD AND ISNULL(PublicKey,'') <> ''
+	END  
+  END
+  ELSE IF @strOption = 'Theme'
+  BEGIN
+    SELECT LevelSetting 
+    FROM tbl_TradeWebMenu(NOLOCK) WHERE srno = 1 
+	
+	SELECT [LevelSetting1] = '{"fontSettings":{"sidebar":"Arial","content":"Arial"}'
+  END  
+END 
+GO
+
+CREATE   PROCEDURE stpr_GetLastTradingDate @dsXml VARCHAR(MAX)  
+WITH ENCRYPTION AS
+BEGIN 
+  DECLARE @tbl_InputJSONTable DBO.tb_ParamList ;
+  DECLARE @o_ParameterList varchar(max)='', @o_ParameterListxml XML; 
+  DECLARE @tbl_UserList dbo.UserAccessList;
+  DECLARE @strDT VARCHAR(10)=''
+  
+  EXEC SP_ParameterXMLRep @dsXml, @o_ParameterList OUTPUT
+  
+  IF ISNULL(@o_ParameterList,'') <> ''
+  BEGIN
+	SET @o_ParameterListxml = CAST(@o_ParameterList AS XML)
+    INSERT INTO @tbl_InputJSONTable (ParameterName,  ParameterValue, HeaderName, Jsontag) 
+    SELECT Parameter.value('(ColumnName)[1]', 'VARCHAR(MAX)') AS Client_Code ,
+    Parameter.value('(ColumnValue)[1]', 'VARCHAR(MAX)') AS ColumnValue,
+	Parameter.value('(MasterTag)[1]', 'VARCHAR(MAX)') AS MasterTag,
+	Parameter.value('(JsonLevel)[1]', 'VARCHAR(MAX)') AS JsonLevel
+    FROM @o_ParameterListxml.nodes('/Parameter') AS XTbl(Parameter)
+  END	
+  SELECT @strDT = MAX(FM_DT) FROM Fmargins(NOLOCK) 
+  SELECT @strDT As 'LastTradeDate'
+END
+GO
+
+CREATE OR ALTER  FUNCTION [dbo].[fn_json_merge] (@i_vcFirstJson NVARCHAR(MAX), 
+ @i_vdSecondJson NVARCHAR(MAX))  
+RETURNS NVARCHAR(MAX)  
+AS  
+BEGIN  
+/*            
+///////////////////////////////////////////////////////////////////////////////////////////            
+// Create By     : Vaibhav Garg    
+// Created Date  : 21-JAN-2021           
+// CCT NO        :           
+// Description   : This Function is used to merge to JSON String into a single JSON.     
+// Reviewed By   :  Shyam M             
+// Review Date   :  28-Mar-2022             
+//////////////////////////////////////////////////////////////////////////////////////////            
+  */      
+
+  IF LEFT(@i_vcFirstJson, 1) = '{' AND LEFT(@i_vdSecondJson, 1) = '{' 
+  BEGIN  
+    SELECT @i_vcFirstJson = CASE WHEN d.[type] in (4,5) THEN 
+	  json_modify(@i_vcFirstJson, concat('$.',d.[key]), json_query(d.[value])) 
+	  ELSE @i_vcFirstJson END,  
+    @i_vcFirstJson = CASE WHEN d.[type] NOT IN (4,5) THEN 
+	  json_modify(@i_vcFirstJson, concat('$.',d.[key]), d.[value]) ELSE @i_vcFirstJson END  
+        FROM OPENJSON(@i_vdSecondJson) AS d;  
+  END 
+  ELSE IF LEFT(@i_vcFirstJson, 1) = '[' AND LEFT(@i_vdSecondJson, 1) = '{' 
+  BEGIN  
+    SELECT @i_vcFirstJson = json_modify(@i_vcFirstJson, 'append $', json_query(@i_vdSecondJson));  
+  END ELSE 
+  BEGIN  
+    SELECT @i_vcFirstJson = CONCAT('[', @i_vcFirstJson, ',', 
+	 RIGHT(@i_vdSecondJson, LEN(@i_vdSecondJson) - 1));  
+  END  
+  RETURN @i_vcFirstJson;  
+END  
+GO
+
+CREATE OR ALTER PROCEDURE stpr_MobileMenuProcedure @dsXml VARCHAR(MAX)  
+WITH ENCRYPTION AS
+BEGIN 
+  DECLARE @tbl_InputJSONTable DBO.tb_ParamList ;
+  DECLARE @o_ParameterList varchar(max)='', @o_ParameterListxml XML; 
+  DECLARE @tbl_UserList dbo.UserAccessList;
+  
+  EXEC SP_ParameterXMLRep @dsXml, @o_ParameterList OUTPUT
+  
+  IF ISNULL(@o_ParameterList,'') <> ''
+  BEGIN
+	SET @o_ParameterListxml = CAST(@o_ParameterList AS XML)
+    INSERT INTO @tbl_InputJSONTable (ParameterName,  ParameterValue, HeaderName, Jsontag) 
+    SELECT Parameter.value('(ColumnName)[1]', 'VARCHAR(MAX)') AS Client_Code ,
+    Parameter.value('(ColumnValue)[1]', 'VARCHAR(MAX)') AS ColumnValue,
+	Parameter.value('(MasterTag)[1]', 'VARCHAR(MAX)') AS MasterTag,
+	Parameter.value('(JsonLevel)[1]', 'VARCHAR(MAX)') AS JsonLevel
+    FROM @o_ParameterListxml.nodes('/Parameter') AS XTbl(Parameter)
+  END	  
+  
+  DECLARE @StrRequestFrom VARCHAR(1)='M', @strJson VARCHAR(MAX)='', @strUserid VARCHAR(50)=''
+  DECLARE @TBL_json TABLE(SerialNo int, Jsonvalue VARCHAR(MAX), ParentName VARCHAR(MAX))
+
+  SELECT @strRequestFrom = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'RequestFrom'
+  SELECT @strUserid = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Userid'
+  
+  
+  
+  INSERT INTO @TBL_json(SerialNo, Jsonvalue, ParentName)
+  SELECT SrNo, Jsonvalue = (SELECT SrNo, SrNo as [id], [title] = MenuName,
+  [componentName] = Menutag, [icon] = CASE WHEN Menutag = 'Ledger' THEN 'balance-scale-left'
+  WHEN Menutag = 'Holding' THEN 'hand-holding-usd'
+  WHEN Menutag = 'OSPosition' THEN 'box-open'
+  WHEN Menutag = 'AvailableMargin' THEN 'margin' 
+  WHEN Menutag = 'PROFITLOSS' THEN 'bar-graph' 
+  WHEN Menutag = 'Transaction' THEN 'memory' 
+  WHEN Menutag = 'CGain' THEN 'memory' 
+  WHEN Menutag = 'CGainHolding' THEN 'bar-graph' 
+  WHEN Menutag = 'CGainDiviend' THEN 'margin' 
+  WHEN Menutag = 'CGainListing' THEN 'hand-holding-usd' 
+  WHEN Menutag = 'Collateral' THEN 'credit' 
+  WHEN Menutag = 'Margin1' THEN 'margin' 
+  WHEN Menutag = 'Margin2' THEN 'margin' 
+  else '' end,
+  [iconType] = CASE WHEN Menutag = 'Ledger' THEN 'fontawesome5'   
+   WHEN Menutag = 'Holding' THEN 'fontawesome5'
+   WHEN Menutag = 'AvailableMargin' THEN 'materialcommunityicons' 
+   WHEN Menutag = 'OSPosition' THEN 'fontawesome6' 
+   WHEN Menutag = 'PROFITLOSS' THEN 'entypo' 
+   WHEN Menutag = 'Transaction' THEN 'fontawesome5' 
+   WHEN Menutag = 'CGainHolding' THEN 'entypo' 
+   WHEN Menutag = 'CGain' THEN 'fontawesome5'  
+   WHEN Menutag = 'CGainDiviend' THEN 'materialcommunityicons' 
+   WHEN Menutag = 'CGainListing' THEN 'fontawesome5' 
+   WHEN Menutag = 'Collateral' THEN 'entypo' 
+   WHEN Menutag = 'Margin1' THEN 'materialcommunityicons' 
+   WHEN Menutag = 'Margin1' THEN 'materialcommunityicons' 
+   else '' end ,
+   [pageData] = (SELECT [wPage] = Menutag, [level] = CASE WHEN ISNULL(ParentMenu,'') = 'Reports' then MenuName else MenuName+'('+ParentMenu+')' end,
+   [isShortAble] = (CASE WHEN MenuName = 'Ledger' then 'false' else 'true' end),
+   [autoFetch] = (CASE WHEN Menutag ='Holding' then 'false' else 'true' end),
+   [gridType] = 'card', [horizontalScroll] = 0,
+   filters = '##filters##', --downloadFilters = '##downloadFilters##' ,
+   levels = (SELECT * FROM(SELECT name = MenuName, primaryHeaderKey, [primaryKey] = primaryHeaderKey, level = 1, 
+   [summary] = '##summary##',
+   J_Ui = '##J_Ui##',
+   [settings] = '##settings##'
+   FROM tbl_TradeWebMenu(NOLOCK) XMM WHERE XMM.SrNo = XMAIN.SrNo 
+   AND ISNULL(Enable,'N') = 'Y'
+   UNION ALL
+   SELECT name = 'Details', primaryHeaderKey, [primaryKey] = '', level = 2, [summary] = '##summary2##', J_Ui = '##J_Ui2##',
+   [settings] = '##settings2##'
+   FROM tbl_TradeWebMenu(NOLOCK) XMM WHERE XMM.SrNo = XMAIN.SrNo) X1 FOR JSON PATH)
+   FROM tbl_TradeWebMenu(NOLOCK) XM WHERE XM.SrNo = XMAIN.SrNo FOR JSON PATH)
+   FROM tbl_TradeWebMenu(NOLOCK) XMAIN
+   WHERE XMAIN.SrNo = XXX.SrNo AND ISNULL(Enable,'N') = 'Y' FOR JSON PATH), ParentMenu FROM tbl_TradeWebMenu(NOLOCK) XXX
+   WHERE MenuType = 'C' AND ((CASE WHEN ISNULL(@strRequestFrom,'') = 'W' THEN  'T' ELSE @strRequestFrom END) = Productid or isnull(Productid,'') = '')
+   AND ISNULL(Enable,'N') = 'Y'
+   AND MenuName NOT IN('DashBoard')
+
+  UPDATE X SET X.Jsonvalue = REPLACE(X.Jsonvalue,'"##filters##"',CASE WHEN ISNULL(XX.filters,'') = '' THEN '[]' ELSE '['+ISNULL(XX.filters,'')+']'  END)
+  FROM @TBL_json X, tbl_TradeWebMenu xx
+  WHERE x.SerialNo = xx.SrNo
+  
+  
+  
+  DECLARE @InputDate DATE = ISNULL((SELECT CAST(MAX(TD_DT) AS DATE) FROM trx(NOLOCK)),GETDATE()), 
+  @FinancialYearStart DATE=''
+  SET @FinancialYearStart = CASE WHEN MONTH(@InputDate) >= 4 THEN DATEFROMPARTS(YEAR(@InputDate), 4, 1) 
+                            ELSE DATEFROMPARTS(YEAR(@InputDate) - 1, 4, 1) END;
+  
+  
+  UPDATE X SET X.Jsonvalue = REPLACE(X.Jsonvalue,'##FromDate##',CONVERT(VARCHAR,@FinancialYearStart,112))
+  FROM @TBL_json X
+  
+  UPDATE X SET X.Jsonvalue = REPLACE(X.Jsonvalue,'##7FromDate##',CONVERT(VARCHAR,DATEADD(DAY,-7,@InputDate),112))
+  FROM @TBL_json X
+  
+  UPDATE X SET X.Jsonvalue = REPLACE(X.Jsonvalue,'##UserId##',@strUserid)
+  FROM @TBL_json X
+    
+   
+  UPDATE X SET X.Jsonvalue = REPLACE(X.Jsonvalue,'##ToDate##',CONVERT(VARCHAR,@InputDate,112))
+  FROM @TBL_json X
+    
+  UPDATE X SET X.Jsonvalue = REPLACE(X.Jsonvalue,'"##summary##"',CASE WHEN ISNULL(XX.downloadFilters,'') = '' THEN '{}' ELSE +ISNULL(XX.downloadFilters,'')  END)
+  FROM @TBL_json X, tbl_TradeWebMenu xx
+  WHERE x.SerialNo = xx.SrNo
+  
+  UPDATE X SET X.Jsonvalue = REPLACE(X.Jsonvalue,'"##summary2##"','{"columnsToShowTotal":[{"key": "Net Value","label": "Net Value"}]}')
+  FROM @TBL_json X, tbl_TradeWebMenu xx
+  WHERE x.SerialNo = xx.SrNo
+  AND xx.menuname ='Ledger'
+  
+  UPDATE X SET X.Jsonvalue = REPLACE(X.Jsonvalue,'"##J_Ui##"','{"ActionName":"TradeWeb","Option":"'+xx.menutag+'","Level":1, "RequestFrom":"'+@strRequestFrom+'"}')
+  FROM @TBL_json X, tbl_TradeWebMenu xx
+  WHERE x.SerialNo = xx.SrNo
+  
+  UPDATE X SET X.Jsonvalue = REPLACE(X.Jsonvalue,'"##J_Ui2##"','{"ActionName":"TradeWeb","Option":"'+xx.menutag+'","Level":2, "RequestFrom":"'+@strRequestFrom+'"}')
+  FROM @TBL_json X, tbl_TradeWebMenu xx
+  WHERE x.SerialNo = xx.SrNo
+
+  UPDATE X SET X.Jsonvalue = REPLACE(X.Jsonvalue,'"##settings##"',CASE WHEN ISNULL(XX.LevelSetting,'') = '' THEN '{}' ELSE ISNULL(XX.LevelSetting,'')  END)
+  FROM @TBL_json X, tbl_TradeWebMenu xx
+  WHERE x.SerialNo = xx.SrNo
+
+  UPDATE X SET X.Jsonvalue = REPLACE(X.Jsonvalue,'"##settings2##"',CASE WHEN ISNULL(XX.Level2Setting,'') = '' THEN '{}' ELSE ISNULL(XX.Level2Setting,'')  END)
+  FROM @TBL_json X, tbl_TradeWebMenu xx
+  WHERE x.SerialNo = xx.SrNo
+
+
+  DECLARE @tbl_Data TABLE([Value] VARCHAR(MAX), [DisplayName] VARCHAR(100))
+  declare @iSerialNo INT, @strdbquery VARCHAR(MAX) ='', @strcolumnname VARCHAR(100)='',
+  @ojson VARCHAR(MAX)='', @JsonMain VARCHAR(MAX)='', @o_strJson  VARCHAR(MAX)='',
+  @strLedgerJson VARCHAR(MAX)='', @strString NVARCHAR(MAX)='', @strtradeplustempdb VARCHAR(MAX)=ISNULL((SELECT strtradeplustempdb = sp_sysvalue
+	FROM WebParameter(NOLOCK)
+	WHERE sp_parmcd = 'TRADEPLUSTEMPDB'),'')
+  
+  DECLARE CurfilterUpd
+  CURSOR FOR SELECT  x.SerialNo, dbquery, columnname
+  FROM @TBL_json X, tbl_TradeWebMenu xx, tbl_InsertUpdateXMLDropDownQuery xq
+  WHERE x.SerialNo = xx.SrNo
+  and xx.MenuTag = xq.ModuleName AND USERCODE <> 'X'
+  and charindex('##'+columnname+'##',xx.filters)>0 AND DBQueryType ='Q'
+  AND dbquery <> ''
+  order by xq.SerialNo
+  
+  OPEN CurfilterUpd 
+  FETCH NEXT FROM CurfilterUpd INTO @iSerialNo, @strdbquery, @strcolumnname
+  WHILE @@FETCH_STATUS = 0
+  BEGIN 
+    SET @strLedgerJson = ''
+    DELETE FROM @tbl_Data
+    INSERT INTO @tbl_Data([Value], [DisplayName])
+    EXEC(@strdbquery)
+    SET @ojson = ''
+    IF EXISTS(SELECT 1 FROM @tbl_Data)
+    BEGIN
+      SET @ojson = (SELECT [label] = [DisplayName], [Value]  FROM @tbl_Data FOR JSON PATH) 
+    END
+    ELSE
+    BEGIN
+      SET @ojson = (SELECT [label] = '', [Value] ='' FOR JSON PATH) 
+    END
+    UPDATE A SET A.Jsonvalue = REPLACE(A.Jsonvalue, '"##'+@strcolumnname+'##"',@ojson)
+    FROM @TBL_json A
+    WHERE A.SerialNo = @iSerialNo
+	
+	--SELECT @o_strJson
+    FETCH NEXT FROM CurfilterUpd INTO   @iSerialNo, @strdbquery, @strcolumnname
+  END
+  CLOSE CurfilterUpd
+  DEALLOCATE CurfilterUpd
+  
+
+  declare @tbl_fn_json_merge table(JsonValue varchar(max))
+
+  declare @strJsonvalue varchar(max)='', @strMenuname VARCHAR(MAX)='', @icount INT = 1,
+  @o_strJson1 VARCHAR(MAX)=''
+  
+  DECLARE CurfilterUpd0
+  CURSOR FOR SELECT DISTINCT Menuname from tbl_TradeWebMenu(NOLOCK)
+  WHERE MenuType = 'P' AND ISNULL(Enable,'N') = 'Y' AND ((CASE WHEN ISNULL(@strRequestFrom,'') = 'W' THEN  'T' ELSE @strRequestFrom END) = Productid or isnull(Productid,'') = '')
+  OPEN CurfilterUpd0 
+  FETCH NEXT FROM CurfilterUpd0 INTO @strMenuname
+  WHILE @@FETCH_STATUS = 0
+  BEGIN 
+    SET @icount = @icount+1
+    SET @o_strJson = '{"id": ##ID##,"title": "##title##",
+        "componentName": "##title##",
+        "icon": "##icon##","iconType":"##iconType##","submenu":[ '
+    SET @o_strJson = REPLACE(@o_strJson,'##ID##',CAST(@icount AS VARCHAR))
+	SET @o_strJson = REPLACE(@o_strJson,'##title##',@strMenuname)
+	
+	IF 	@strMenuname = 'Capital Gain'
+	BEGIN
+	  SET @o_strJson = REPLACE(@o_strJson,'##iconType##','entypo')
+	  SET @o_strJson = REPLACE(@o_strJson,'##icon##','area-graph')
+	END
+	ELSE IF @strMenuname = 'Reports'
+	BEGIN
+	  SET @o_strJson = REPLACE(@o_strJson,'##iconType##','octicons')
+	  SET @o_strJson = REPLACE(@o_strJson,'##icon##','report')
+	END
+	
+    
+    DECLARE CurfilterUpd1
+    CURSOR FOR SELECT Jsonvalue FROM @TBL_json 
+    WHERE  ParentName = @strMenuname
+    ORDER BY SERIALNO
+  
+    OPEN CurfilterUpd1 
+    FETCH NEXT FROM CurfilterUpd1 INTO @strJsonvalue
+    WHILE @@FETCH_STATUS = 0
+    BEGIN 
+      IF ISNULL(@o_strJson,'') <> ''
+	  BEGIN
+	  --select @o_strJson, @strJsonvalue
+	    delete from @tbl_fn_json_merge
+	    SET @strString = 'SELECT '+@strtradeplustempdb+'.DBO.fn_json_merge('''+@o_strJson+''','''+@strJsonvalue+''') '
+        INSERT INTO @tbl_fn_json_merge(JsonValue)
+        EXEC(@strString)
+	    select @o_strJson = JsonValue from @tbl_fn_json_merge
+	    SET @o_strJson = substring(@o_strJson,2,LEN(@o_strJson))
+	    SET @o_strJson = substring(@o_strJson,1,LEN(@o_strJson)-1)
+	    set @o_strJson = replace(@o_strJson,'[ ,{','[{')
+	  END
+      ELSE
+      BEGIN
+	    SET @o_strJson = @strJsonvalue
+	  END
+	--SELECT @o_strJson, @strJsonvalue
+      FETCH NEXT FROM CurfilterUpd1 INTO   @strJsonvalue
+    END
+    CLOSE CurfilterUpd1
+    DEALLOCATE CurfilterUpd1
+    IF ISNULL(@o_strJson1,'') = ''
+    BEGIN
+      SET @o_strJson1 = @o_strJson+']}'  
+    END
+    ELSE
+    BEGIN  
+      SET @o_strJson1 = @o_strJson1+','+@o_strJson+']}'
+    END	
+    FETCH NEXT FROM CurfilterUpd0 INTO   @strMenuname
+  END
+  CLOSE CurfilterUpd0
+  DEALLOCATE CurfilterUpd0
+  
+  SELECT '[{
+        "id": 1,
+        "title": "Dashboard",
+        "componentName": "Dashboard",
+        "icon": "home"},'+@o_strJson1+',{
+        "id": 20,
+        "title": "Change Password",
+        "componentName": "ChangePassword",
+        "icon": "password",
+		"iconType": "materialIcons"
+    },
+    {"id": 21,"title":"Downloads","componentName":"Downloads","icon":"download"},
+	{"id": 22,"title":"Theme","componentName":"Theme","icon":"theme-light-dark"},
+	{"id": 23,"title": "Logout","componentName": "Logout","icon": "logout"}]'
+END
+GO
+
+CREATE OR ALTER PROCEDURE stpr_Rep_MarginShotFoll @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, 
+@o_vcErrorMessage VARCHAR(MAX) OUTPUT  
+WITH ENCRYPTION
+AS
+BEGIN
+  declare @str NVARCHAR(MAX)='',  
+  @dtFromDate VARCHAR(8), @strUserId VARCHAR(50), @strReportName VARCHAR(50), 
+  @strOutputType VARCHAR(1)='', @XMLData XML,
+  @strSelectTag VARCHAR(1)='', @strSelectUsers VARCHAR(500)='', @StrString VARCHAR(MAX)='', @SQ1 INT = 0,
+  @strSplFilter VARCHAR(MAX)='', @strRepType VARCHAR(50)='', @dtToDate VARCHAR(8)='', 
+  @strRepSubType VARCHAR(50), @strConsider112A VARCHAR(1)='N', @strProduct VARCHAR(50)='', 
+  @strHeader VARCHAR(MAX)='', @strCommmexDB VARCHAR(MAX)='', @strCompany varchar(1), @dtMarginDate VARCHAR(20)='',
+  @strRequestFrom VARCHAR(1)='M'
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+  
+  SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+  
+  SELECT @dtMarginDate = ISNULL(x.value('(FromDt)[1]', 'VARCHAR(8)'),''),
+  @strProduct = ISNULL(x.value('(Product)[1]', 'VARCHAR(50)'),''),
+  @dtToDate = ISNULL(x.value('(ToDt)[1]', 'VARCHAR(8)'),''),
+  @strUserId = ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+  @strSelectTag = ISNULL(x.value('(SelectTag)[1]', 'VARCHAR(1)'),''),
+  @strSelectUsers = ISNULL(x.value('(SelectUsers)[1]', 'VARCHAR(500)'),''),
+  @strOutputType = ISNULL(x.value('(OutputType)[1]', 'VARCHAR(1)'),''),
+  @strSplFilter = ISNULL(x.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''),
+  @strReportName = ISNULL(x.value('(ReportName)[1]', 'VARCHAR(100)'),''),
+  @strRepType = ISNULL(x.value('(RepType)[1]', 'VARCHAR(100)'),''),
+  @strRepSubType = ISNULL(x.value('(RepSubType)[1]', 'VARCHAR(100)'),''),
+  @strCompany = ISNULL(x.value('(CompanyCode)[1]', 'VARCHAR(1)'),''),
+  @strRequestFrom = ISNULL(x.value('(RequestFrom)[1]', 'VARCHAR(1)'),'') 
+  FROM @XMLData.nodes('/root') AS XTbl(x) 
+  
+  
+  IF OBJECT_ID('tempdb..#TmpPeakColl') IS NOT NULL
+	DROP TABLE #TmpPeakColl
+
+  DECLARE @ComexDB VARCHAR(50), @ComexOwner VARCHAR(50)
+  SELECT @ComexDB = LTRIM(RTRIM(OP_DataBase)), @ComexOwner = LTRIM(RTRIM(OP_Owner)) 
+  FROM Other_Products(nolock) where OP_Product = 'Commex' AND OP_Status ='A'
+  
+  SET @strHeader = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) '
+  
+  SELECT @dtMarginDate = MAX(fm_dt) FROM Fmargins(nolock)
+  WHERE fm_companycode = @strCompany
+  
+  IF @strSplFilter = ''
+  BEGIN
+    SET @strHeader = @strHeader+' INSERT INTO @tbl_UserList(Client_Code) '
+    +' SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''')'
+  END 	 
+  ELSE
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @strHeader = @strHeader+' INSERT INTO @tbl_UserList(Client_Code)  SELECT distinct CM_CD FROM Client_master(NOLOCK) WHERE 1 = 1  AND '+@strSplFilter
+  END
+
+  CREATE TABLE #TmpPeakColl (
+	Tmp_Clientcd VARCHAR(8), Tmp_CompanyCode VARCHAR(3), Tmp_PeakMargin MONEY, Tmp_PeakColl MONEY, Tmp_Shortfall MONEY, Tmp_exchange CHAR(1), Tmp_segment CHAR(1), 
+	Tmp_Nfiller4 MONEY, Tmp_Nfiller5 MONEY, Tmp_Nfiller6 MONEY
+	)
+
+  SET @str = @strHeader+' '+'SELECT fm_clientcd, fm_exchange + fm_Segment, isNull(fm_NFiller4, 0), 0, 0, fm_exchange, fm_Segment, '
+             +' isNull(fm_NFiller4, 0), isNull(fm_NFiller5, 0), isNull( '
+		     +' fm_NFiller6, 0) fm_NFiller6 '
+             +' FROM Fmargins(NOLOCK), Client_master(NOLOCK), @tbl_UserList '
+             +' WHERE fm_clientcd = cm_cd AND fm_Companycode = '''+@strCompany+''' AND fm_dt = '''+@dtMarginDate+''''
+			 +' AND CM_CD = Client_Code '
+     IF ISNULL(@ComexDB,'') <> ''
+     BEGIN	 
+        SET @str =@str+' UNION '
+
+             +' SELECT fm_clientcd, fm_exchange + ''X'', isNull(fm_PeakMargin, 0) + isNull(fm_Filler2, 0), 0, 0, '
+			 +' fm_exchange, ''X'' fm_Segment, isNull(fm_PeakMargin, 0) + isNull(fm_Filler2, 0), '
+			 +' isNull(fm_Filler1, 0), isNull(fm_Filler3, 0) fm_NFiller6 '
+    +' FROM '+@ComexDB+'.'+@ComexOwner+'.Fmargins, Client_master(NOLOCK), @tbl_UserList '
+             +' WHERE fm_clientcd = cm_cd AND fm_Companycode = '''+@strCompany+''' AND fm_dt = '''+@dtMarginDate+''''
+			 +' AND CM_CD = Client_Code '
+      END			 
+   
+  INSERT INTO #TmpPeakColl
+  exec(@str)
+
+  UPDATE #TmpPeakColl
+  SET Tmp_PeakMargin = Round(Tmp_PeakMargin * 100 / 100, 2)
+  WHERE Right(Tmp_CompanyCode, 2) <> 'MX'
+
+  UPDATE #TmpPeakColl
+  SET Tmp_PeakColl = CASE WHEN isNull(fc_FillerN9, 0) > 0 THEN isNull(fc_FillerN9, 0) ELSE 0 END
+  FROM Fmargin_clients
+  WHERE fc_clientcd = Tmp_clientcd AND fc_Companycode = @strCompany AND fc_Exchange = '' AND fc_dt = @dtMarginDate
+
+
+  UPDATE #TmpPeakColl
+  SET Tmp_PeakMargin = 0, Tmp_PeakColl = 0
+  WHERE Tmp_PeakColl >= Tmp_PeakMargin
+
+
+  INSERT INTO #TmpPeakColl
+  SELECT Tmp_Clientcd, '', 0, 0, CASE WHEN Sum(Tmp_PeakMargin - Tmp_PeakColl) > 0 THEN Sum(Tmp_PeakMargin - Tmp_PeakColl) ELSE 0 END, '', '', 0, 0, 0
+  FROM #TmpPeakColl
+  GROUP BY Tmp_Clientcd
+
+
+  DELETE #TmpPeakColl
+  WHERE Tmp_CompanyCode <> ''
+
+  
+  IF OBJECT_ID('tempdb..#FmarginsRpt') IS NOT NULL
+	DROP TABLE #FmarginsRpt
+
+  CREATE TABLE [#FmarginsRpt] (
+	[fm_companycode] [char](1) NOT NULL, [fm_exchange] [char](1) NOT NULL, [fm_dt] [char](8) NOT NULL, [fm_clientcd] [char](8) NOT NULL, [fm_spanmargin] [money] NOT NULL
+	, [fm_buypremmargin] [money] NOT NULL, [fm_initialmargin] [money] NOT NULL, [fm_exposurevalue] [money] NOT NULL, [fm_clienttype] [char](1) NOT NULL, 
+	[fm_additionalmargin] [money] NOT NULL, [fm_collected] [money] NOT NULL, [fm_mainbrcd] [char](8) NOT NULL, [mkrid] [char](8) NOT NULL, [mkrdt] [char](8) NOT NULL, 
+	[fm_Regmargin] [money] NULL, [fm_Tndmargin] [money] NULL, [fm_Dlvmargin] [money] NULL, [fm_SpreadBen] [money] NULL, [fm_SplMargin] [money] NULL, [fm_collectedT2] 
+	[money] NOT NULL, [fm_InitShort] [money] NOT NULL, [fm_MTMAddShort] [money] NOT NULL, [fm_OthShort] [money] NOT NULL, [fm_ConcMargin] [money] NOT NULL, 
+	[fm_DelvPMargin] [money] NOT NULL, [fm_MTMLoss] [money] NOT NULL, [fm_Filler3] [money] NOT NULL
+	)
+   IF ISNULL(@ComexDB,'') <> ''
+   BEGIN	 
+     SET @str = @strHeader+' '+'SELECT fm_companycode, fm_exchange, fm_dt, fm_clientcd, Sum(fm_spanmargin), Sum(fm_buypremmargin), Sum(fm_initialmargin), '
+   +' Sum(fm_exposurevalue), '''' fm_clienttype, Sum(fm_additionalmargin), Sum(fm_collected), '
+   +' '''' fm_mainbrcd, '''' mkrid, '''' mkrdt, Sum(fm_Regmargin), Sum(fm_Tndmargin), Sum(fm_Dlvmargin), '
+   +' Sum(fm_SpreadBen), Sum(fm_SplMargin), Sum(fm_collectedT2), Sum(fm_InitShort), Sum(fm_MTMAddShort), '
+   +' Sum(fm_OthShort), Sum(fm_ConcMargin), Sum(fm_DelvPMargin), Sum(fm_MTMLoss), Sum(fm_Filler3)'
+   +' FROM (SELECT fm_companycode, fm_exchange, fm_dt, fm_clientcd, fm_spanmargin, fm_buypremmargin, fm_initialmargin, '
+   +' fm_exposurevalue, '''' fm_clienttype, fm_additionalmargin, fm_collected, '''' fm_mainbrcd, '''' mkrid, '
+   +' '''' mkrdt, fm_Regmargin, fm_Tndmargin, fm_Dlvmargin, fm_SpreadBen, fm_SplMargin, fm_collectedT2 '
+   +' , fm_InitShort, fm_MTMAddShort, fm_OthShort, fm_ConcMargin, fm_DelvPMargin, 0 fm_MTMLoss, isNull(fm_Filler3, 0) fm_Filler3 '
+   +' FROM '+@ComexDB+'.'+@ComexOwner+'.Fmargins, '+@ComexDB+'.'+@ComexOwner+'.Client_master, @tbl_UserList '
+   +' WHERE fm_clientcd = cm_cd AND fm_Companycode = '''+@strCompany+'''  AND fm_dt = '''+@dtMarginDate+''' AND cm_type <> ''I'''
+   +' AND CM_cD = Client_Code '
+   +' UNION ALL '
+   +' SELECT po_companycode, po_exchange, po_dt, po_clientcd, 0 fm_spanmargin, 0 fm_buypremmargin, 0 fm_initialmargin, '
+   +' 0 fm_exposurevalue, 0 fm_clienttype, 0 fm_additionalmargin, 0 fm_collected, '''' fm_mainbrcd, '''' mkrid, '''' mkrdt, '
+   +' 0 fm_Regmargin, 0 fm_Tndmargin, 0 fm_Dlvmargin, 0 fm_SpreadBen, 0 fm_SplMargin, 0 fm_collectedT2, 0 fm_InitShort, '
+   +' 0 fm_MTMAddShort, 0 fm_OthShort, 0 fm_ConcMargin, 0 fm_DelvPMargin, CASE WHEN - sum(po_futvalue) > 0 THEN - sum(po_futvalue) ELSE 0 '
+   +' END MarginReq, 0 fm_Filler3 '
+   +' FROM '+@ComexDB+'.'+@ComexOwner+'.Fpositions, '+@ComexDB+'.'+@ComexOwner+'.Client_master, @tbl_UserList  '
+   +' WHERE po_companycode = '''+@strCompany+''' AND po_clientcd = cm_cd AND po_dt = '''+@dtMarginDate+''' AND cm_type <> ''I'' '
+   +' AND CM_cD = Client_Code '
+   +' GROUP BY po_clientcd, po_companycode, po_exchange, po_dt '
+   +' HAVING CASE WHEN - sum(po_futvalue) > 0 THEN - sum(po_futvalue) ELSE 0 END > 0 ) a '
+   +' GROUP BY fm_companycode, fm_exchange, fm_dt, fm_clientcd '
+   
+     INSERT INTO #FmarginsRpt
+     EXEC(@str)
+   END
+   
+   DECLARE @tbl_CommexClient TABLE(ClientCode VARCHAR(50), Exchange VARCHAR(10))
+   IF ISNULL(@ComexDB,'') <> ''
+   BEGIN	 
+     set @str =' SELECT distinct fm_clientcd, fm_Exchange '
+		       +' FROM '+@ComexDB+'.'+@ComexOwner+'.Fmargins '
+		       +' WHERE fm_companycode = '''+@strCompany+''' AND fm_dt = '''+@dtMarginDate+''''
+   INSERT INTO @tbl_CommexClient
+   EXEC(@str)   
+   END		
+
+   UPDATE #FmarginsRpt 
+   SET fm_collected = fc_collected, fm_collectedT2 = fc_Collected1 
+   FROM Fmargin_Clients
+   WHERE fc_companycode = @strCompany AND fc_exchange = fm_Exchange AND fc_Segment = 'X' AND fc_dt = @dtMarginDate AND fm_clientcd = fc_clientcd 
+   AND NOT EXISTS (SELECT 1 FROM @tbl_CommexClient WHERE ClientCode = fc_clientcd AND Exchange = fC_exchange)
+
+
+   DECLARE @TBL_MARGIN TABLE(fm_clientcd VARCHAR(50),
+   cm_Name VARCHAR(135), PeakShort MONEY,TotalShort MONEY,
+   Collected MONEY, TotalMrgnCashNC MONEY, TotalMrgnFoNF MONEY,
+   fm_TotalMrgn MONEY,
+   EXCESSTDAY MONEY, ShortPenalty MONEY, LedgerBal MONEY)
+ 
+   INSERT INTO @TBL_MARGIN(fm_clientcd, cm_Name, PeakShort, TotalShort, Collected, TotalMrgnCashNC, TotalMrgnFoNF, fm_TotalMrgn,
+   EXCESSTDAY, ShortPenalty)
+   SELECT *, Convert(DECIMAL(15, 2), Round((
+				((CASE WHEN PeakShort > TotalShort THEN PeakShort ELSE TotalShort END)) * (
+					CASE WHEN ((CASE WHEN PeakShort > TotalShort THEN PeakShort ELSE TotalShort END)
+								) < 100000 AND CASE WHEN fm_TotalMrgn = 0 THEN 0 ELSE (
+										(
+											(
+												(CASE WHEN PeakShort > TotalShort THEN PeakShort ELSE TotalShort END
+													)
+												) * 100
+											) / (fm_TotalMrgn)
+										) END < 10 THEN 0.5 ELSE 1 END / 100
+					)
+				), 2)) ShortPenalty
+   FROM (
+	SELECT fm_clientcd, isNull(cm_Name, 'Not Found') cm_Name, Tmp_Shortfall PeakShort, sum(TotalShortCashNC) + sum(TotalShortFoNF) TotalShort, sum(CollectedCashNC) + sum(CollectedFoNF) Collected, sum(
+			TotalMrgnCashNC) TotalMrgnCashNC, sum(TotalMrgnFoNF) TotalMrgnFoNF, Sum(fm_TotalMrgn) fm_TotalMrgn, sum(fm_NFiller6) fm_NFiller6
+	FROM (
+		SELECT fm_clientcd, CASE fm_exchange + fm_Segment WHEN 'NC' THEN CASE WHEN (fm_TotalMrgn - (fm_collected + fm_collected1)
+									) > 0 THEN (fm_TotalMrgn - (fm_collected + fm_collected1)
+										) ELSE 0 END ELSE 0 END TotalShortCashNC, 
+				CASE fm_exchange + fm_Segment WHEN 'NC' THEN (fm_collected + fm_collected1
+							) ELSE 0 END CollectedCashNC, CASE fm_exchange + fm_Segment WHEN 'NC' THEN fm_TotalMrgn ELSE 0 END TotalMrgnCashNC, CASE fm_exchange + 
+				fm_Segment WHEN 'NF' THEN CASE WHEN (fm_TotalMrgn - (fm_collected + fm_collected1)
+									) > 0 THEN (fm_TotalMrgn - (fm_collected + fm_collected1)
+										) ELSE 0 END ELSE 0 END TotalShortFoNF, CASE fm_exchange + fm_Segment WHEN 'NF' THEN (fm_collected + fm_collected1
+							) ELSE 0 END CollectedFoNF, CASE fm_exchange + fm_Segment WHEN 'NF' THEN fm_TotalMrgn ELSE 0 END TotalMrgnFoNF, fm_TotalMrgn, fm_NFiller6
+		FROM (
+			SELECT fm_clientcd, fm_exchange, fm_Segment, Sum(fm_TotalMrgn) fm_TotalMrgn, Sum(fm_collected) fm_collected, Sum(fm_collected1) fm_collected1, Sum(
+					fm_NFiller6) fm_NFiller6
+			FROM (
+				SELECT fm_clientcd, fm_exchange, fm_Segment, fm_TotalMrgn, fm_collected, fm_collected1, isNull(fm_NFiller6, 0) fm_NFiller6
+				FROM Fmargins, Client_master
+				WHERE cm_cd = fm_clientcd AND fm_Companycode = 'A' AND fm_dt = @dtMarginDate
+				
+				UNION ALL
+				
+				SELECT fc_Filler1, fc_exchange, fc_Segment, 0 fm_TotalMrgn, fc_collected, fc_collected1, 0 fm_NFiller6
+				FROM Fmargin_Clients, Client_master
+				WHERE cm_cd = fc_clientcd AND fc_exchange <> '' AND fc_Companycode = 'A' AND fc_dt = @dtMarginDate
+				) a
+			GROUP BY fm_clientcd, fm_exchange, fm_Segment
+			) z, Client_master, branch_master
+		WHERE fm_clientcd = cm_cd AND cm_brboffcode = bm_branchcd AND cm_type <> 'I'
+		
+	    UNION ALL
+		
+		SELECT fm_clientcd, 0 TotalShortCashNC, 0 CollectedCashNC, 0 TotalMrgnCashNC, CASE fm_exchange + 'X' WHEN 'NF' THEN CASE WHEN (
+									(
+										CASE fm_exchange WHEN 'M' THEN fm_Regmargin + fm_exposurevalue + fm_buypremmargin ELSE fm_initialmargin + fm_exposurevalue 
+											END
+										) + CASE fm_Exchange WHEN 'M' THEN fm_additionalmargin + fm_Tndmargin + fm_Dlvmargin - fm_SpreadBen + fm_ConcMargin + 
+												fm_DelvPMargin ELSE fm_additionalmargin + fm_SplMargin END + fm_MTMLoss - (fm_collected + fm_collectedt2
+										)
+									) > 0 THEN (
+										(
+											CASE fm_exchange WHEN 'M' THEN fm_Regmargin + fm_exposurevalue + fm_buypremmargin ELSE fm_initialmargin + 
+													fm_exposurevalue END
+											) + CASE fm_Exchange WHEN 'M' THEN fm_additionalmargin + fm_Tndmargin + fm_Dlvmargin - fm_SpreadBen + fm_ConcMargin + 
+													fm_DelvPMargin ELSE fm_additionalmargin + fm_SplMargin END + fm_MTMLoss - (fm_collected + fm_collectedt2
+											)
+										) ELSE 0 END ELSE 0 END TotalShortFoNF, CASE fm_exchange + 'X' WHEN 'NF' THEN (fm_collected + fm_collectedt2
+							) ELSE 0 END CollectedFoNF, CASE fm_exchange + 'X' WHEN 'NF' THEN (CASE fm_exchange WHEN 'M' THEN fm_Regmargin + fm_exposurevalue + fm_buypremmargin ELSE fm_initialmargin + fm_exposurevalue END
+							) + CASE fm_Exchange WHEN 'M' THEN fm_additionalmargin + fm_Tndmargin + fm_Dlvmargin - fm_SpreadBen + fm_ConcMargin + fm_DelvPMargin ELSE 
+								fm_additionalmargin + fm_SplMargin END + fm_MTMLoss ELSE 0 END TotalMrgnFoNF, (CASE fm_exchange WHEN 'M' THEN fm_Regmargin + fm_exposurevalue + fm_buypremmargin ELSE fm_initialmargin + fm_exposurevalue END
+				) + CASE fm_Exchange WHEN 'M' THEN fm_additionalmargin + fm_Tndmargin + fm_Dlvmargin - fm_SpreadBen + fm_ConcMargin + fm_DelvPMargin ELSE 
+					fm_additionalmargin + fm_SplMargin END + fm_MTMLoss, fm_Filler3 fm_NFiller6
+		FROM #FmarginsRpt, Client_master, branch_master
+		WHERE fm_clientcd = cm_cd AND cm_brboffcode = bm_branchcd AND fm_Companycode = @strCompany AND fm_dt = @dtMarginDate
+		
+		
+		) a, Client_master, branch_master, #TmpPeakColl
+	WHERE fm_clientcd = cm_cd AND cm_brboffcode = bm_branchcd AND fm_clientcd = Tmp_Clientcd
+	GROUP BY fm_clientcd, cm_Name, cm_email, bm_email, cm_brboffcode, bm_branchname, bm_add1, cm_add1, bm_add2, cm_add2, bm_add3, cm_add3, Tmp_Shortfall
+	--HAVING Sum(fm_TotalMrgn) > 0 OR Tmp_Shortfall > 0
+	) b
+   ORDER BY fm_clientcd
+   
+  UPDATE A SET A.LedgerBal = B.LedgerBal
+  FROM @TBL_MARGIN A, (SELECT ld_clientcd, isnull(SUM(ld_amount), 0) LedgerBal
+  FROM ledger(NOLOCK)
+  WHERE ld_dt <= @dtMarginDate AND left(ld_dpid, 1) = @strCompany
+  GROUP BY ld_clientcd
+  HAVING isnull(SUM(ld_amount), 0) >0 ) B
+  WHERE A.fm_clientcd = B.ld_clientcd
+  
+
+
+  IF @strOutputType = 'X'
+  BEGIN
+    DECLARE @XMLDATA1 XML
+	IF @strRequestFrom = 'W'
+	BEGIN
+      SET @XMLDATA1 = (SELECT ClientCode = fm_clientcd, 	
+      [Name] = cm_Name, Penalty = ShortPenalty, Collection = isnull(LedgerBal,0)+TotalShort,LedgerDebit = ISNULL(LedgerBal,0),
+      HighestShort = TotalShort,	PeakShort = PeakShort,EODShort = fm_TotalMrgn,	
+      Collected = Collected, ExcessTDay = EXCESSTDAY, TotalMrgn = fm_TotalMrgn, CashMargin = TotalMrgnCashNC, FOMargin = TotalMrgnFoNF
+      FROM @TBL_MARGIN FOR XML PATH('Margin'))
+	END
+	ELSE IF @strRequestFrom = 'M'
+	BEGIN
+	  SET @XMLDATA1 = (SELECT Penalty = ShortPenalty, Collection = isnull(LedgerBal,0)+TotalShort,LedgerDebit = ISNULL(LedgerBal,0),
+      HighestShort = TotalShort,	PeakShort = PeakShort,EODShort = fm_TotalMrgn,	
+      Collected = Collected, ExcessTDay = EXCESSTDAY, TotalMrgn = fm_TotalMrgn, CashMargin = TotalMrgnCashNC, FOMargin = TotalMrgnFoNF
+      FROM @TBL_MARGIN FOR XML PATH('Margin'))
+	END
+	SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+  END
+   IF @strOutputType = 'G'
+   BEGIN
+     SELECT ClientCode = fm_clientcd, 	
+      [Name] = cm_Name, Penalty = ShortPenalty, Collection = isnull(LedgerBal,0)+TotalShort,LedgerDebit = ISNULL(LedgerBal,0),
+      HighestShort = TotalShort,	PeakShort = PeakShort,EODShort = fm_TotalMrgn,	
+      Collected = Collected, ExcessTDay = EXCESSTDAY, TotalMrgn = fm_TotalMrgn, CashMargin = TotalMrgnCashNC, FOMargin = TotalMrgnFoNF
+      FROM @TBL_MARGIN
+   END	
+  SET @o_vcErrorFlag  = 'S'
+  --SET @o_vcErrorMessage = 'Process Completed'
+END
+GO
+
+CREATE OR ALTER PROCEDURE stpr_Rpt_BillReport @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, 
+@o_vcErrorMessage VARCHAR(MAX) OUTPUT 
+WITH ENCRYPTION
+AS
+BEGIN
+ /*
+ ///////////////////////////////////////////////////////////////////////////////////////////
+ // Create By     : VAIBHAV GARG
+ // Created Date  : 13-DEC-2023
+ // Description   : 
+ // Reviewed By   : 
+ // Review Date   : 
+ //////////////////////////////////////////////////////////////////////////////////////////
+*/
+ --- Parameter Declaration
+ 
+  DECLARE @dtFromDate VARCHAR(8), @dtToDt VARCHAR(8), @strUserId VARCHAR(500) = '', @strExchSeg VARCHAR(100),
+  @XMLData XML, @strAccountType VARCHAR(500)='', @strTable VARCHAR(50)='', @strString VARCHAR(MAX) = '',
+  @blnTplusCommex BIT, @StrCommexConn VARCHAR(MAX) = '', @strCommTable VARCHAR(100)='', @strCommClientMaster VARCHAR(100)='',
+  @strCommCompanyExchange VARCHAR(100)='', @strsql1 VARCHAR(500)='', @strsqlstart VARCHAR(MAX)='', @strsqlLast VARCHAR(500)='',
+  @strsqlHeader VARCHAR(MAX)='', @strSqlMain VARCHAR(MAX)='', @strSqlExecute VARCHAR(MAX)='', @strOutputType VARCHAR(1), 
+  @strProduct VARCHAR(50)='', @strSelectTag VARCHAR(1)='', @strSelectUsers VARCHAR(500)='', @ExchSeg VARCHAR(50)='', 
+  @strStringMin VARCHAR(MAX)='', @strSplFilter VARCHAR(MAX)='', @strClearingExchange VARCHAR(1) ='' , 
+  @strConsiderOptionBF VARCHAR(1)='N'  , @strReportType VARCHAR(50)='', @strSettType VARCHAR(1)='', @strCompanyCode VARCHAR(1)='A',
+  @strRepSubType VARCHAR(MAX)='', @strSettNo VARCHAR(20)='', @strLookUp VARCHAR(100)='',@XMLDATA1 XML;
+  
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+  SET @o_vcErrorFlag = 'S'
+  SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+  
+  SELECT @dtFromDate = ISNULL(x.value('(FromDt)[1]', 'VARCHAR(8)'),''),
+  @strProduct = ISNULL(x.value('(Product)[1]', 'VARCHAR(50)'),''),
+  @dtToDt = ISNULL(x.value('(ToDt)[1]', 'VARCHAR(8)'),''),
+  @strUserId = ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+  @ExchSeg = ISNULL(x.value('(ExchSeg)[1]', 'VARCHAR(500)'),''),
+  @strSelectTag = ISNULL(x.value('(SelectTag)[1]', 'VARCHAR(1)'),''),
+  @strSelectUsers = ISNULL(x.value('(SelectUsers)[1]', 'VARCHAR(500)'),''),
+  @strOutputType = ISNULL(x.value('(OutputType)[1]', 'VARCHAR(1)'),''),
+  @strSplFilter = ISNULL(x.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''),
+  @strCompanyCode = ISNULL(x.value('(CompanyCode)[1]', 'VARCHAR(1)'),''),
+  @strReportType = ISNULL(x.value('(RepType)[1]', 'VARCHAR(100)'),''),
+  @strRepSubType = ISNULL(x.value('(RepSubType)[1]', 'VARCHAR(100)'),''),
+  @strSettType = ISNULL(x.value('(SettType)[1]', 'VARCHAR(1)'),''),
+  @strSettNo = ISNULL(x.value('(SettNo)[1]', 'VARCHAR(20)'),''),
+  @strLookUp = ISNULL(x.value('(LookUp)[1]', 'VARCHAR(100)'),'')
+  FROM @XMLData.nodes('/root') AS XTbl(x) 
+  
+
+  IF ISNULL(@strLookUp,'') <> ''
+  BEGIN  
+    if SUBSTRING(@strLookUp,3,1)  ='C'
+	BEGIN
+	  SET @strProduct = 'CASH'
+	  SELECT @dtFromDate = se_stdt, @strSettNo = se_stlmnt FROM Settlements(NOLOCK) 
+      WHERE se_exchange+'/'+'C'+'/'+se_stlmnt+'/'+se_payoutdt = @strLookUp
+	  SET @ExchSeg = ''
+	END
+	ELSE IF SUBSTRING(@strLookUp,3,1)  ='F'
+	BEGIN
+      SET @strProduct = 'DERV'	  
+	  SET @dtFromDate = SUBSTRING(@strLookUp,5,8)
+	  SET @dtToDt = @dtFromDate
+	END
+  END
+
+  IF ISNULL(@strCompanyCode,'')=''
+  BEGIN
+    SET @strCompanyCode = 'A'
+  END
+  	
+  IF @strSplFilter = ''
+  BEGIN
+	SET @strStringMin  = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50)) '
+    +' INSERT INTO @tbl_UserList(Client_Code) '
+    +' SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+  END  
+  ELSE
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @strStringMin  = ' DECLARE @tbl_UserList TABLE (Client_Code VARCHAR(10)) '
+	+' INSERT INTO @tbl_UserList(Client_Code) SELECT distinct CM_CD FROM Client_master(NOLOCK) WHERE 1 = 1  AND '+@strSplFilter
+		 
+  END	
+  BEGIN TRY
+  IF @strProduct = 'CASH'
+  BEGIN
+    DECLARE @tbl_CashBill TABLE(BillNo Numeric, BillDate VARCHAR(8), CompanyCode VARCHAR(10), ClientCode VARCHAR(50), 
+	ClientName VARCHAR(100), Settlement VARCHAR(20),
+	[OrderNo] VARCHAR(30),[TradeNo]  VARCHAR(30) ,
+	TIME  VARCHAR(30),Security  VARCHAR(100),Buy INT, Sell INT, [MarketRate]  MONEY, [Brokerage] MONEY,
+	BuyValue MONEY,SellValue MONEY, NetValue MONEY)
+	SELECT @strClearingExchange = (CASE WHEN CH_ClgHs = 'I' THEN 'B' ELSE CH_ClgHs END)
+    FROM ClearingHouse
+    WHERE CH_CompanyCode = @strCompanyCode AND CH_Segment = 'C' 
+	AND CH_EffDt = (SELECT max(CH_EffDt) 
+	FROM ClearingHouse WHERE CH_CompanyCode = @strCompanyCode AND CH_Segment = 'C' AND CH_EffDt <= @dtFromDate)
+    SET @strString = ''
+	--
+	SET @strString  =  @strStringMin+' '+' DECLARE  @se_type VARCHAR(1), @se_stdt VARCHAR(8), '
+    +' @se_endt VARCHAR(8), @settlementno VARCHAR(100) = '''', @settPostingSettment VARCHAR(100) = '''' '
+
+	+' DECLARE @tbl_Settlement TABLE ( '
+	+' SettlementType VARCHAR(1), SettStartDate VARCHAR(8), SettEndDate VARCHAR(8), SettlementNo VARCHAR(100), '
+	+' PostingSettlement VARCHAR(100)) '
+
+	+' DECLARE CurSettlement CURSOR FOR '
+    +' SELECT DISTINCT se_type, se_stdt, se_endt '
+    +' FROM SEttlements SE '
+    +' WHERE se_stdt >= '''+@dtFromDate+''' AND se_endt <= '''+@dtToDt+''' ' 
+	+' AND EXISTS (SELECT 1 FROM Trx(NOLOCK) WHERE td_clientcd IN(select Client_Code from @tbl_UserList) '
+	+' AND td_dt >= '''+@dtFromDate+''' AND td_dt <= '''+@dtToDt+''' AND td_stlmnt = SE.se_stlmnt ) '
+	+' and se_exchange+se_type not in (select sy_exchange+sy_type from Settlement_type Where sy_maptype in (''S'',''W'',''V'')) '
+	
+
+    
+	SET @strString  = @strString+' OPEN CurSettlement '
+    +' FETCH NEXT FROM CurSettlement INTO @se_type, @se_stdt, @se_endt '
+    +' WHILE @@FETCH_STATUS = 0 '
+    +' BEGIN '
+	+'   SET @settlementno = '''' '
+	+'   SET @settPostingSettment = '''' '
+	+'   SELECT @settlementno = @settlementno + ''|'' + se_stlmnt, @settPostingSettment = @settPostingSettment + ''|'' + (CASE WHEN  '
+    +'   se_exchange = '''+@strClearingExchange+''' THEN se_stlmnt ELSE '''' END) FROM SEttlements '
+	+'   WHERE se_type = @se_type AND se_stdt >= @se_stdt AND se_endt <= @se_endt '
+	+'   INSERT INTO @tbl_Settlement (SettlementType, SettStartDate, SettEndDate, SettlementNo, PostingSettlement) '
+	+'   VALUES (@se_type, @se_stdt, @se_endt, @settlementno, @settPostingSettment) '
+	+'   FETCH NEXT FROM CurSettlement INTO @se_type, @se_stdt, @se_endt '
+    +' END '
+    +' CLOSE CurSettlement '
+    +' DEALLOCATE CurSettlement '
+   
+    +' SELECT Client_COde, CompanyCode, Settlement, [Order#], [Trade#], [TIME], [Security], [Buy], [Sell], [Market Rate], [Brokerage], [Buy Value],  '
+	+' [Sell Value], [Net Value] '
+    +' FROM (SELECT Client_COde, td_companycode as CompanyCode, Settlement = replace(sett.PostingSettlement, ''|'', ''''), td_orderid AS [Order#], td_tradeid [Trade#], '
+    +' CASE td_ssrno WHEN - 1 THEN ''b/f'' ELSE td_time END TIME, rtrim(ss_name) + '' ('' + td_scripcd + '')'' Security, td_bqty  '
+    +' Buy, td_sqty Sell, convert(DECIMAL(15, 2), td_marketrate) AS [Market Rate], convert(DECIMAL(15, 2), '
+    +' td_brokerage * (td_bqty + td_sqty)) [Brokerage],  '
+    +' convert(DECIMAL(15, 2), convert(MONEY,td_rate * td_bqty)) [Buy Value], convert(DECIMAL(15, 2),  '
+    +' convert(MONEY,  td_rate  * td_sqty)) [Sell Value], '
+    +' convert(MONEY,  td_rate * (td_Sqty - td_Bqty))  [Net Value], '
+    +' '''' [_], rtrim(ss_name) + CASE td_ssrno WHEN - 1 THEN ''a'' ELSE ''b'' END [Ordr] FROM trx(NOLOCK) '
+	+' LEFT OUTER JOIN std_rates (NOLOCK) '
+	+' ON td_stlmnt = sr_stlmnt AND td_scripcd = sr_scripcd, securities (NOLOCK), '
+	+' @tbl_Settlement sett, @tbl_UserList X  '
+	+' WHERE td_clientcd = x.Client_Code '
+	+' AND td_stlmnt IN (SELECT value FROM ReturnTable(sett.SettlementNo, ''|'') ) ' 
+	+' AND td_scripcd = ss_cd AND trx.td_dt BETWEEN SettStartDate AND SettendDate '
+	+' AND td_companycode = '''+@strCompanyCode+''' '
+
+    IF ISNULL(@ExchSeg,'') <> ''
+    BEGIN
+      SET @strString =   @strString+'  AND substring(replace(sett.PostingSettlement, ''|'', ''''),1,1) = SUBSTRING('''+@ExchSeg+''',2,1) '
+    END	
+ 	
+
+	SET @strString =   @strString+' UNION ALL '
+	+' SELECT Client_COde, CompanyCode, Settlement, ''0'', ''0'', ''Charges'', rtrim(sh_desc), 0, 0, convert(DECIMAL(15, 2), 0), convert(DECIMAL(15, 2), 0), '
+	+' convert(DECIMAL(15, 2), sum(sh_amount)), convert(DECIMAL(15, 2), 0), convert(DECIMAL(15, 2), sum(sh_amount)), '''', ''zzz'' '
+	+' FROM (SELECT Client_COde, sh_companycode As CompanyCode, Settlement = replace(sett.PostingSettlement, ''|'', ''''), rtrim(sh_desc) sh_desc, convert(DECIMAL(15, 2), sh_amount) sh_amount '
+	+' FROM Specialcharges(NOLOCK), @tbl_Settlement sett , @tbl_UserList X '
+	+' WHERE sh_clientcd = x.Client_Code AND sh_stlmnt IN ( SELECT value FROM ReturnTable(sett.SettlementNo, ''|'')) '
+	+' AND sh_companycode = '''+@strCompanyCode+''''
+	
+    IF ISNULL(@ExchSeg,'') <> ''
+    BEGIN
+      SET @strString =   @strString+'  AND substring(replace(sett.PostingSettlement, ''|'', ''''),1,1) = SUBSTRING('''+@ExchSeg+''',2,1) '
+    END	
+	
+ 
+	
+	SET @strString =   @strString+' UNION ALL '
+	+' SELECT Client_COde, sh_companycode, Settlement = replace(sett.PostingSettlement, ''|'', ''''), rtrim(cg_desc), convert(DECIMAL(15, 2), sum( sh_servicetax))' 
+	+' FROM Specialcharges(NOLOCK), Charges_master(NOLOCK), @tbl_Settlement sett , @tbl_UserList X '
+	+' WHERE sh_companycode = cg_companycode AND left(sh_stlmnt, 1) = cg_exchange AND cg_cd = ''01'' AND sh_clientcd = X.Client_COde '
+	+' AND sh_stlmnt IN (SELECT value FROM ReturnTable(sett.SettlementNo, ''|'')) AND sh_servicetax > 0 '
+	+' AND sh_companycode = '''+@strCompanyCode+''''
+	
+    IF ISNULL(@ExchSeg,'') <> ''
+    BEGIN
+      SET @strString =   @strString+'  AND substring(replace(sett.PostingSettlement, ''|'', ''''),1,1) = SUBSTRING('''+@ExchSeg+''',2,1) '
+    END	
+	
+	SET @strString =   @strString+'  GROUP BY Client_COde, sh_companycode, replace(sett.PostingSettlement, ''|'', ''''), rtrim(cg_desc) ) '
+    +' a GROUP BY Client_COde, CompanyCode, Settlement, sh_desc ) x11 '
+	
+	IF @strSettNo <> ''
+	BEGIN
+	  SET @strString  = @strString+' '+' WHERE  Settlement IN(SELECT VALUE FROM ReturnTable('''+@strSettNo+''','','')) '
+	END
+    SET @strString  = @strString+' '+' ORDER BY Client_COde, Settlement, ordr, Security '
+	BEGIN TRY
+	  --SELECT @strString
+	  INSERT INTO @tbl_CashBill(ClientCode, CompanyCode,  
+	  Settlement, [OrderNo], [TradeNo], TIME, 
+	  Security, Buy, Sell, [MarketRate], [Brokerage], BuyValue, SellValue, NetValue)
+	  EXEC(@strString)
+	END TRY
+    BEGIN CATCH
+	  SET @o_vcErrorFlag  = 'E'
+      SET @o_vcErrorMessage = ERROR_MESSAGE()
+    RETURN 1
+    END CATCH
+    
+	UPDATE A SET A.ClientName = CM.cm_name
+    FROM @tbl_CashBill A, Client_Master CM
+    WHERE A.ClientCode = CM.cm_cd 
+	
+	UPDATE A SET A.BillNo = CM.bl_billno, BillDate = CM.bl_billdt
+    FROM @tbl_CashBill A, Bills CM
+    WHERE A.ClientCode = CM.bl_clientcd 
+	and a.Settlement = CM.bl_stlmnt
+	
+	 IF @strOutputType = 'X'
+	BEGIN
+	  SET @XMLDATA1 = (SELECT * FROM @tbl_CashBill
+	  ORDER BY ClientCode, BillDate, BillNo, Settlement, CAST((CASE WHEN TIME='Charges' THEN 9 ELSE 1 END) AS INT), Security FOR XML PATH('Bill'))
+	  SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	  RETURN 1
+	END
+	ELSE
+	BEGIN
+      SELECT * FROM @tbl_CashBill
+	  ORDER BY ClientCode, BillDate, BillNo, Settlement, CAST((CASE WHEN TIME='Charges' THEN 9 ELSE 1 END) AS INT), Security
+	  RETURN 1
+	END  
+  END
+  ELSE IF @strProduct = 'DERV'
+  BEGIN
+  
+    CREATE TABLE #tbl_ClientPLDETAIL (BillNo Numeric, BillDate VARCHAR(8), CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),  ClientCode VARCHAR(50), 
+	ClientName VARCHAR(100), 
+    Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, 
+	TrxnDate VARCHAR(8), OrderNo VARCHAR(50), TradeNo  VARCHAR(50), TradeTIME  VARCHAR(15), 
+	BuyQty MONEY, SellQty Money, MarketRate MONEY, BuyValue MONEY, SellValue MONEY, NetValue MONEY)
+	
+	
+	CREATE TABLE #tbl_ClientMainPL (SerialNo INT IDENTITY(1,1), BillNo Numeric, BillDate VARCHAR(8),CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),  ClientCode VARCHAR(50), 
+	ClientName VARCHAR(100), 
+    Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, 
+	TrxnDate VARCHAR(8), OrderNo VARCHAR(50), TradeNo  VARCHAR(50), TradeTIME  VARCHAR(15), 
+	BuyQty MONEY, SellQty Money, MarketRate MONEY, BuyValue MONEY, SellValue MONEY, NetValue MONEY)
+	
+	CREATE INDEX indx_ClientPL ON #tbl_ClientPLDETAIL (seriesid)
+
+	
+    	
+	
+    DECLARE @tbl_BSClient TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10), ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+    Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), BOT_QTY MONEY, BOT_VALUE MONEY, 
+    SOLD_QTY MONEY, SOLD_VALUE MONEY)
+
+    DECLARE @tbl_CLClient TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),  ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+    Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, EX_QTY MONEY, EX_VALUE MONEY, AS_QTY MONEY, AS_VALUE MONEY)
+	
+	
+	 
+    DECLARE @tbl_billCharges TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10), 
+    ClientCode VARCHAR(10) NOT NULL,
+    ChargesDescp [char] (40) NOT NULL,
+    [bc_amount] [money] NOT NULL)
+  
+  
+    DECLARE @tbl_DervBill TABLE(BillNo Numeric, BillDate VARCHAR(8), Tag INT, Exchange VARCHAR(10),
+	ClientCode VARCHAR(10), ClientName VARCHAR(100), seriesid VARCHAR(20), ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, BF_QTY MONEY, 
+	BF_CloseRate MONEY, BF_VALUE MONEY, BOT_QTY MONEY, BOT_VALUE MONEY, 
+    SOLD_QTY MONEY,SOLD_VALUE MONEY, EX_QTY MONEY, EX_VALUE MONEY, AS_QTY MONEY, AS_VALUE MONEY, 
+    NET_QTY MONEY, CMP MONEY, NET_VALUE MONEY, MTM MONEY)
+	
+  
+    DECLARE  @iNoOfDay INT = 7, @dtDate VARCHAR(8)='', @iDateCounter INT = 0
+    WHILE @iDateCounter<= @iNoOfDay
+    BEGIN
+      IF NOT EXISTS(select 1 from Fholiday_master where hm_companycode = 'A' and hm_exchange = 'N' and hm_segment ='F' 
+      and hm_dt = CONVERT(VARCHAR,DATEADD(DAY,@iDateCounter,CAST(@dtFromDate AS DATE)),112))
+      BEGIN
+	    SET @dtFromDate =  CONVERT(VARCHAR,DATEADD(DAY,@iDateCounter,@dtFromDate),112)
+	    GOTO ABC;
+      END
+	  SET @iDateCounter = @iDateCounter + 1
+    END
+    ABC:
+    SET @iDateCounter = 0
+    WHILE @iDateCounter<= @iNoOfDay
+    BEGIN
+      IF NOT EXISTS(select 1 from Fholiday_master(NOLOCK) 
+	  WHERE hm_companycode = 'A' and hm_exchange = 'N' and hm_segment ='F' 
+      AND hm_dt = CONVERT(VARCHAR,DATEADD(DAY,@iDateCounter,CAST(@dtToDt AS DATE)),112))
+      BEGIN
+	    SET @dtToDt =  CONVERT(VARCHAR,DATEADD(DAY,@iDateCounter,@dtToDt),112)
+	    GOTO ABC1;
+      END
+	  SET @iDateCounter = @iDateCounter + 1
+    END
+    ABC1:
+    
+	SET @iNoOfDay = 0
+    SET @iDateCounter = 1
+    
+	
+	
+	DECLARE @tbl_BillDate TABLE(BillDate VARCHAR(8))
+
+    INSERT INTO @tbl_BillDate(BillDate) 
+	SELECT DISTINCT fb_billdt FROM FBILLS(NOLOCK)
+	WHERE fb_billdt>=@dtFromDate AND fb_billdt <= @dtToDt
+	
+    /*
+    SET @iNoOfDay = DATEDIFF(DAY,CAST(@dtFromDate AS DATE), CAST(@dtToDt AS DATE))+1
+    SET @dtDate = @dtFromDate
+    WHILE @iDateCounter<= @iNoOfDay
+    BEGIN
+      IF NOT EXISTS(select 1 from Fholiday_master(NOLOCK) where hm_companycode = 'A' and hm_exchange = 'N' and hm_segment ='F' 
+      AND hm_dt = CONVERT(VARCHAR,@dtDate,112))
+      BEGIN
+        INSERT INTO @tbl_BillDate(BillDate) VALUES(@dtDate)
+      END
+      SET @dtDate =  CONVERT(VARCHAR,DATEADD(DAY,1,@dtDate),112)
+      SET @iDateCounter = @iDateCounter + 1
+    END
+	*/
+	
+	
+    DECLARE @strBillDate varchar(8)=''
+    DECLARE db_CursorBillDate CURSOR FOR         
+    SELECT distinct BillDate
+    FROM @tbl_BillDate X  
+	OPEN db_CursorBillDate       
+    FETCH NEXT FROM db_CursorBillDate INTO @strBillDate
+    WHILE @@FETCH_STATUS = 0     
+    BEGIN
+	  DELETE FROM #tbl_ClientPLDETAIL
+	  	
+	  SET @strString  = @strStringMin+' SELECT  td_companycode, TD_Exchange, TD_Segment, td_clientcd, sm_sname,sm_underlying, td_seriesid,td_expirydt, '
+      +' sm_multiplier, trxnDate = ''B/F'', OrderNo = '''', TradeNo = '''', TradeTIME = '''', '
+	  +' CASE WHEN SUM(td_bqty - td_sqty) >= 0 THEN SUM(td_bqty - td_sqty) ELSE 0 END AS BuyQty, '
+	  +' ABS(CASE WHEN SUM(td_bqty - td_sqty) < 0 THEN SUM(td_bqty - td_sqty) ELSE 0 END) AS SaleQty, '
+	  +' MarketRate = (CASE WHEN sum(td_bqty- td_sqty) <> 0 THEN SUM(CASE WHEN TD_BSFlag=''B'' THEN td_bqty*td_rate ELSE td_sqty*td_rate*-1 END)/sum(td_bqty- td_sqty) ELSE 0 END), '
+      +' BuyValue = (CASE WHEN SUM(td_bqty - td_sqty) >= 0 THEN SUM(CASE WHEN TD_BSFlag=''B'' THEN td_bqty*td_rate*-1 ELSE td_sqty*td_rate END) ELSE 0 END),  '
+	  +' SaleValue = (CASE WHEN SUM(td_bqty - td_sqty) < 0 THEN abs(SUM(CASE WHEN TD_BSFlag=''B'' THEN td_bqty*td_rate*-1 ELSE td_sqty*td_rate END)) ELSE 0 END),  '
+	  +' NetValue = SUM(CASE WHEN TD_BSFlag=''B'' THEN td_bqty*td_rate*-1 ELSE td_sqty*td_rate END)'
+	  +' FROM Trades (NOLOCK), Series_master(NOLOCK), @tbl_UserList X  '
+      +' WHERE  td_dt < '''+@strBillDate+''' '
+      +' AND td_clientcd = X.Client_Code '
+	  +' AND td_expirydt >= '''+@strBillDate+''' '
+      +' AND td_exchange = sm_exchange and td_segment = sm_segment '
+      +' and td_seriesid = sm_seriesid '
+      +' and sm_expirydt >= '''+@strBillDate +''''
+      +' AND (('''+@strConsiderOptionBF+''' = ''N'' AND sm_prodtype NOT IN(''EO'',''CO'',''IO'')) OR '''+@strConsiderOptionBF+''' = ''Y'')'
+      +' AND ltrim(rtrim(td_groupid)) <> ''B'' and td_companycode = '''+@strCompanyCode+''' '
+	  IF ISNULL(@ExchSeg,'') <> ''
+      BEGIN
+        SET @strString =   @strString+'  AND td_companycode+td_exchange+td_segment IN(SELECT VALUE FROM  ReturnTable('''+@ExchSeg+''','',''))'
+      END	
+	
+      SET @strString =   @strString+' GROUP BY td_companycode, TD_Exchange, TD_Segment, td_clientcd, sm_sname,sm_underlying, td_seriesid, td_expirydt, sm_multiplier '
+      +' HAVING sum(td_bqty - td_sqty) <> 0 '
+	  BEGIN TRY
+        INSERT INTO #tbl_ClientPLDETAIL(CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, 
+		TrxnDate, OrderNo, TradeNo, TradeTIME, BuyQty, SellQty, MarketRate, BuyValue, SellValue, NetValue)
+	    EXEC(@strString)
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+  
+    
+      UPDATE A SET A.MarketRate = ms_prcloseprice, a.BuyValue = (a.BuyQty*a.Multiplier*ms_prcloseprice),
+	  A.SellValue = (a.SellQty*a.Multiplier*ms_prcloseprice), 
+	  A.NetValue = (a.SellQty*a.Multiplier*ms_prcloseprice)- (a.BuyQty*a.Multiplier*ms_prcloseprice)
+      FROM #tbl_ClientPLDETAIL A, Market_summary(NOLOCK), Series_master SR  
+      WHERE ms_seriesid = seriesid 
+      and ms_exchange = exchange and ms_segment = Segment
+      and ms_dt = @strBillDate
+	  AND A.seriesid = SR.sm_seriesid
+
+	  IF @strReportType = 'Detail'
+	  BEGIN
+	    SET @strString  = @strStringMin+' SELECT td_companycode, TD_Exchange, TD_Segment, td_clientcd, sm_sname, sm_underlying, td_seriesid, '
+	    +' td_expirydt, sm_multiplier, trxnDate = '''+@strBillDate+''', OrderNo = td_orderid, TradeNo = td_tradeid, TradeTIME = td_time, td_bqty As BuyQty,'
+	    +' td_Sqty As SellQty, td_rate As MarketRate,  BuyValue = td_Bqty * td_rate*sm_multiplier, '
+	    +' SellValue = td_sqty * td_rate*sm_multiplier, NetValue = (td_sqty -td_bqty) * td_rate*sm_multiplier '
+        +' FROM Trades (NOLOCK), Series_master(NOLOCK) , @tbl_UserList X  '
+        +' WHERE  td_dt = '''+@strBillDate+''' '
+        +' AND td_clientcd = X.Client_Code '
+        +' AND td_expirydt >= '''+@strBillDate+''' '
+        +' AND td_exchange = sm_exchange and td_segment = sm_segment  '
+        +' and td_seriesid = sm_seriesid and td_companycode = '''+@strCompanyCode+''''
+        +' AND ltrim(rtrim(td_groupid)) <> ''B'' '
+	   
+	    IF ISNULL(@ExchSeg,'') <> ''
+        BEGIN
+          SET @strString =   @strString+'  AND td_companycode+td_exchange+td_segment IN(SELECT VALUE FROM  ReturnTable('''+@ExchSeg+''','',''))'
+        END	
+	  END
+	  ELSE IF @strReportType = 'Summary'
+	  BEGIN
+	    SET @strString  = @strStringMin+' SELECT td_companycode, TD_Exchange, TD_Segment, td_clientcd, sm_sname, sm_underlying, td_seriesid, '
+	    +' td_expirydt, sm_multiplier, trxnDate = '''+@strBillDate+''', OrderNo = '''', TradeNo = '''', TradeTIME = '''', SUM(td_bqty) As BuyQty,'
+	    +' SUM(td_Sqty) As SellQty,  (CASE WHEN (SUM(td_bqty)-SUM(td_Sqty))<>0 '
+		+' THEN ROUND(ABS((sum(td_bqty * td_rate*sm_multiplier)- sum(td_Sqty * td_rate*sm_multiplier))/(SUM(td_bqty)-SUM(td_Sqty))),2) ELSE 0 END) '
+		+' As MarketRate,  BuyValue = sum(td_bqty * td_rate*sm_multiplier), '
+	    +' SellValue = sum(td_sqty * td_rate*sm_multiplier), NetValue = SUM((td_sqty -td_bqty) * td_rate*sm_multiplier) '
+        +' FROM Trades (NOLOCK), Series_master(NOLOCK) , @tbl_UserList X  '
+        +' WHERE  td_dt = '''+@strBillDate+''' '
+        +' AND td_clientcd = X.Client_Code '
+        +' AND td_expirydt >= '''+@strBillDate+''' '
+        +' AND td_exchange = sm_exchange and td_segment = sm_segment  '
+        +' and td_seriesid = sm_seriesid '
+        +' AND ltrim(rtrim(td_groupid)) <> ''B'' and td_companycode = '''+@strCompanyCode+''''
+	   
+	    IF ISNULL(@ExchSeg,'') <> ''
+        BEGIN
+          SET @strString =   @strString+'  AND td_companycode+td_exchange+td_segment IN(SELECT VALUE FROM  ReturnTable('''+@ExchSeg+''','',''))'
+        END	
+		
+        SET @strString =   @strString+' GROUP BY td_companycode, TD_Exchange, TD_Segment, td_clientcd, sm_sname,sm_underlying, td_seriesid,td_expirydt, '
+	    +' sm_multiplier '
+	  END
+	  
+	
+     
+	  BEGIN TRY
+	    --SELECT @strString
+        INSERT INTO #tbl_ClientPLDETAIL(CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, 
+		TrxnDate, OrderNo, TradeNo, TradeTIME, BuyQty, SellQty, MarketRate, BuyValue, SellValue, NetValue)
+	    EXEC(@strString)
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+    
+	  SET @strString  = @strStringMin+'SELECT ex_companycode, ex_Exchange, ex_segment, ex_clientcd, sm_sname, sm_underlying, ex_seriesid, '
+      +'	sm_expirydt, sm_multiplier, trxnDate = CASE WHEN SUM(ex_eqty)>0 THEN ''Exerc.'' ELSE ''Assin'' END, OrderNo = '''', TradeNo = '''', TradeTIME = '''', '
+	  +' BuyQty = sum(ex_eqty+ex_aqty), SellQty = 0, MarketRate = ex_diffbrokrate, '
+	  +' BuyValue = sum((ex_eqty+ex_aqty)*ex_diffbrokrate*sm_multiplier), SellValue = 0, '
+      +' NetValue = sum((ex_eqty+ex_aqty)*ex_diffbrokrate*sm_multiplier) '
+      +' From Exercise(NOLOCK), Series_master(NOLOCK), @tbl_UserList X  '
+      +' WHERE ex_dt = '''+@strBillDate+''' '
+      +' and ex_clientcd = X.Client_Code '
+      +' and sm_expirydt >= '''+@strBillDate+''' ' 
+      +' and ex_exchange = sm_exchange '
+      +' and ex_segment = sm_segment And ex_seriesid = sm_seriesid and ex_companycode = '''+@strCompanyCode+''''
+	  
+	  IF ISNULL(@ExchSeg,'') <> ''
+      BEGIN
+        SET @strString =   @strString+'  AND ex_companycode+ex_exchange+ex_segment IN(SELECT VALUE FROM  ReturnTable('''+@ExchSeg+''','',''))'
+      END	
+      SET @strString =   @strString+' GROUP BY ex_companycode, ex_Exchange, ex_segment, ex_clientcd, sm_sname, sm_underlying, ex_seriesid, sm_expirydt'
+	  +' , sm_multiplier, ex_diffbrokrate '
+	  
+    
+	  BEGIN TRY
+        INSERT INTO #tbl_ClientPLDETAIL(CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, 
+		TrxnDate, OrderNo, TradeNo, TradeTIME, BuyQty, SellQty, MarketRate, BuyValue, SellValue, NetValue)
+	    EXEC(@strString)
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+	  
+	  INSERT INTO #tbl_ClientPLDETAIL(CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, 
+	  TrxnDate, OrderNo, TradeNo, TradeTIME, BuyQty, SellQty, MarketRate, BuyValue, SellValue, NetValue)
+	  SELECT CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, 
+	  TrxnDate = 'C/F', OrderNo = '', TradeNo = '', TradeTIME = '',
+	  BuyQty = CASE WHEN SUM(BuyQty-SellQty)<0 THEN SUM(SellQty-BuyQty) ELSE 0 END,
+	  SellQty = ABS(CASE WHEN SUM(BuyQty-SellQty)>=0 THEN SUM(BuyQty-SellQty) ELSE 0 END),
+	  MarketRate = 0, BuyValue = 0 , SellValue = 0, NetValue = 0
+      FROM #tbl_ClientPLDETAIL A, Series_master SR   where A.seriesid = SR.sm_seriesid
+	  AND sm_prodtype NOT IN('EO','CO','IO')
+      GROUP BY  CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier
+      HAVING SUM(BuyQty-SellQty) <> 0
+
+	  UPDATE A SET A.BuyValue = ROUND(BuyQty*ms_lastprice*Multiplier,2),
+	  A.SellValue = ROUND(SellQty*ms_lastprice*Multiplier,2),
+	  A.NetValue = ROUND((SellQty-BuyQty)*ms_lastprice*Multiplier,2),
+      MarketRate = ms_lastprice
+      FROM #tbl_ClientPLDETAIL A, Market_summary(NOLOCK) X
+      WHERE ms_seriesid = seriesid  AND TrxnDate = 'C/F'
+      and ms_exchange = exchange and ms_segment = Segment 
+      and ms_dt  = (select  max(ms_dt) from Market_summary(NOLOCK)  
+	  WHERE ms_exchange = X.ms_exchange and ms_segment = X.ms_segment and ms_dt<=@strBillDate)
+	
+     
+      INSERT INTO #tbl_ClientPLDETAIL(CompanyCode, Exchange, Segment, ClientCode, Scrip, NetValue, TrxnDate)
+	  SELECT fc_companycode, fc_Exchange, fc_segment, fc_clientcd, fc_desc, round(sum(fc_amount),2)*-1, TrxnDate = 'Chrg'  
+      FROM Fspecialcharges(NOLOCK), (SELECT DISTINCT Client_Code = ClientCode  FROM #tbl_ClientPLDETAIL) X
+      where fc_clientcd = x.Client_COde and fc_dt = @strBillDate 
+      AND ((fc_companycode+fc_exchange+fc_segment IN(SELECT VALUE FROM ReturnTable(@ExchSeg,',')) and @ExchSeg <> '') OR @ExchSeg = '')
+      GROUP BY fc_clientcd, fc_desc,fc_companycode, fc_Exchange, fc_segment
+      HAVING ROUND(SUM(fc_amount),2) <> 0
+ 
+      INSERT INTO #tbl_ClientPLDETAIL(CompanyCode, Exchange, Segment, ClientCode, Scrip, NetValue, TrxnDate)
+      SELECT fc_companycode, fc_Exchange, fc_segment, fc_clientcd,'SERVICE TAX', round(sum(fc_servicetax),2)*-1, TrxnDate = 'Chrg'
+      FROM Fspecialcharges(NOLOCK), (SELECT DISTINCT Client_Code =ClientCode FROM #tbl_ClientPLDETAIL) X
+      WHERE fc_clientcd = x.Client_COde
+      AND fc_dt= @strBillDate 
+      AND ((fc_companycode+fc_exchange+fc_segment IN(SELECT VALUE FROM ReturnTable(@ExchSeg,',')) and @ExchSeg <> '') OR @ExchSeg = '')
+      GROUP BY fc_clientcd,fc_desc,fc_companycode, fc_Exchange, fc_segment 
+      HAVING ROUND(SUM(fc_servicetax),2) <> 0
+	
+	  UPDATE A SET BillNo = fb_billno
+      FROM #tbl_ClientPLDETAIL A , Fbills WITH (NOLOCK)
+      WHERE fb_clientcd = ClientCode
+	  AND fb_Segment = 'F'
+	  AND fb_billdt = @strBillDate
+	  
+	  INSERT INTO #tbl_ClientMainPL(BillNo, BillDate, CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, 
+	  TrxnDate, OrderNo, TradeNo, TradeTIME, BuyQty, SellQty, MarketRate, BuyValue, SellValue, NetValue)
+	  SELECT BillNo,@strBillDate, CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, 
+	  TrxnDate, OrderNo, TradeNo, TradeTIME, BuyQty, SellQty, MarketRate, BuyValue, SellValue, NetValue
+      FROM #tbl_ClientPLDETAIL order by CompanyCode, Exchange, Segment, ClientCode, 
+	  CAST((CASE WHEN TrxnDate='Chrg' THEN 9 ELSE 1 END) AS INT) , 
+	  Scrip, Symbol, seriesid, ExpiryDate,
+	  CAST((CASE WHEN TrxnDate='b/f' then 1 when TrxnDate='C/F' then 8 
+	  when TrxnDate IN('Exerc.','Assin') then 7 else 2 end) as int)
+	  
+	  FETCH NEXT FROM db_CursorBillDate INTO @strBillDate
+    END  
+    CLOSE db_CursorBillDate        
+    DEALLOCATE db_CursorBillDate	
+	
+	UPDATE A SET A.ClientName = CM.cm_name
+    FROM #tbl_ClientMainPL A, Client_Master CM
+    WHERE A.ClientCode = CM.cm_cd
+	IF @strReportType = 'Detail'
+	BEGIN
+	  SELECT CompanyCode, Exchange, Segment, ClientCode, BillNo, BillDate, Scrip = ISNULL(Scrip,''), Symbol = isnull(Symbol,''), 
+	  seriesid = ISNULL(seriesid,''), ExpiryDate = ISNULL(ExpiryDate,''), 	  TrxnDate, OrderNo = ISNULL(OrderNo,''), TradeNo  =ISNULL(TradeNo,''), TradeTIME = ISNULL(TradeTIME,''), 
+	  BuyQty = ISNULL(BuyQty,0), SellQty = ISNULL(SellQty,0), MarketRate = ISNULL(MarketRate,0), 
+	  BuyValue = ISNULL(BuyValue,0), SellValue = ISNULL(SellValue,0), NetValue 
+	  FROM #tbl_ClientMainPL 
+	  ORDER BY SerialNo
+	END
+	ELSE IF @strReportType = 'SUMMARY'
+	BEGIN
+	  IF @strOutputType = 'X'
+	  BEGIN
+	    SET @XMLDATA1 = (SELECT CompanyCode, Exchange, Segment, ClientCode, BillNo, BillDate, Scrip = ISNULL(Scrip,''), Symbol = isnull(Symbol,''), 
+	    seriesid = ISNULL(seriesid,''), ExpiryDate = ISNULL(ExpiryDate,''), TrxnDate, 
+	    BuyQty = ISNULL(BuyQty,0), SellQty = ISNULL(SellQty,0), MarketRate = ISNULL(MarketRate,0), 
+	    BuyValue = ISNULL(BuyValue,0), SellValue = ISNULL(SellValue,0), NetValue 
+	    FROM #tbl_ClientMainPL 
+	    ORDER BY SerialNo FOR XML PATH('Bill'))
+	    SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	   -- RETURN 1
+	  END
+	  ELSE
+	  BEGIN
+        SELECT CompanyCode, Exchange, Segment, ClientCode, BillNo, BillDate, Scrip = ISNULL(Scrip,''), Symbol = isnull(Symbol,''), 
+	    seriesid = ISNULL(seriesid,''), ExpiryDate = ISNULL(ExpiryDate,''), TrxnDate, 
+	    BuyQty = ISNULL(BuyQty,0), SellQty = ISNULL(SellQty,0), MarketRate = ISNULL(MarketRate,0), 
+	    BuyValue = ISNULL(BuyValue,0), SellValue = ISNULL(SellValue,0), NetValue 
+	    FROM #tbl_ClientMainPL 
+	    ORDER BY SerialNo
+	    --RETURN 1
+	  END  
+	END
+	
+    DROP TABLE #tbl_ClientMainPL
+	DROP TABLE #tbl_ClientPLDETAIL
+	
+  END
+  END TRY
+  BEGIN CATCH
+    CLOSE db_CursorBillDate        
+    DEALLOCATE db_CursorBillDate
+	SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = ERROR_MESSAGE()
+	RETURN 1
+  END CATCH
+    
+  SET @o_vcErrorFlag  = 'S'
+  --SET @o_vcErrorMessage = 'Process Completed'
+  RETURN 1
+END
+GO
+
+CREATE OR ALTER PROCEDURE stpr_Rpt_CapitalGain @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, 
+@o_vcErrorMessage VARCHAR(MAX) OUTPUT 
+WITH ENCRYPTION
+AS
+BEGIN
+ /*
+ ///////////////////////////////////////////////////////////////////////////////////////////
+ // Create By     : VAIBHAV GARG
+ // Created Date  : 12-DEC-2023
+ // Description   : 
+ // Reviewed By   : 
+ // Review Date   : 
+ //////////////////////////////////////////////////////////////////////////////////////////
+*/
+  DECLARE @dtFromDate VARCHAR(8), @strUserId VARCHAR(50), @strProduct VARCHAR(50), 
+  @strOutputType VARCHAR(1)='', @XMLData XML,
+  @strSelectTag VARCHAR(1)='', @strSelectUsers VARCHAR(500)='', @StrString NVARCHAR(MAX)='', @SQ1 INT = 0,
+  @strSplFilter VARCHAR(MAX)='', @strRepType VARCHAR(50)='', @dtToDate VARCHAR(8)='', @strConsider112A VARCHAR(1)='N',
+  @strRepSubType VARCHAR(50)='', @xmldata1 XML, @strShowPos VARCHAR(1)='Y', @strScripCode VARCHAR(20)='', @strShortSale VARCHAR(1)
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+
+  SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+
+  SELECT @dtFromDate = ISNULL(x.value('(FromDt)[1]', 'VARCHAR(8)'),''),
+  @strProduct = ISNULL(x.value('(Product)[1]', 'VARCHAR(50)'),''),
+  @dtToDate = ISNULL(x.value('(ToDt)[1]', 'VARCHAR(8)'),''),
+  @strUserId = ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+  @strSelectTag = ISNULL(x.value('(SelectTag)[1]', 'VARCHAR(1)'),''),
+  @strSelectUsers = ISNULL(x.value('(SelectUsers)[1]', 'VARCHAR(500)'),''),
+  @strOutputType = ISNULL(x.value('(OutputType)[1]', 'VARCHAR(1)'),''),
+  @strSplFilter = ISNULL(x.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''),
+  @strRepType = ISNULL(x.value('(RepType)[1]', 'VARCHAR(100)'),''),
+  @strRepSubType = ISNULL(x.value('(RepSubType)[1]', 'VARCHAR(100)'),''),
+  @strConsider112A = ISNULL(x.value('(Option112A)[1]', 'VARCHAR(1)'),''), 
+  @strShowPos = ISNULL(x.value('(POS)[1]', 'VARCHAR(1)'),''),
+  @strScripCode = ISNULL(x.value('(ScripCode)[1]', 'VARCHAR(20)'),''),
+  @strShortSale = ISNULL(x.value('(ShortSale)[1]', 'VARCHAR(20)'),'')
+  FROM @XMLData.nodes('/root') AS XTbl(x) 
+
+  
+  IF @strRepType = ''
+  begin
+    SET @strRepType = 'Actual PL_Detail'
+  END
+  
+  IF @strShowPos = ''
+  begin
+    SET @strShowPos = 'Y'
+  END
+  IF ISNULL(@strConsider112A ,'') = ''
+  BEGIN
+    SET @strConsider112A = 'N'
+  END
+  
+  
+  DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50)) 
+  
+  	
+  IF @strSplFilter = ''
+  BEGIN
+    INSERT INTO @tbl_UserList(Client_Code) 
+    SELECT * FROM DBO.[fn_GetClients](@strUserId,@strSelectTag,@strSelectUsers)
+  END 	 
+  ELSE
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @StrString  = ' SELECT distinct CM_CD FROM Client_master(NOLOCK) WHERE 1 = 1  AND '+@strSplFilter
+	INSERT INTO @tbl_UserList(Client_Code) 
+	EXEC(@StrString)
+  END	
+  
+  SET @StrString = ''
+ 
+  DECLARE @strDT1 VARCHAR(20)= CONVERT(VARCHAR(20),DATEADD(DAY,-1,@dtFromDate),112), @xmldata2 XML
+  declare @vcXML1 NVARCHAR(MAX) = '<FromDt></FromDt><ToDt>'+@strDT1+'</ToDt><UserId>'+@strUserId+'</UserId><Product></Product>'
+  +'<SelectTag></SelectTag><SelectUsers></SelectUsers><OutputType>X</OutputType><SplFilter>'+@strSplFilter+'</SplFilter><RepType>Notional_Detail</RepType>'
+  +'<RepSubType></RepSubType><Option112A>'+@strConsider112A+'</Option112A><ScripCode>'+@strScripCode+'</ScripCode>'
+  
+  SET @vcXML1 = REPLACE(@vcXML1,'''','''''')
+  SET @strString = 'EXEC DBO.stpr_Rpt_CapitalGainNotional' + ' ''' + @vcXML1 + ''', @o_vcErrorFlag OUTPUT, @o_vcErrorMessage OUTPUT';
+  EXEC sp_executesql @strString, N'@o_vcErrorFlag VARCHAR(1) OUTPUT, @o_vcErrorMessage VARCHAR(MAX) OUTPUT', @o_vcErrorFlag OUTPUT, @o_vcErrorMessage OUTPUT;
+  
+  DECLARE @tbl_OpenPosition TABLE(td_SRNO INT, ClientCode VARCHAR(20), ScripCode VARCHAR(20), TradeDate VARCHAR(20),
+  td_Stlmnt VARCHAR(20),
+  BuyQty MONEY, BuyRate MONEY, BuyValue MONEY, SaleQty MONEY, SaleRate MONEY, SaleValue MONEY, STT MONEY)
+  IF @o_vcErrorFlag = 'S'
+  BEGIN
+    SET @xmldata2 = CAST(@o_vcErrorMessage AS XML)
+	
+    INSERT INTO @tbl_OpenPosition(td_SRNO, ClientCode, ScripCode, TradeDate, td_Stlmnt, BuyQty, BuyRate, BuyValue,
+    SaleQty, SaleRate, SaleValue, STT)
+    SELECT CapGain.value('(td_SRNO)[1]', 'INT') AS td_SRNO,
+	CapGain.value('(ClientCode)[1]', 'VARCHAR(50)') AS ClientCode ,
+    CapGain.value('(ScripCode)[1]', 'VARCHAR(50)') AS ScripCode ,
+    ISNULL(CapGain.value('(TradeDate)[1]', 'VARCHAR(20)'),'') AS TradeDate,
+	ISNULL(CapGain.value('(td_Stlmnt)[1]', 'VARCHAR(20)'),'') AS td_Stlmnt,
+    CapGain.value('(BuyQty)[1]', 'MONEY') AS BuyQty,
+    CapGain.value('(BuyRate)[1]', 'MONEY') AS BuyRate,
+    CapGain.value('(BuyValue)[1]', 'MONEY') AS BuyValue,
+    CapGain.value('(SaleQty)[1]', 'MONEY') AS SaleQty,
+    CapGain.value('(SaleRate)[1]', 'MONEY') AS SaleRate,
+    CapGain.value('(SaleValue)[1]', 'MONEY') AS SaleValue,
+	CapGain.value('(STT)[1]', 'MONEY') AS SaleValue
+    FROM @xmldata2.nodes('/CapGain') AS XTbl(CapGain)
+  END
+
+  CREATE TABLE #tbl_DelvTrxn (
+	td_SRNO INT, td_dt VARCHAR(8), td_Stlmnt VARCHAR(20), td_clientcd VARCHAR(20), td_scripcd VARCHAR(20), 
+	td_bsflag VARCHAR(1), Qty_SS Numeric(19,6), VALUES_SS Numeric(19,6), Qty_NS Numeric(19,6), VALUES_NS Numeric(19,6), td_Rate Numeric(19,6), FIFONo INT, 
+	XTAG11 INT, LONG_TAG VARCHAR(1), SQR_TAG VARCHAR(1), Tmp_RefNo numeric, td_Filler1 VARCHAR(8), td_stt MONEY
+	)
+
+  CREATE TABLE #tbl_DelvTrxn1 (
+	td_SRNO INT, td_dt VARCHAR(8), td_Stlmnt VARCHAR(20), td_clientcd VARCHAR(20), td_scripcd VARCHAR(20), 
+	td_bsflag VARCHAR(1), Qty_SS Numeric(19,6), VALUES_SS Numeric(19,6), Qty_NS Numeric(19,6), VALUES_NS Numeric(19,6), td_Rate Numeric(19,6), FIFONo INT, 
+	XTAG11 INT, LONG_TAG VARCHAR(1), SQR_TAG VARCHAR(1), Tmp_RefNo numeric, td_Filler1 VARCHAR(8), td_stt MONEY
+	)
+
+  CREATE TABLE #tbl_DelvTrxn2 (
+	td_SRNO INT, td_dt VARCHAR(8), td_Stlmnt VARCHAR(20), td_clientcd VARCHAR(20), td_scripcd VARCHAR(20), 
+	td_bsflag VARCHAR(1), Qty_SS Numeric(19,6), VALUES_SS Numeric(19,6), Qty_NS Numeric(19,6), VALUES_NS Numeric(19,6), td_Rate Numeric(19,6), FIFONo INT, 
+	XTAG11 INT, LONG_TAG VARCHAR(1), SQR_TAG VARCHAR(1), Tmp_RefNo numeric, td_Filler1 VARCHAR(8), td_stt MONEY
+	)
+
+  --- MAIN DATA INSERT INTO TEMP TABLE
+  
+  INSERT INTO #tbl_DelvTrxn (
+	td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_SS, VALUES_SS, Qty_NS, VALUES_NS, td_Rate, Tmp_RefNo, td_Filler1, td_stt, 
+	FIFONO
+	)
+  SELECT X.*, FIFONO = ROW_NUMBER() OVER (
+		PARTITION BY td_clientcd ORDER BY td_scripcd, TD_DT, td_SRNO
+		)
+  FROM (
+	SELECT td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, 
+	Qty_SS = CASE WHEN (td_TRDType <> 'DL' OR td_Filler2  = 'T') THEN td_bqty - td_Sqty ELSE 0 END, 
+	VALUES_SS = (CASE WHEN (td_TRDType <> 'DL' OR td_Filler2  = 'T') THEN
+	(CASE WHEN td_bsflag = 'B' THEN td_Rate + Round(td_ServiceTax + 
+					td_OtherChrgs1 + td_OtherChrgs2, 4) ELSE 
+					td_Rate - Round(td_ServiceTax + td_OtherChrgs1 + td_OtherChrgs2, 4) END) ELSE 
+			0 END) * ABS(CASE WHEN (td_TRDType <> 'DL' OR td_Filler2  = 'T') THEN td_bqty - td_Sqty ELSE 0 END), 
+			Qty_NS = ABS(CASE WHEN td_TRDType = 'DL' AND td_Filler2  <> 'T' THEN td_bqty - td_Sqty ELSE 0 END)
+		, VALUES_NS = (CASE WHEN td_TRDType = 'DL'  AND td_Filler2  <> 'T' THEN 
+		(CASE WHEN td_bsflag = 'B' THEN td_Rate + Round(td_ServiceTax + td_OtherChrgs1 + 
+					td_OtherChrgs2, 4) ELSE td_Rate - Round(td_ServiceTax + td_OtherChrgs1 + td_OtherChrgs2, 4) END) ELSE 0 END) * 
+					ABS(CASE WHEN td_TRDType = 'DL'   AND td_Filler2  <> 'T' THEN td_bqty - td_Sqty ELSE 0 END), 
+				td_Rate = (CASE WHEN td_bsflag = 'B' THEN td_Rate + Round(td_ServiceTax + 
+				td_OtherChrgs1 + td_OtherChrgs2, 4) ELSE td_Rate - Round(td_ServiceTax + td_OtherChrgs1 + td_OtherChrgs2, 4) END), td_NFiller2, td_Filler1,
+				td_stt
+	FROM TRX_INVPL(NOLOCK), Client_master(NOLOCK), Branch_master(NOLOCK)
+	WHERE cm_cd = td_clientcd AND cm_brboffcode = bm_branchcd AND td_dt >= @dtFromDate AND td_dt <= @dtToDate --and td_Filler2 <> 'T'
+	AND cm_cd IN(SELECT Client_Code from @tbl_UserList) --AND td_scripcd = '519570'
+	AND ((td_scripcd = @strScripCode AND @strScripCode <> '') OR @strScripCode = '')
+	UNION ALL
+	SELECT td_SRNO, TradeDate, td_Stlmnt,  ClientCode, ScripCode, td_bsflag = (CASE WHEN BuyQty <> 0 THEN 'B' WHEN SaleQty <> 0 THEN 'S' ELSE '' END),
+    Qty_SS = 0,VALUES_SS = 0,Qty_NS = (CASE WHEN BuyQty <> 0 THEN BuyQty WHEN SaleQty <> 0 THEN SaleQty ELSE 0 END),
+    VALUES_NS = (CASE WHEN BuyQty <> 0 THEN BuyValue WHEN SaleQty <> 0 THEN SaleValue ELSE 0 END),
+    td_Rate = (CASE WHEN BuyQty <> 0 THEN BuyRate WHEN SaleQty <> 0 THEN SaleRate ELSE 0 END), Tmp_RefNo = 0,
+    td_Filler1 = '', td_stt = CASE WHEN (CASE WHEN BuyQty <> 0 THEN BuyQty WHEN SaleQty <> 0 THEN SaleQty ELSE 0 END) <>0 THEN ROUND(STT/(CASE WHEN BuyQty <> 0 THEN BuyQty WHEN SaleQty <> 0 THEN SaleQty ELSE 0 END),4)
+	ELSE 0 END
+    FROM @tbl_OpenPosition) X
+	
+
+  /*
+	
+  INSERT INTO #tbl_DelvTrxn (
+	td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_SS, VALUES_SS, Qty_NS, VALUES_NS, td_Rate, Tmp_RefNo, td_Filler1, td_stt, 
+	FIFONO
+	)
+  SELECT td_SRNO, TradeDate, td_Stlmnt,  ClientCode, ScripCode, td_bsflag = (CASE WHEN BuyQty <> 0 THEN 'B' WHEN SaleQty <> 0 THEN 'S' ELSE '' END),
+  0,0,Qty_NS = (CASE WHEN BuyQty <> 0 THEN BuyQty WHEN SaleQty <> 0 THEN SaleQty ELSE 0 END),
+  VALUES_NS = (CASE WHEN BuyQty <> 0 THEN BuyValue WHEN SaleQty <> 0 THEN SaleValue ELSE 0 END),
+  td_Rate = (CASE WHEN BuyQty <> 0 THEN BuyRate WHEN SaleQty <> 0 THEN SaleRate ELSE 0 END), Tmp_RefNo = 0,
+  td_Filler1 = '', td_stt = 0, FIFONO = 0
+  FROM @tbl_OpenPosition
+  */
+ 
+  
+ 
+  DECLARE @UPDtd_SRNO INT, @updTmp_RefNo INT
+  DECLARE CursorUpdatedate CURSOR
+  FOR
+  SELECT td_SRNO, Tmp_RefNo
+  FROM #tbl_DelvTrxn x where Tmp_RefNo > 0
+  
+  OPEN CursorUpdatedate
+  FETCH NEXT
+  FROM CursorUpdatedate
+  INTO @UPDtd_SRNO, @updTmp_RefNo
+  WHILE @@FETCH_STATUS = 0
+  BEGIN 
+    UPDATE A SET a.Qty_NS = a.Qty_NS - b.Qty_NS
+	FROM #tbl_DelvTrxn A, #tbl_DelvTrxn B  
+    WHERE A.td_SRNO = @UPDtd_SRNO and b.td_SRNO  = @updTmp_RefNo
+	
+	DELETE FROM #tbl_DelvTrxn WHERE td_SRNO = @updTmp_RefNo
+	
+    FETCH NEXT FROM CursorUpdatedate
+	INTO @UPDtd_SRNO, @updTmp_RefNo
+  END
+  CLOSE CursorUpdatedate
+  DEALLOCATE CursorUpdatedate
+  
+  DELETE FROM #tbl_DelvTrxn WHERE Qty_NS = 0 AND Qty_SS = 0
+  
+  UPDATE #tbl_DelvTrxn SET td_dt = td_Filler1 WHERE td_Filler1 NOT IN('','0')
+  
+  
+  
+   
+  CREATE INDEX indx_DelvTrxn ON #tbl_DelvTrxn (td_clientcd, td_scripcd, td_SRNO, FIFONO)
+  CREATE INDEX indx_DelvTrxn1 ON #tbl_DelvTrxn1 (td_clientcd, td_scripcd, td_SRNO, FIFONO)
+  INSERT INTO #tbl_DelvTrxn2 (
+			  td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, XTAG11, 
+			    LONG_TAG, SQR_TAG, TD_STT)
+  SELECT td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, ISNULL(XTAG11,0), 
+			    ISNULL(LONG_TAG,''), ISNULL(SQR_TAG,''), TD_STT
+				FROM  #tbl_DelvTrxn X 
+  WHERE TD_DT <(SELECT MIN(TD_DT) FROM #tbl_DelvTrxn WHERE td_clientcd = X.td_clientcd AND td_scripcd = X.td_scripcd AND td_bsflag ='B' AND Qty_NS <> 0)
+  AND td_bsflag ='S'  AND Qty_NS <> 0
+  
+  
+  DELETE FROM #tbl_DelvTrxn 
+  WHERE td_SRNO IN(SELECT td_SRNO FROM #tbl_DelvTrxn2)
+  
+  
+  DECLARE @SQR_QTY MONEY = 0, @SQR_QTY1 MONEY = 0, @td_clientcdC1 VARCHAR(10) = '', @td_scripcdC1 VARCHAR(10) = '', 
+	@td_BuyQtyC1 MONEY = 0, @td_SaleQtyC1 MONEY = 0, @COUNTER INT = 0, @td_SRNOB INT, 
+	@td_dtB VARCHAR(8), @td_StlmntB VARCHAR(20), @td_clientcdB VARCHAR(50), @td_scripcdB VARCHAR(50), 
+	@td_bsflagB VARCHAR(1), @QTY_NSB MONEY, @td_RateB Numeric(19,6), @VALUES_NSB  Numeric(19,6), 
+	@td_SRNOS INT, @td_dtS VARCHAR(8), @td_StlmntS VARCHAR(20)='', @td_clientcdS VARCHAR(50), @td_scripcdS 
+	VARCHAR(50), @td_bsflagS VARCHAR(1), @QTY_NSS MONEY, @td_RateS Numeric(19,6), @buyQty MONEY = 0, @SaleQty MONEY = 0, 
+	@BQTY MONEY = 0, @SQTY MONEY = 0, @VALUES_NSS  Numeric(19,6), @FIFONOB INT, @FIFONOS INT, @SQ MONEY = 0, @TAG VARCHAR(1) = 'C', 
+	@strFlag VARCHAR(1)='N', @strsaleflag VARCHAR(1)='', @TD_STTB MONEY, @TD_STTS MONEY
+
+	
+  DECLARE CursorC1Main CURSOR
+  FOR
+  SELECT td_clientcd, td_scripcd, SUM(CASE WHEN td_bsflag = 'B' THEN Qty_NS ELSE 0 END) BuyQty, 
+  SUM(CASE WHEN td_bsflag = 'S' THEN Qty_NS ELSE 0 END) SaleQty
+  FROM #tbl_DelvTrxn x
+  GROUP BY td_clientcd, td_scripcd
+  HAVING SUM(CASE WHEN td_bsflag = 'B' THEN Qty_NS ELSE 0 END) <> 0 
+  AND SUM(CASE WHEN td_bsflag = 'S' THEN Qty_NS ELSE 0 END) <> 0
+
+  OPEN CursorC1Main
+  FETCH NEXT
+  FROM CursorC1Main
+  INTO @td_clientcdC1, @td_scripcdC1, @td_BuyQtyC1, @td_SaleQtyC1
+  WHILE @@FETCH_STATUS = 0
+  BEGIN
+	IF SIGN(@td_BuyQtyC1 - @td_SaleQtyC1) <> 1
+	BEGIN
+		SET @SQR_QTY = @td_BuyQtyC1
+		SET @SQR_QTY1 = @td_BuyQtyC1
+		set @strsaleflag = 'B'
+	END
+	ELSE
+	BEGIN
+		SET @SQR_QTY = @td_SaleQtyC1
+		SET @SQR_QTY1 = @td_SaleQtyC1
+		set @strsaleflag = 'S'
+	END
+	
+	IF @td_BuyQtyC1 = @td_SaleQtyC1
+	BEGIN
+	  set @strsaleflag = 'S'
+	END
+	
+	DECLARE CursorBMain CURSOR
+	FOR
+	SELECT td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, TD_STT
+	FROM #tbl_DelvTrxn
+	WHERE td_clientcd = @td_clientcdC1 AND td_scripcd = @td_scripcdC1 AND td_bsflag = 'B' AND Qty_NS <> 0
+	and isnull(SQR_TAG,'')=''
+	ORDER BY td_clientcd, td_scripcd, FIFONO, td_SRNO
+	
+	DECLARE CursorSMain CURSOR
+	FOR
+	SELECT td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO,TD_STT
+	FROM #tbl_DelvTrxn
+	WHERE td_clientcd = @td_clientcdC1 AND td_scripcd = @td_scripcdC1 AND td_bsflag = 'S' AND Qty_NS <> 0
+	and isnull(SQR_TAG,'')='' 
+	ORDER BY td_clientcd, td_scripcd, FIFONO, td_SRNO
+	OPEN CursorBMain
+	OPEN CursorSMain
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+	   SET @COUNTER = @COUNTER + 1
+		IF @SQR_QTY <> 0
+		BEGIN
+			IF @BQTY = 0
+			BEGIN
+				FETCH NEXT
+				FROM CursorBMain
+				INTO @td_SRNOB, @td_dtB, @td_StlmntB, @td_clientcdB, @td_scripcdB, @td_bsflagB, @Qty_NSB, @td_RateB, 
+					@VALUES_NSB, @FIFONOB, @TD_STTB
+				SET @BQTY = @Qty_NSB
+			END
+		END
+		IF @SQR_QTY1 <> 0
+		BEGIN
+		  IF @SQTY = 0 OR (@td_dtS < @td_dtB and @SQTY > 0)
+		  BEGIN
+			IF @SQTY > 0 --AND @td_dtS < @td_dtB
+			BEGIN
+			  INSERT INTO #tbl_DelvTrxn2 (
+			  td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, XTAG11, 
+			  LONG_TAG, SQR_TAG, TD_STT)
+		      VALUES (@td_SRNOS, @td_dtS, @td_StlmntS, @td_clientcdS, @td_scripcdS, @td_bsflagS, @SQTY, @td_RateS, @SQTY * @td_RateS, 
+			  @FIFONOS, @COUNTER,'X', '',  @TD_STTS)
+               
+			  UPDATE #tbl_DelvTrxn
+			  SET SQR_TAG = @TAG
+			  WHERE td_clientcd = @td_clientcdS AND FIFONO = @FIFONOS
+			  
+			  IF @strsaleflag = 'S'
+			  BEGIN
+			    SET @SQR_QTY1 = @SQR_QTY1 - @SQTY 
+		        SET @SQR_QTY = @SQR_QTY - @SQTY
+			  END	
+			  SET @SQTY = 0	
+			  SET @strFlag = 'Y'
+			  
+			END
+			
+			FETCH NEXT FROM CursorSMain INTO @td_SRNOS, @td_dtS, @td_StlmntS, @td_clientcdS, @td_scripcdS, @td_bsflagS, @Qty_NSS, @td_RateS, 
+			@VALUES_NSS, @FIFONOS, @TD_STTS
+			
+			IF @td_dtS >= @td_dtB 
+			BEGIN
+			  SET @SQTY = @Qty_NSS
+			END  
+			ELSE
+			BEGIN
+			  IF @Qty_NSS > 0 --AND @td_dtS < @td_dtB
+			  BEGIN
+			  
+			  	SET @SQTY = @Qty_NSS
+				IF @strsaleflag = 'S'
+			    BEGIN
+			      SET @SQR_QTY1 = @SQR_QTY1 - @Qty_NSS 
+		          SET @SQR_QTY = @SQR_QTY - @Qty_NSS
+				END  
+			    IF @SQR_QTY > 0
+                BEGIN				
+				  INSERT INTO #tbl_DelvTrxn2 (
+			      td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, XTAG11, 
+			      LONG_TAG, SQR_TAG, TD_STT)
+		          VALUES (@td_SRNOS, @td_dtS, @td_StlmntS, @td_clientcdS, @td_scripcdS, @td_bsflagS, @Qty_NSS, @td_RateS, @Qty_NSS * @td_RateS, 
+			      @FIFONOS, @COUNTER,'L', '', @TD_STTS)
+				END  
+   	
+		        SET @SQTY = 0 
+                SET @Qty_NSS = 0				
+            
+				UPDATE #tbl_DelvTrxn
+			    SET SQR_TAG = @TAG
+			    WHERE td_clientcd = @td_clientcdS AND FIFONO = @FIFONOS
+				SET @strFlag = 'Y'
+              
+			  END	
+		    END  
+		  END
+		END
+		
+		
+		IF @BQTY >= @SQTY 
+		BEGIN
+		  IF @BQTY > 0
+		  BEGIN
+		    SET @SQ = @SQTY
+		  END	
+		END
+		ELSE
+		BEGIN
+		  IF @SQTY > 0
+		  BEGIN
+		    
+		    SET @SQ = @BQTY
+		  END	
+		END
+		
+		
+		IF @strFlag = 'Y'
+		begin
+		 --SELECT @SQ
+		 SET @SQ = 0
+		 SET @strFlag = 'N'
+		END
+	
+		INSERT INTO #tbl_DelvTrxn1 (
+			td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, XTAG11, 
+			LONG_TAG, SQR_TAG, TD_STT
+			)
+		VALUES (
+			@td_SRNOB, @td_dtB, @td_StlmntB, @td_clientcdB, @td_scripcdB, @td_bsflagB, @SQ, @td_RateB, @SQ * @td_RateB, 
+			@FIFONOB, @COUNTER, (CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(@td_dtB AS DATE), CAST(@td_dtS AS DATE))) - 365) = 1 THEN 'L' ELSE '' END
+				), 'Y', @TD_STTB
+			)
+		SET @BQTY = @BQTY - @SQ
+     
+         		
+		INSERT INTO #tbl_DelvTrxn1 (
+			td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, XTAG11, 
+			LONG_TAG, SQR_TAG, TD_STT
+			)
+		VALUES (
+			@td_SRNOS, @td_dtS, @td_StlmntS, @td_clientcdS, @td_scripcdS, @td_bsflagS, @SQ, @td_RateS, @SQ * @td_RateS, 
+			@FIFONOS, @COUNTER, (CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(@td_dtB AS DATE), CAST(@td_dtS AS DATE))) - 365) = 1 THEN 'L' ELSE '' END
+				), 'Y', @TD_STTS
+			)
+		SET @SQTY = @SQTY - @SQ
+        --ABD:
+	
+		IF @BQTY = 0
+		BEGIN
+			UPDATE #tbl_DelvTrxn
+			SET SQR_TAG = @TAG
+			WHERE td_clientcd = @td_clientcdB AND FIFONO = @FIFONOB
+		END
+		
+		IF @SQTY = 0
+		BEGIN
+			UPDATE #tbl_DelvTrxn
+			SET SQR_TAG = @TAG
+			WHERE td_clientcd = @td_clientcdS AND FIFONO = @FIFONOS
+		END
+
+		SET @SQR_QTY1 = @SQR_QTY1 - @SQ 
+		SET @SQR_QTY = @SQR_QTY - @SQ
+		SET @strFlag = 'N'
+		--SELECT 'VAG',@SQ, @SQR_QTY, @BQTY, @SQTY, @FIFONOB, @FIFONOS
+		IF (@SQR_QTY1 = 0 AND @SQR_QTY = 0)
+		BEGIN
+			BREAK;
+		END
+	END
+	CLOSE CursorBMain;
+	CLOSE CursorSMain;
+	DEALLOCATE CursorBMain;
+	DEALLOCATE CursorSMain;
+	IF @BQTY <> 0
+	BEGIN
+		INSERT INTO #tbl_DelvTrxn1 (
+			td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, XTAG11, 
+			LONG_TAG, SQR_TAG, TD_STT
+			)
+		VALUES (
+			@td_SRNOB, @td_dtB, @td_StlmntB, @td_clientcdB, @td_scripcdB, @td_bsflagB, @BQTY, @td_RateB, @BQTY * 
+			@td_RateB, @FIFONOB, @COUNTER, '', '', @TD_STTB
+			)
+		UPDATE #tbl_DelvTrxn
+		SET SQR_TAG = @TAG
+		WHERE td_clientcd = @td_clientcdB AND FIFONO = @FIFONOB
+	END
+	
+	IF @SQTY <> 0
+	BEGIN
+		INSERT INTO #tbl_DelvTrxn1 (
+			td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, XTAG11, 
+			LONG_TAG, SQR_TAG, TD_STT
+			)
+		VALUES (
+			@td_SRNOS, @td_dtS, @td_StlmntS, @td_clientcdS, @td_scripcdS, @td_bsflagS, @SQTY, @td_RateS, @SQTY * 
+			@td_RateS, @FIFONOS, @COUNTER, '', '', @TD_STTS
+			)
+		UPDATE #tbl_DelvTrxn
+		SET SQR_TAG = @TAG
+		WHERE td_clientcd = @td_clientcdS AND FIFONO = @FIFONOS
+	END
+	SET @SQ = 0
+	SET @BQTY = 0
+	SET @SQTY = 0
+	SET @SQR_QTY = 0
+	SET @SQR_QTY1 = 0
+	FETCH NEXT
+	FROM CursorC1Main
+	INTO @td_clientcdC1, @td_scripcdC1, @td_BuyQtyC1, @td_SaleQtyC1
+  END
+  CLOSE CursorC1Main
+  DEALLOCATE CursorC1Main
+  
+
+ 
+  DELETE
+  FROM #tbl_DelvTrxn WHERE SQR_TAG = 'C'
+  
+  INSERT INTO #tbl_DelvTrxn 
+  SELECT * FROM #tbl_DelvTrxn1 WHERE ISNULL(Qty_SS,0)+isnull(Qty_NS,0) <> 0 
+  
+  --SELECT * FROM #tbl_DelvTrxn WHERE  td_scripcd = '533326'
+  
+    --- INSERT DELIVERY TRXN
+  
+  CREATE TABLE #tbl_Rep (
+	Tag VARCHAR(50), ClientCode VARCHAR(50), CLientName VARCHAR(100), Scrip_Code VARCHAR(50), ScripName VARCHAR(
+		100), XTAG11 INT, BuyDate VARCHAR(20), BuyQty Numeric(19,6), BuyRate Numeric(19,6), BuyValue Numeric(19,6), SaleDate VARCHAR(20), 
+	SaleQty Numeric(19,6), SaleRate Numeric(19,6), SaleValue Numeric(19,6), DAYS INT, S_TERM_PL MONEY, L_TERM_PL MONEY, SP_TERM_PL MONEY, 
+	NetQty MONEY, NetValue MONEY, CMP MONEY, NOT_PL MONEY, BuySTT MONEY, SaleSTT MONEY, Tmp_112ARate MONEY, T112AFlag VARCHAR(1) NOT NULL DEFAULT 'N',
+	BuyBackFlag varchar(1)
+	)
+  INSERT INTO #tbl_Rep (Tag, ClientCode, Scrip_Code, XTAG11, BuyDate, BuyQty, BuyRate, BuyValue, BuySTT)
+  SELECT Tag = 'Delivery Trxn', CLIENT_CODE, SCRIP_CODE, XTAG11, CONVERT(VARCHAR, MAX(cast(BOT_TRXN_DATE AS DATE
+			)), 106) BOT_TRXN_DATE, SUM(BOT_QTY) BOT_QTY, cast((CASE WHEN SUM(BOT_QTY) = 0 THEN 0 ELSE ROUND(SUM(BOT_VALUE) / SUM(BOT_QTY), 6
+		)  END) as Numeric(19,6)) AS BOT_MKT_RATE, SUM(BOT_VALUE) BOT_VALUE, SUM(abs(BOT_QTY)*TD_STT) AS BuySTT
+  FROM (
+	SELECT td_clientcd AS Client_Code, SCRIP_CODE = td_scripcd, XTAG11, td_dt AS BOT_TRXN_DATE, QTY_NS BOT_QTY, 
+		td_Rate BOT_MKT_RATE, cast(VALUES_NS as  Numeric(19,6)) BOT_VALUE, TD_STT
+	FROM #tbl_DelvTrxn
+	WHERE td_bsflag = 'B' AND isnull(SQR_TAG, 'N') = 'Y' 
+  	) X123
+  GROUP BY CLIENT_CODE, SCRIP_CODE, XTAG11
+  
+  
+  --- UPDATE SALE TRANSACTION
+  
+  UPDATE A
+  SET A.SaleQty = B.BOT_QTY, A.SaleRate = B.BOT_MKT_RATE, A.SaleDATE = B.BOT_TRXN_DATE, A.SaleValue = B.BOT_VALUE, A.SaleSTT = B.BuySTT,
+  A.BuyBackFlag = B.BuyBackFlag
+  FROM #tbl_Rep A, (
+		SELECT CLIENT_CODE, SCRIP_CODE, XTAG11, CONVERT(VARCHAR, MAX(cast(BOT_TRXN_DATE AS DATE)), 106) 
+			BOT_TRXN_DATE, SUM(BOT_QTY) BOT_QTY, 
+			(CASE WHEN SUM(BOT_QTY) = 0 THEN 0 ELSE ROUND(SUM(BOT_VALUE) / SUM(BOT_QTY), 6) END) AS BOT_MKT_RATE, 
+			SUM(BOT_VALUE) BOT_VALUE, SUM(abs(BOT_QTY)*TD_STT) AS BuySTT, BuyBackFlag
+		FROM (
+			SELECT td_clientcd AS Client_Code, SCRIP_CODE = td_scripcd, XTAG11, td_dt AS BOT_TRXN_DATE, QTY_NS BOT_QTY, 
+				td_Rate BOT_MKT_RATE, VALUES_NS BOT_VALUE, TD_STT, BuyBackFlag = CASE WHEN se_type='T' THEN 'Y' ELSE 'N' END
+			FROM #tbl_DelvTrxn LEFT OUTER JOIN Settlements(NOLOCK) SETT ON(td_Stlmnt = se_stlmnt)
+			WHERE td_bsflag = 'S' AND isnull(SQR_TAG, 'N') = 'Y'
+			) X123
+		GROUP BY CLIENT_CODE, SCRIP_CODE, XTAG11, BuyBackFlag
+		) b
+  WHERE A.ClientCode = b.Client_Code AND a.Scrip_Code = b.SCRIP_CODE AND a.XTAG11 = b.XTAG11
+  
+
+  --- INSERT Spacu TRXN
+
+  INSERT INTO #tbl_Rep (
+	Tag, ClientCode, Scrip_Code, XTAG11, BuyDate, BuyQty, BuyRate, BuyValue, SaleDate, SaleQty, SaleRate, 
+	SaleValue, BuySTT, SaleSTT
+	)
+  SELECT 'Spacu Trxn' XTAG111, CLIENT_CODE = td_clientcd, SCRIP_CODE = td_scripcd, XTAG11, 
+  (CASE WHEN td_bsflag = 'B' THEN td_dt ELSE '' END) AS BOT_TRXN_DATE, 
+  SUM(CASE WHEN td_bsflag = 'B' THEN QTY_SS ELSE 0 END) BOT_QTY, 
+		(CASE WHEN SUM(CASE WHEN td_bsflag = 'B' THEN QTY_SS ELSE 0 END) <> 0 THEN
+		ROUND(SUM(CASE WHEN td_bsflag = 'B' THEN VALUES_SS ELSE 0 END)/
+		SUM(CASE WHEN td_bsflag = 'B' THEN QTY_SS ELSE 0 END),2) ELSE 0 END)  BOT_MKT_RATE
+	,  SUM(CASE WHEN td_bsflag = 'B' THEN VALUES_SS ELSE 0 END) BOT_VALUE,
+	SaleDate = '01/01/1900', SaleQty = 0, SaleRate = 0, 
+	SaleValue = 0, BuySTT = SUM(CASE WHEN td_bsflag = 'B' THEN abs(QTY_SS)*TD_STT ELSE 0 END), SaleSTT = 0
+  FROM #tbl_DelvTrxn
+  WHERE ISNULL(QTY_SS, 0) <> 0 AND td_bsflag = 'B'
+  GROUP BY td_clientcd, td_scripcd, td_bsflag, td_dt, XTAG11
+
+  --- UPDATE SALE TRXN
+
+
+  UPDATE A
+  SET a.SaleQty = B.BOT_QTY, A.SaleRate = B.BOT_MKT_RATE, A.SaleDATE = B.BOT_TRXN_DATE, A.SaleValue = B.BOT_VALUE, A.SaleSTT = B.SaleSTT
+  FROM #tbl_Rep A, (
+		SELECT CLIENT_CODE, SCRIP_CODE, XTAG11, cast(BOT_TRXN_DATE AS DATE) BOT_TRXN_DATE, SUM(BOT_QTY) BOT_QTY, 
+		cast((CASE WHEN SUM(BOT_QTY) = 0 THEN 0 ELSE ROUND(SUM(BOT_VALUE) / SUM(BOT_QTY), 6) END) as Numeric(19,6)) BOT_MKT_RATE, 
+		SUM(BOT_VALUE) BOT_VALUE, SaleSTT = SUM(abs(BOT_QTY)*TD_STT)
+		FROM (
+			SELECT td_clientcd AS Client_Code, SCRIP_CODE = td_scripcd, XTAG11, td_dt AS BOT_TRXN_DATE, QTY_SS BOT_QTY, 
+				td_Rate BOT_MKT_RATE, cast(VALUES_SS as Numeric(19,6)) BOT_VALUE, TD_STT
+			FROM #tbl_DelvTrxn
+			WHERE td_bsflag = 'S' AND ISNULL(QTY_SS, 0) <> 0
+			) X123
+		GROUP BY CLIENT_CODE, SCRIP_CODE, XTAG11, cast(BOT_TRXN_DATE AS DATE)
+		) b
+  WHERE A.ClientCode = b.Client_Code AND a.Scrip_Code = b.SCRIP_CODE AND a.BuyDate = b.BOT_TRXN_DATE AND Tag = 'Spacu Trxn'
+  
+  
+  --- INSERT DELIVERY NOT SQR UP TRXN 	
+  /*	
+  INSERT INTO #tbl_Rep (
+	Tag, ClientCode, Scrip_Code, XTAG11, BuyDate, BuyQty, BuyRate, BuyValue, SaleDate, SaleQty, SaleRate, 
+	SaleValue, BuySTT, SaleSTT
+	)
+  SELECT XTAG111, CLIENT_CODE, SCRIP_CODE, XTAG11 = 0, convert(VARCHAR, CAST(BOT_TRXN_DATE AS DATE), 106) 
+	BOT_TRXN_DATE, SUM(BOT_QTY) BOT_QTY, (CASE WHEN SUM(BOT_QTY) = 0 THEN 0 ELSE ROUND(SUM(BOT_VALUE) / SUM(BOT_QTY), 4) END) 
+	BOT_MKT_RATE, SUM(BOT_VALUE) BOT_VALUE, convert(VARCHAR, CAST(SOLD_TRXN_DATE AS DATE), 106) SOLD_TRXN_DATE, 
+	SUM(SOLD_QTY) SOLD_QTY, 
+	(CASE WHEN SUM(SOLD_QTY) = 0 THEN 0 ELSE ROUND(SUM(SOLD_VALUE) / SUM(SOLD_QTY), 4) END) SOLD_MKT_RATE, 
+	SUM(SOLD_VALUE) SOLD_VALUE, SUM(BuySTT) AS BuySTT, SUM(SaleSTT) AS SaleSTT
+  FROM (
+	SELECT 'Delivery Trxn' XTAG111, CLIENT_CODE = td_clientcd, SCRIP_CODE = td_scripcd, XTAG11, 
+	CASE WHEN td_bsflag = 'B' THEN td_dt ELSE '19000101' END BOT_TRXN_DATE, 
+		(CASE WHEN td_bsflag = 'B' THEN QTY_NS ELSE 0 END) BOT_QTY, 
+		(CASE WHEN td_bsflag = 'B' THEN td_Rate ELSE 0 END) BOT_MKT_RATE, 
+		(CASE WHEN td_bsflag = 'B' THEN VALUES_NS ELSE 0 END) BOT_VALUE, 
+		(CASE WHEN td_bsflag = 'S' THEN td_dt ELSE '19000101' END) SOLD_TRXN_DATE, 
+		(CASE WHEN td_bsflag = 'S' THEN QTY_NS ELSE 0 END) AS SOLD_QTY, 
+		(CASE WHEN td_bsflag = 'S' THEN td_Rate ELSE  0 END) AS SOLD_MKT_RATE, 
+		(CASE WHEN td_bsflag = 'S' THEN  VALUES_NS ELSE  0 END) AS SOLD_VALUE, 
+			BuySTT =  (CASE WHEN td_bsflag = 'B' THEN td_stt ELSE 0 END),
+			SaleSTT =  (CASE WHEN td_bsflag = 'S' THEN td_stt ELSE 0 END)
+	FROM #tbl_DelvTrxn
+	WHERE ISNULL(SQR_TAG, 'N') = 'N' AND ISNULL(QTY_NS, 0) <> 0 AND td_bsflag <> 'S'
+	) x1
+  GROUP BY XTAG111, CLIENT_CODE, SCRIP_CODE, convert(VARCHAR, cast(BOT_TRXN_DATE AS DATE), 106), convert(VARCHAR
+		, cast(SOLD_TRXN_DATE AS DATE), 106)
+  ORDER BY CLIENT_CODE, BOT_TRXN_DATE, SOLD_TRXN_DATE
+ */
+
+  -- INSERT SHORT SALES
+
+  INSERT INTO #tbl_Rep (
+	Tag, ClientCode, Scrip_Code, XTAG11, BuyDate, BuyQty, BuyRate, BuyValue, SaleDate, SaleQty, SaleRate, 
+	SaleValue, BuySTT, SaleSTT
+	)
+  SELECT XTAG111, CLIENT_CODE, SCRIP_CODE, XTAG11 = 0, convert(VARCHAR, CAST(BOT_TRXN_DATE AS DATE), 106) 
+	BOT_TRXN_DATE, SUM(BOT_QTY) BOT_QTY, 
+	(CASE WHEN SUM(BOT_QTY) = 0 THEN 0 ELSE round(SUM(BOT_VALUE) / SUM(BOT_QTY),6) END) AS BOT_MKT_RATE, 
+	SUM(BOT_VALUE) BOT_VALUE, convert(VARCHAR, CAST(SOLD_TRXN_DATE AS DATE), 106) SOLD_TRXN_DATE, 
+	SUM(SOLD_QTY) SOLD_QTY, (CASE WHEN SUM(SOLD_QTY) = 0 THEN 0 ELSE round(SUM(SOLD_VALUE) / SUM(SOLD_QTY),6) END) SOLD_MKT_RATE, 
+	SUM(SOLD_VALUE) SOLD_VALUE, SUM(BuySTT) AS BuySTT, SUM(SaleSTT) AS SaleSTT
+  FROM (SELECT 'Short Sale' XTAG111, CLIENT_CODE = td_clientcd, SCRIP_CODE = td_scripcd, XTAG11, 
+     (CASE WHEN td_bsflag = 'B' THEN td_dt ELSE '19000101' END) BOT_TRXN_DATE, 
+		(CASE WHEN td_bsflag = 'B' THEN QTY_NS ELSE 0 END) BOT_QTY, 
+		(CASE WHEN td_bsflag = 'B' THEN td_Rate ELSE 0 END) AS BOT_MKT_RATE, 
+		(CASE WHEN td_bsflag = 'B' THEN VALUES_NS ELSE 0 END) AS BOT_VALUE, 
+		(CASE WHEN td_bsflag = 'S' THEN td_dt ELSE '19000101' END) AS SOLD_TRXN_DATE, 
+		(CASE WHEN td_bsflag = 'S' THEN QTY_NS ELSE 0 END) AS SOLD_QTY, 
+		(CASE WHEN td_bsflag = 'S' THEN td_Rate ELSE 0 END) AS SOLD_MKT_RATE, 
+		(CASE WHEN td_bsflag = 'S' THEN VALUES_NS ELSE 0 END) AS SOLD_VALUE, 
+		BuySTT =  (CASE WHEN td_bsflag = 'B' THEN td_stt ELSE 0 END),
+		SaleSTT =  (CASE WHEN td_bsflag = 'S' THEN td_stt ELSE 0 END)
+	FROM #tbl_DelvTrxn2
+	WHERE ISNULL(QTY_NS, 0) <> 0
+	) x1
+  GROUP BY XTAG111, CLIENT_CODE, SCRIP_CODE, convert(VARCHAR, cast(BOT_TRXN_DATE AS DATE), 106), convert(VARCHAR
+		, cast(SOLD_TRXN_DATE AS DATE), 106)
+  ORDER BY CLIENT_CODE, BOT_TRXN_DATE, SOLD_TRXN_DATE
+  
+  
+   INSERT INTO #tbl_Rep (Tag, ClientCode, Scrip_Code, XTAG11, SaleDate, SaleQty, SaleRate, 
+	SaleValue, BuyDate, BuyQty, BuyRate, BuyValue, BuySTT, SaleSTT, BuyBackFlag)
+  SELECT Tag = 'Short Sale', CLIENT_CODE, SCRIP_CODE, XTAG11, CONVERT(VARCHAR, MAX(cast(BOT_TRXN_DATE AS DATE
+			)), 106) BOT_TRXN_DATE, SUM(BOT_QTY) BOT_QTY, (CASE WHEN SUM(BOT_QTY) = 0 THEN 0 ELSE round(SUM(BOT_VALUE) / SUM(BOT_QTY),6) END) 
+			BOT_MKT_RATE, SUM(BOT_VALUE) BOT_VALUE, BuyDate = '01-JAN-1900', BuyQty = 0, BuyRate = 0, BuyValue = 0, BuySTT = 0,
+		SaleSTT = SUM(abs(BOT_QTY)*TD_STT), BuyBackFlag
+  FROM (
+	SELECT td_clientcd AS Client_Code, SCRIP_CODE = td_scripcd, XTAG11, td_dt AS BOT_TRXN_DATE, QTY_NS BOT_QTY, 
+		td_Rate BOT_MKT_RATE, VALUES_NS BOT_VALUE, TD_STT, BuyBackFlag = CASE WHEN se_type='T' THEN 'Y' ELSE 'N' END
+	FROM #tbl_DelvTrxn LEFT OUTER JOIN Settlements(NOLOCK) ON(td_Stlmnt = se_stlmnt)
+	WHERE td_bsflag = 'S'  AND isnull(SQR_TAG, 'N') IN('N','')
+  	) X123
+  GROUP BY CLIENT_CODE, SCRIP_CODE, XTAG11, BuyBackFlag
+  
+  --- COMMENT VAIBHAVGARG
+  
+  IF ISNULL(@strShowPos,'N') ='Y'
+  BEGIN
+    INSERT INTO #tbl_Rep (Tag, ClientCode, Scrip_Code, XTAG11, BuyDate, BuyQty, BuyRate, BuyValue, BuySTT)
+    SELECT Tag = 'Delivery Trxn', CLIENT_CODE, SCRIP_CODE, XTAG11, CONVERT(VARCHAR, MAX(cast(BOT_TRXN_DATE AS DATE
+			)), 106) BOT_TRXN_DATE, SUM(BOT_QTY) BOT_QTY, (CASE WHEN SUM(BOT_QTY) = 0 THEN 0 ELSE 
+			round(SUM(BOT_VALUE) / SUM(BOT_QTY),6) END) BOT_MKT_RATE, SUM(BOT_VALUE) BOT_VALUE, BuySTT = SUM(abs(BOT_QTY)*TD_STT)
+    FROM (
+	SELECT td_clientcd AS Client_Code, SCRIP_CODE = td_scripcd, XTAG11, td_dt AS BOT_TRXN_DATE, QTY_NS BOT_QTY, 
+		td_Rate BOT_MKT_RATE, VALUES_NS BOT_VALUE, TD_STT
+	FROM #tbl_DelvTrxn
+	WHERE td_bsflag = 'B' AND ISNULL(SQR_TAG,'') = '' AND QTY_NS <> 0
+  	) X123
+    GROUP BY CLIENT_CODE, SCRIP_CODE, XTAG11
+  END	
+	  
+  
+  SET DATEFORMAT DMY
+  
+  IF ISNULL(@strConsider112A,'N') = 'N'
+  BEGIN
+    /*
+    SELECT A.*, A.BuyRate, Round(mk_Rate, 4), Tmp_112ARate, 
+	Round(mk_Rate, 4)
+     FROM #tbl_Rep A, Market_Rates20180131 ,Securities
+     WHERE Scrip_Code = ss_cd
+	 AND Scrip_Code = mk_scripcd
+	 AND CAST(BuyDate AS DATE) <= '20180131'
+	 AND CAST(SaleDate AS DATE) > '20180331'
+	 AND DateDiff(d, CAST(BuyDate AS DATE), CAST(SaleDate AS DATE)) >= 365
+	 AND Round(mk_Rate, 4) > (BuyRate + (CASE WHEN BuySTT <> 0 and BuyQty <> 0 then round(BuySTT/BuyQty,2) else 0 end ))
+	 AND ss_chargestt = 'Y' AND SS_CD='532296'
+	 AND (SaleRate) > (BuyRate)	
+  */
+    UPDATE #tbl_Rep
+    SET BuyRate = Round(mk_Rate, 4)
+	  ,Tmp_112ARate = Round(mk_Rate, 4)
+	  ,BuySTT = 0, T112AFlag = 'Y'
+     FROM Market_Rates20180131
+	 ,Securities
+     WHERE Scrip_Code = ss_cd
+	 AND Scrip_Code = mk_scripcd
+	 AND CAST(BuyDate AS DATE) <= '20180131'
+	 AND CAST(SaleDate AS DATE) > '20180331'
+	 AND DateDiff(d, CAST(BuyDate AS DATE), CAST(SaleDate AS DATE)) >= 365
+	 AND Round(mk_Rate, 4) > (BuyRate + (CASE WHEN BuySTT <> 0 and BuyQty <> 0 then round(BuySTT/BuyQty,2) else 0 end ))
+	 AND ss_chargestt = 'Y'
+	 AND SaleRate > BuyRatE
+  
+
+  UPDATE #tbl_Rep
+  SET Tmp_112ARate = Round(mk_Rate , 4)
+  FROM Market_Rates20180131
+	,Securities
+  WHERE Scrip_Code = ss_cd
+	AND Scrip_Code = mk_scripcd	
+  END	  
+  ELSE
+  BEGIN
+    UPDATE A SET A.BuyBackFlag = 'N', T112AFlag = 'N'
+	FROM #tbl_Rep A
+  END
+
+  	
+  SET DATEFORMAT MDY
+ 
+  -- UPDATE DAYS
+
+  UPDATE A
+  SET A.DAYS = CAST(ISNULL((CASE WHEN (
+					cast(isnull(BuyDate, '01-jan-1900') AS DATETIME) < 3 OR Cast(isnull(SaleDate, '01-jan-1900') AS DATETIME) 
+					< 3
+					) THEN 0 ELSE DATEDIFF(DAY, CAST(BuyDate AS DATE), CAST(SaleDate AS DATE)) END), 0) AS INT)
+  FROM #tbl_Rep A
+  WHERE Tag = 'Delivery Trxn'
+
+
+  UPDATE A SET A.CLientName = CM.cm_name, A.ScripName = SC.SS_NAME
+  FROM #tbl_Rep A, Client_master CM, Securities SC
+  WHERE A.ClientCode = CM.CM_CD AND A.Scrip_Code = SC.ss_cd
+  
+  UPDATE A
+  SET A.SP_TERM_PL = (CASE WHEN ISNULL(A.DAYS, 0) = 0 
+  AND (cast(isnull(BuyDate, '01-jan-1900') AS DATETIME) > 3 AND Cast(isnull(SaleDate, '01-jan-1900') AS DATETIME) > 3) THEN  
+  (SaleValue - BuyValue) ELSE 0 END), 
+  A.S_TERM_PL = (CASE WHEN ISNULL(BuyBackFlag,'N')='Y' THEN 0 ELSE (CASE WHEN ISNULL(A.DAYS, 0) > 0 and ISNULL(A.DAYS, 0)< 365 
+  THEN (SaleValue - BuyValue) ELSE 0 END) END), 
+  A.L_TERM_PL = (CASE WHEN ISNULL(A.DAYS, 0) >= 365 THEN 
+  CASE WHEN ((T112AFlag = 'Y') AND (SaleRate) < BuyRate) THEN 0 
+  ELSE ((SaleRate - BuyRate) * BuyQty) END ELSE 0 END), 
+  NetQty = BuyQty - ISNULL(abs(SaleQty),0),
+  NetValue = CASE WHEN BuyQty - ISNULL(abs(SaleQty),0)<>0 THEN isnull(SaleValue,0) - ISNULL(BUYVALUE,0) ELSE 0 END
+  FROM #tbl_Rep A
+  
+  
+  --- UPDATE CMP
+  
+  UPDATE #tbl_Rep
+  SET CMP = mk_closerate
+  FROM Market_rates(NOLOCK)
+  WHERE mk_scripcd = Scrip_Code AND mk_exchange = 'N' AND mk_dt = (
+		SELECT max(mk_dt)
+		FROM Market_rates
+		WHERE mk_exchange = 'N' AND mk_scripcd = Scrip_Code   AND mk_dt <= @dtToDate
+		)
+	AND NetQty <> 0
+	
+
+  DECLARE @tbl_CapgainMain TABLE(SerialNo int identity(1,1),Tag VARCHAR(50), ClientCode VARCHAR(50),  
+  CLientName VARCHAR(100), Scrip_Code  VARCHAR(50), ScripName  VARCHAR(100), BuyDate  VARCHAR(15), BuyQty Numeric(19,6), BuyRate Numeric(19,6), 
+  BuyValue Numeric(19,6), SaleDate VARCHAR(15), SaleQty Numeric(19,6), SaleRate Numeric(19,6), SaleValue Numeric(19,6), A112A_Rate VARCHAR(20), DAYS INT, SP_TERM_PL MONEY, 
+  S_TERM_PL MONEY, L_TERM_PL MONEY, NetQty MONEY, NetValue MONEY, CMP MONEY, NOT_PL MONEY, STT Money)
+  
+  INSERT INTO  @tbl_CapgainMain (Tag, ClientCode,  CLientName, Scrip_Code, ScripName, BuyDate, BuyQty, BuyRate, BuyValue, SaleDate, SaleQty, SaleRate, SaleValue, 
+  A112A_Rate, DAYS, SP_TERM_PL,
+  S_TERM_PL, L_TERM_PL, NetQty, NetValue, CMP, NOT_PL, Stt)
+  SELECT Tag, ClientCode, CLientName, Scrip_Code, ScripName, BuyDate = CASE WHEN CONVERT(VARCHAR, CAST(BuyDate AS DATE)
+			, 103) = '01/01/1900' THEN '' ELSE CONVERT(VARCHAR, CAST(BuyDate AS DATE), 103) END, BuyQty, BuyRate, BuyValue, SaleDate = 
+	ISNULL((CASE WHEN CONVERT(VARCHAR, CAST(SaleDate AS DATE), 103) = '01/01/1900' THEN '' ELSE CONVERT(VARCHAR, CAST(SaleDate AS DATE), 
+			103) END),''), SaleQty = ISNULL(abs(SaleQty),0), SaleRate = ABS(ISNULL(SaleRate,0)), 
+			SaleValue = ISNULL(SaleValue,0), 
+			A112A_Rate = ISNULL(CAST(Tmp_112ARate AS VARCHAR)+
+			(CASE WHEN ISNULL(BuyBackFlag,'N') = 'N' THEN 
+			(CASE WHEN T112AFlag='Y' THEN '*' ELSE '' END) ELSE '#' END),''),
+			DAYS = ISNULL(DAYS, 0), SP_TERM_PL = ISNULL(SP_TERM_PL, 0)
+	, S_TERM_PL = ISNULL(S_TERM_PL, 0), L_TERM_PL = ISNULL(L_TERM_PL, 0), NetQty, NetValue,
+	CMP = isnull(CMP, 0), NOT_PL = ISNULL(NetValue,0) + round(isnull(NetQty, 0) * isnull(CMP, 0), 2),
+	STT =  ISNULL(BUYSTT,0)+ISNULL(SaleSTT,0)
+    FROM #tbl_Rep X
+    WHERE CONVERT(VARCHAR,CAST(BuyDate AS DATE), 103) <> '01/01/1900'
+    ORDER BY CLIENTCODE, Scrip_Code, CAST(BuyDate AS DATE), CAST(SaleDate AS DATE) 
+  
+  INSERT INTO  @tbl_CapgainMain (Tag, ClientCode,  CLientName, Scrip_Code, ScripName, BuyDate, BuyQty, BuyRate, BuyValue, SaleDate, 
+  SaleQty, SaleRate, SaleValue, A112A_Rate, DAYS, SP_TERM_PL,
+  S_TERM_PL, L_TERM_PL, NetQty, NetValue, CMP, NOT_PL, Stt)
+  SELECT Tag ='Short Sale', ClientCode, CLientName, Scrip_Code, ScripName, BuyDate = CASE WHEN CONVERT(VARCHAR, CAST(BuyDate AS DATE)
+			, 103) = '01/01/1900' THEN '' ELSE CONVERT(VARCHAR, CAST(BuyDate AS DATE), 103) END, BuyQty, BuyRate = 0, BuyValue, SaleDate = 
+  ISNULL((CASE WHEN CONVERT(VARCHAR, CAST(SaleDate AS DATE), 103) = '01/01/1900' THEN  '' ELSE CONVERT(VARCHAR, CAST(SaleDate AS DATE), 
+			103) END),''), SaleQty = ISNULL(abs(SaleQty),0), SaleRate = abs(ISNULL(SaleRate,0)), SaleValue = ISNULL(SaleValue,0), 
+			A112A_Rate = '',DAYS = ISNULL(DAYS, 0), SP_TERM_PL = ISNULL(SP_TERM_PL, 0)
+	, S_TERM_PL = ISNULL(S_TERM_PL, 0), L_TERM_PL = ISNULL(L_TERM_PL, 0), NetQty, NetValue, CMP = isnull(CMP, 0), 
+	NOT_PL = ISNULL(NetValue,0) + round(isnull(NetQty, 0) * isnull(CMP, 0), 2),
+	BuySTT =  BUYSTT+SaleSTT
+    FROM #tbl_Rep X
+    WHERE CONVERT(VARCHAR,CAST(BuyDate AS DATE), 103) = '01/01/1900' AND abs(SaleQty) > 0
+    ORDER BY CLIENTCODE, Scrip_Code, CAST(BuyDate AS DATE), CAST(SaleDate AS DATE) 
+  
+  DROP TABLE #tbl_DelvTrxn
+  DROP TABLE #tbl_DelvTrxn1
+  DROP TABLE #tbl_DelvTrxn2
+  DROP TABLE #tbl_Rep
+  
+  SET @XMLDATA1 =''
+  --SELECT @strOutputType
+  IF @strRepType = 'Actual PL_Detail'
+  BEGIN
+    IF @strOutputType = 'X'
+	BEGIN
+	  SET @XMLDATA1 = (SELECT * FROM @tbl_CapgainMain 
+      ORDER BY SerialNo FOR XML PATH('CapGain'))
+	  SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	  RETURN 1
+	END
+	ELSE
+	BEGIN
+      IF ISNULL(@strShortSale,'N') ='N'
+	  BEGIN
+	    SELECT * FROM @tbl_CapgainMain 
+        ORDER BY SerialNo
+	  END
+      ELSE IF ISNULL(@strShortSale,'N') ='Y'
+	  BEGIN
+	    SELECT * FROM @tbl_CapgainMain WHERE Tag <> 'Short Sale'
+        ORDER BY SerialNo
+		
+		SELECT *, CurrentValue = ISNULL(NetQty,0)*ISNULL(CMP,0) FROM @tbl_CapgainMain WHERE Tag = 'Short Sale'
+        ORDER BY SerialNo
+	  END
+	  RETURN 1
+	END  
+  END
+  ELSE IF  @strRepType = 'Actual PL_Summary'
+  BEGIN
+  	SET DATEFORMAT DMY
+    IF @strOutputType = 'X'
+	BEGIN
+	  SET @XMLDATA1 = ( SELECT ClientCode,  CLientName, Scrip_Code, ScripName,
+	  BuyQty = SUM(BuyQty), 
+	  BuyRate =  ROUND((CASE WHEN SUM(BuyQty)<>0 THEN SUM(BuyValue)/SUM(BuyQty) ELSE 0 END),4), 
+	  BuyValue = SUM(BuyValue), SaleQty = SUM(SaleQty), 
+	  SaleRate = ROUND((CASE WHEN SUM(SaleQty)<>0 THEN SUM(SaleValue)/SUM(SaleQty) ELSE 0 END),4), 
+	  SaleValue = SUM(SaleValue), SP_TERM_PL = SUM(SP_TERM_PL), 
+	  S_TERM_PL = SUM(S_TERM_PL), L_TERM_PL = SUM(L_TERM_PL), 
+	  NetQty = SUM(NetQty), NetValue = SUM(NetValue), CMP = MAX(CMP), NOT_PL = SUM(NOT_PL),
+	  STT =  SUM(STT)
+	  FROM(SELECT TAG, ClientCode,  CLientName, Scrip_Code, ScripName, 
+	  BuyDate = CASE WHEN ISNULL(BuyDate,'') = '' THEN '01/01/1900' ELSE BuyDate END, 
+	  BuyQty, BuyRate =CAST(BuyRate  AS Numeric(19,6)) , CAST(BuyValue  AS Numeric(19,6)) BuyValue , 
+	  SaleDate, SaleQty, SaleRate, SaleValue, 
+	  SP_TERM_PL, S_TERM_PL, L_TERM_PL, NetQty, NetValue, CMP, NOT_PL, STT, FromDate = CONVERT(VARCHAR, CAST(@dtFromDate AS DATE), 103)
+	  FROM @tbl_CapgainMain X)  xmain
+	  GROUP BY ClientCode,  CLientName, Scrip_Code, ScripName
+	  ORDER BY ClientCode, ScripName FOR XML PATH('CapGain'))
+	  SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	  RETURN 1
+	END
+	ELSE
+	BEGIN
+	  SELECT TAG, ClientCode,  CLientName, Scrip_Code, ScripName,
+	  BuyQty = SUM(BuyQty), 
+	  BuyRate =  ROUND((CASE WHEN SUM(BuyQty)<>0 THEN SUM(BuyValue)/SUM(BuyQty) ELSE 0 END),4), 
+	  BuyValue = SUM(BuyValue), SaleQty = SUM(SaleQty), 
+	  SaleRate = ROUND((CASE WHEN SUM(SaleQty)<>0 THEN SUM(SaleValue)/SUM(SaleQty) ELSE 0 END),4), 
+	  SaleValue = SUM(SaleValue), SP_TERM_PL = SUM(SP_TERM_PL), 
+	  S_TERM_PL = SUM(S_TERM_PL), L_TERM_PL = SUM(L_TERM_PL), 
+	  NetQty = SUM(NetQty), NetValue = SUM(NetValue), CMP = MAX(CMP), NOT_PL = SUM(NOT_PL),
+	  STT =  SUM(STT)
+	  FROM(SELECT TAG, ClientCode,  CLientName, Scrip_Code, ScripName, 
+	  BuyDate = CASE WHEN ISNULL(BuyDate,'') = '' THEN '01/01/1900' ELSE BuyDate END, 
+	  BuyQty, BuyRate =CAST(BuyRate  AS Numeric(19,6)) , CAST(BuyValue  AS Numeric(19,6)) BuyValue , 
+	  SaleDate, SaleQty, SaleRate, SaleValue, 
+	  SP_TERM_PL, S_TERM_PL, L_TERM_PL, NetQty, NetValue, CMP, NOT_PL, STT, FromDate = CONVERT(VARCHAR, CAST(@dtFromDate AS DATE), 103)
+	  FROM @tbl_CapgainMain X)  xmain
+	  GROUP BY Tag, ClientCode,  CLientName, Scrip_Code, ScripName
+	  ORDER BY ClientCode, CASE WHEN TAG<>'Short Sale' THEN ScripName ELSE 'zzzz' END
+	  RETURN 1
+	END  
+	SET DATEFORMAT MDY
+  END
+  
+  SET @o_vcErrorFlag  = 'S'
+ -- SET @o_vcErrorMessage = 'Process Completed'
+  RETURN 1
+  
+END
+GO
+
+CREATE OR ALTER PROCEDURE stpr_Rpt_CapitalGainNotional @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, 
+@o_vcErrorMessage VARCHAR(MAX) OUTPUT 
+WITH ENCRYPTION
+AS
+BEGIN
+ /*
+ ///////////////////////////////////////////////////////////////////////////////////////////
+ // Create By     : VAIBHAV GARG
+ // Created Date  : 22-FEB-2024
+ // Description   : 
+ // Reviewed By   : 
+ // Review Date   : 
+ //////////////////////////////////////////////////////////////////////////////////////////
+*/
+  DECLARE @dtFromDate VARCHAR(8), @strUserId VARCHAR(50), @strProduct VARCHAR(50), 
+  @strOutputType VARCHAR(1)='', @XMLData XML,
+  @strSelectTag VARCHAR(1)='', @strSelectUsers VARCHAR(500)='', @StrString VARCHAR(MAX)='', @SQ1 INT = 0,
+  @strSplFilter VARCHAR(MAX)='', @strRepType VARCHAR(50)='', @dtToDate VARCHAR(8)='', @strRepSubType VARCHAR(50), @strConsider112A VARCHAR(1)='N',
+  @strScripCode VARCHAR(20)=''
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+
+  SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+  
+  SELECT @dtFromDate = ISNULL(x.value('(FromDt)[1]', 'VARCHAR(8)'),''),
+  @strProduct = ISNULL(x.value('(Product)[1]', 'VARCHAR(50)'),''),
+  @dtToDate = ISNULL(x.value('(ToDt)[1]', 'VARCHAR(8)'),''),
+  @strUserId = ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+  @strSelectTag = ISNULL(x.value('(SelectTag)[1]', 'VARCHAR(1)'),''),
+  @strSelectUsers = ISNULL(x.value('(SelectUsers)[1]', 'VARCHAR(500)'),''),
+  @strOutputType = ISNULL(x.value('(OutputType)[1]', 'VARCHAR(1)'),''),
+  @strSplFilter = ISNULL(x.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''),
+  @strRepType = ISNULL(x.value('(RepType)[1]', 'VARCHAR(100)'),''),
+  @strRepSubType = ISNULL(x.value('(RepSubType)[1]', 'VARCHAR(100)'),''),
+  @strConsider112A = ISNULL(x.value('(Option112A)[1]', 'VARCHAR(1)'),''),
+  @strScripCode = ISNULL(x.value('(ScripCode)[1]', 'VARCHAR(20)'),'')  
+  FROM @XMLData.nodes('/root') AS XTbl(x) 
+
+ 
+  IF @strRepType = ''
+  begin
+    SET @strRepType = 'Notional_Detail'
+  END
+  
+  if ISNULL(@strConsider112A,'') = ''
+  BEGIN
+    SET @strConsider112A ='N'
+  END
+  
+  DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50)) 
+  
+  	
+  IF @strSplFilter = ''
+  BEGIN
+    INSERT INTO @tbl_UserList(Client_Code) 
+    SELECT * FROM DBO.[fn_GetClients](@strUserId,@strSelectTag,@strSelectUsers)
+  END 	 
+  ELSE
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @StrString  = ' SELECT distinct CM_CD FROM Client_master(NOLOCK) WHERE 1 = 1  AND '+@strSplFilter
+	INSERT INTO @tbl_UserList(Client_Code) 
+	EXEC(@StrString)
+  END	
+  
+  SET @StrString = ''
+  
+  IF OBJECT_ID('tempdb..#tbl_DelvTrxn') IS NOT NULL
+    DROP TABLE #tbl_DelvTrxn
+  IF OBJECT_ID('tempdb..#tbl_DelvTrxn1') IS NOT NULL
+    DROP TABLE #tbl_DelvTrxn1
+  IF OBJECT_ID('tempdb..#TrxSummaryDLV1') IS NOT NULL
+    DROP TABLE #TrxSummaryDLV1
+  IF OBJECT_ID('tempdb..#TrxDLV1') IS NOT NULL
+    DROP TABLE #TrxDLV1
+  IF OBJECT_ID('tempdb..#tbl_CloseRate') IS NOT NULL
+    DROP TABLE #tbl_CloseRate
+
+  CREATE TABLE #tbl_DelvTrxn1 (
+	td_SRNO INT, td_dt VARCHAR(8), td_Stlmnt VARCHAR(20), td_clientcd VARCHAR(20), td_scripcd VARCHAR(20), 
+	td_bsflag VARCHAR(1), Qty_NS numeric(19,6), VALUES_NS numeric(19,6), td_Rate numeric(19,6),
+	XTAG11 INT, LONG_TAG VARCHAR(1), SQR_TAG VARCHAR(1), Tmp_RefNo numeric, td_Filler1 VARCHAR(8), td_stt MONEY
+  )
+
+  CREATE TABLE #tbl_DelvTrxn (
+  SerialNo int identity(1,1), td_SRNO INT, td_dt VARCHAR(8), td_Stlmnt VARCHAR(20), td_clientcd VARCHAR(20), td_scripcd VARCHAR(20), 
+	td_bsflag VARCHAR(1), Qty_NS numeric(19,6), VALUES_NS numeric(19,6), td_Rate numeric(19,6), 
+	XTAG11 INT, LONG_TAG VARCHAR(1), SQR_TAG VARCHAR(1), Tmp_RefNo numeric, td_Filler1 VARCHAR(8), td_stt MONEY
+  )
+	  
+  	  
+  INSERT INTO #tbl_DelvTrxn1 (
+	td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, VALUES_NS, td_Rate, Tmp_RefNo, td_Filler1, td_stt
+	)
+    SELECT X.*
+    FROM (
+    SELECT td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, 
+	Qty_NS = ABS(CASE WHEN td_TRDType = 'DL' AND td_Filler2  <> 'T' THEN td_bqty - td_Sqty ELSE 0 END), 
+	VALUES_NS = (CASE WHEN td_TRDType = 'DL'  AND td_Filler2  <> 'T' THEN (CASE WHEN td_bsflag = 'B' THEN 
+	td_Rate + Round(td_ServiceTax + td_OtherChrgs1 + td_OtherChrgs2, 6) ELSE 
+	td_Rate - Round(td_ServiceTax + td_OtherChrgs1 + td_OtherChrgs2, 6) END) ELSE 0 END) * 
+			ABS(CASE WHEN td_TRDType = 'DL'   AND td_Filler2  <> 'T' THEN  td_bqty - td_Sqty ELSE 0 END), 
+		td_Rate = (CASE WHEN td_bsflag = 'B' THEN td_Rate + Round(td_ServiceTax + 
+		td_OtherChrgs1 + td_OtherChrgs2, 6) ELSE td_Rate - Round(td_ServiceTax + td_OtherChrgs1 + td_OtherChrgs2, 6) END), 
+		td_NFiller2, td_Filler1, td_stt
+    FROM TRX_INVPL(NOLOCK), Client_master(NOLOCK), Branch_master(NOLOCK), @tbl_UserList X
+    WHERE cm_cd = td_clientcd AND cm_brboffcode = bm_branchcd AND td_dt <= @dtToDate --and td_Filler2 <> 'T'
+    AND cm_cd  = X.CLIENT_CODE AND td_TRDType = 'DL'   AND td_Filler2  <> 'T') X
+	WHERE ((td_scripcd = @strScripCode AND @strScripCode <> '') OR @strScripCode = '')
+	
+    CREATE INDEX indx_DelvTrxntd_SRNO ON #tbl_DelvTrxn1 (td_SRNO, td_Filler1) 
+	 
+	DECLARE @UPDtd_SRNO INT, @updTmp_RefNo INT
+    DECLARE CursorUpdatedate CURSOR
+    FOR
+    SELECT td_SRNO, Tmp_RefNo
+    FROM #tbl_DelvTrxn1 x where Tmp_RefNo > 0
+  
+    OPEN CursorUpdatedate
+    FETCH NEXT
+    FROM CursorUpdatedate
+    INTO @UPDtd_SRNO, @updTmp_RefNo
+    WHILE @@FETCH_STATUS = 0
+    BEGIN 
+      UPDATE A SET a.Qty_NS = a.Qty_NS - b.Qty_NS
+	  FROM #tbl_DelvTrxn1 A, #tbl_DelvTrxn1 B  
+      WHERE A.td_SRNO = @UPDtd_SRNO and b.td_SRNO  = @updTmp_RefNo
+	
+	  DELETE FROM #tbl_DelvTrxn1 WHERE td_SRNO = @updTmp_RefNo
+	
+      FETCH NEXT FROM CursorUpdatedate
+	  INTO @UPDtd_SRNO, @updTmp_RefNo
+    END
+    CLOSE CursorUpdatedate
+    DEALLOCATE CursorUpdatedate
+  
+    DELETE FROM #tbl_DelvTrxn1 WHERE Qty_NS = 0
+  
+    UPDATE #tbl_DelvTrxn1 SET td_dt = td_Filler1 WHERE td_Filler1 NOT IN('','0')
+	
+
+    CREATE INDEX indx_DelvTrxn1 ON #tbl_DelvTrxn1 (td_clientcd, td_scripcd, td_SRNO) 
+	CREATE INDEX indx_DelvTrxn ON #tbl_DelvTrxn (td_clientcd, td_scripcd, td_SRNO) 
+	CREATE INDEX indx_DelvTrxnS ON #tbl_DelvTrxn (td_scripcd) 
+
+
+    insert into #tbl_DelvTrxn(td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, VALUES_NS, td_Rate, td_stt)
+    SELECT td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, VALUES_NS, td_Rate, td_stt FROM #tbl_DelvTrxn1 xmain 
+	WHERE EXISTS(
+    SELECT 1 FROM(
+    SELECT td_clientcd, td_scripcd, Qty_NS = SUM(CASE WHEN td_bsflag='B' THEN Qty_NS ELSE Qty_NS*-1 END)  
+    FROM #tbl_DelvTrxn1
+    GROUP BY td_clientcd, td_scripcd
+    HAVING SUM(CASE WHEN td_bsflag='B' THEN Qty_NS ELSE Qty_NS*-1 END) <> 0) x1 
+    where x1.td_clientcd = xmain.td_clientcd
+    and x1.td_scripcd = xmain.td_scripcd)
+
+
+    
+	CREATE TABLE #TrxSummaryDLV1 (clientcd VARCHAR(8) NOT NULL, scripcd VARCHAR(6) NOT NULL, Buys MONEY, Sells MONEY)
+	
+	INSERT INTO #TrxSummaryDLV1
+	SELECT td_clientcd, td_scripcd, Buys, Sells
+    FROM (SELECT td_clientcd, cm_name, td_scripcd, ss_name, 
+    ss_nsymbol, ss_nseries, sum(CASE WHEN td_bsflag='B' THEN Qty_ns ELSE 0 END) AS 'Buys', 
+	sum(CASE WHEN td_bsflag='S' THEN Qty_ns ELSE 0 END) 'Sells', 
+	sum(CASE WHEN td_bsflag='B' THEN Qty_ns ELSE 0 END) - sum(CASE WHEN td_bsflag='S' THEN Qty_ns ELSE 0 END) AS 'Delivery', 
+    count(*) Totalrec, ss_group, cm_type
+    FROM #tbl_DelvTrxn, Client_master, Securities
+    WHERE cm_cd = td_clientcd AND td_scripcd = ss_cd
+    GROUP BY td_clientcd, cm_name, td_scripcd, ss_cd, ss_name, ss_nsymbol, ss_nseries, ss_group, cm_type
+    HAVING sum(CASE WHEN td_bsflag='B' THEN Qty_ns ELSE 0 END) - sum(CASE WHEN td_bsflag='S' THEN Qty_ns ELSE 0 END) <> 0) a
+
+	CREATE TABLE #TrxDLV1 (SrNo NUMERIC, Qty NUMERIC, FinalQty NUMERIC)
+    CREATE INDEX indx_SrNo ON #TrxDLV1 (SrNo) 
+	
+	INSERT INTO #TrxDLV1
+	SELECT SerialNo, Qty, CASE WHEN NetQty >= Running THEN Qty ELSE NetQty - isNull(PrevRunning, 0) END FinalQty
+    FROM (
+    SELECT SerialNo, td_clientcd, td_scripcd, td_marketrate,  NetQty, Qty, Running, LAG(
+		Running) OVER (
+		PARTITION BY td_clientcd, td_scripcd ORDER BY td_dt DESC,  SerialNo DESC
+		) PrevRunning
+    FROM (
+	SELECT SerialNo, td_dt, td_clientcd, td_scripcd, Qty_ns Qty, td_marketrate = td_Rate,  abs(Buys - Sells) NetQty, Sum(Qty_ns) OVER (
+			PARTITION BY td_clientcd, td_scripcd ORDER BY td_dt DESC,  SerialNo DESC
+			) Running
+	FROM #tbl_DelvTrxn, Client_master, Securities, #TrxSummaryDLV1
+	WHERE cm_cd = td_clientcd AND td_scripcd = ss_cd
+		AND td_clientcd = clientcd AND td_scripcd = scripcd AND td_bsflag = CASE WHEN Buys > Sells THEN 'B' ELSE 'S' END) a
+    ) b
+    WHERE CASE WHEN NetQty >= Running THEN Qty ELSE NetQty - isNull(PrevRunning, 0) END > 0
+
+   ALTER TABLE #tbl_DelvTrxn ADD Tmp_112ARate MONEY, T112AFlag VARCHAR(1) NOT NULL DEFAULT 'N', ActualBuyRate MONEY NOT NULL DEFAULT 0
+   
+   INSERT INTO #tbl_DelvTrxn(td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, Qty_NS, VALUES_NS, td_Rate, td_stt)
+   SELECT td_SRNO, td_dt, td_Stlmnt, td_clientcd, td_scripcd, td_bsflag, 
+   Qty - FinalQty, VALUES_NS = (Qty - FinalQty)*td_Rate, td_Rate, td_stt
+   FROM #tbl_DelvTrxn , #TrxDLV1
+   WHERE SerialNo = srno AND (Qty - FinalQty) > 0
+
+
+   UPDATE #tbl_DelvTrxn
+   SET Qty_NS = FinalQty, VALUES_NS = FinalQty*td_Rate, SQR_TAG = 'Y' 
+   FROM #TrxDLV1
+   WHERE SerialNo = srno  AND td_bsflag = 'B'
+
+   UPDATE #tbl_DelvTrxn
+   SET Qty_NS = FinalQty, VALUES_NS = FinalQty*td_Rate, SQR_TAG = 'Y' 
+   FROM #TrxDLV1
+   WHERE SerialNo = srno and td_bsflag = 'S'
+
+   DELETE #tbl_DelvTrxn
+   WHERE Qty_NS = 0
+   
+   UPDATE #tbl_DelvTrxn SET ActualBuyRate = td_Rate
+   
+   SET DATEFORMAT DMY
+  
+   IF ISNULL(@strConsider112A,'N') = 'N'
+   BEGIN
+     UPDATE #tbl_DelvTrxn
+     SET td_Rate = Round(mk_Rate, 4)
+	  ,Tmp_112ARate = Round(mk_Rate, 4),
+	  T112AFlag = 'Y'
+     FROM Market_Rates20180131
+	 ,Securities
+     WHERE td_scripcd = ss_cd
+	 AND td_scripcd = mk_scripcd
+	 AND CAST(td_dt AS DATE) <= '20180131'
+	 AND CAST(@dtToDate AS DATE) > '20180331'
+	 AND DateDiff(d, CAST(td_dt AS DATE), CAST(@dtToDate AS DATE)) >= 365
+	 AND Round(mk_Rate, 4) > (td_Rate)
+	 AND ss_chargestt = 'Y'
+	 
+	 UPDATE #tbl_DelvTrxn
+     SET Tmp_112ARate = Round(mk_Rate , 4)
+     FROM Market_Rates20180131 ,Securities
+     WHERE td_scripcd = ss_cd
+	 AND td_scripcd = mk_scripcd	
+  END	  
+  ELSE
+  BEGIN
+    UPDATE A SET T112AFlag = 'N'
+	FROM #tbl_DelvTrxn A
+  END
+  
+  SET DATEFORMAT MDY
+
+
+   declare @tbl_HoldingRep TABLE(td_SRNO INT, ClientCode VARCHAR(50), TradeDate VARCHAR(8), td_Stlmnt VARCHAR(20),
+   ScripCode VARCHAR(10), BuyQty MONEY, BuyRate MONEY,
+   BuyValue MONEY, SaleQty MONEY, SaleRate MONEY,
+   SaleValue MONEY, CloseRate MONEY, CurrentValue MONEY, ShortTerm MONEY, LongTerm MONEY, PositionDays INT, Tmp_112ARate MONEY, 
+   T112AFlag VARCHAR(1), ActualBuyRate MONEY, SqrTag VARCHAR(1), td_stt MONEY)
+
+   INSERT INTO @tbl_HoldingRep(td_SRNO, ClientCode, TradeDate, td_Stlmnt, ScripCode, BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, 
+   SaleValue, Tmp_112ARate, T112AFlag, ActualBuyRate, SqrTag, td_stt)
+   
+   SELECT td_SRNO, td_clientcd, td_dt, td_Stlmnt, td_scripcd, BuyQty = CASE WHEN td_bsflag='B' THEN Qty_NS ELSE 0 END, 
+   Rate = td_rate,  Cost = (CASE WHEN td_bsflag='B' THEN td_rate*Qty_NS ELSE 0.00 END), 
+   SaleQty = CASE WHEN td_bsflag = 'S' THEN Qty_NS ELSE 0 END, 
+   Rate = td_rate,  Cost = (CASE WHEN td_bsflag='S' THEN td_rate*Qty_NS ELSE 0.00 END),
+   ISNULL(Tmp_112ARate,0), T112AFlag, ActualBuyRate, ISNULL(SQR_TAG,'N'), td_stt
+   FROM #tbl_DelvTrxn WHERE ISNULL(SQR_TAG,'N')='Y' and CASE WHEN td_bsflag='B' THEN Qty_NS ELSE 0 END > 0
+   order by td_scripcd
+   
+   
+   DECLARE @CH_ClgHs VARCHAR(1)=''
+
+   SELECT @CH_ClgHs = (CASE WHEN CH_ClgHs = 'I' THEN 'B' ELSE CH_ClgHs END) FROM ClearingHouse(NOLOCK)
+   WHERE CH_CompanyCode = 'A' AND CH_Segment = 'C' 
+   AND CH_EffDt = (SELECT Min(CH_EffDt) FROM ClearingHouse
+   WHERE CH_CompanyCode = 'A' AND CH_Segment = 'C' AND CH_EffDt <= @dtToDate) 
+
+   CREATE TABLE #tbl_CloseRate (Scrip VARCHAR(20), CloseRate MONEY)
+   
+   CREATE INDEX INDX_CloseRate ON #tbl_CloseRate (Scrip) 
+	
+   INSERT INTO #tbl_CloseRate(Scrip, CloseRate)
+   SELECT DISTINCT ScripCode, '' AS CloseRate FROM @tbl_HoldingRep
+
+   IF @CH_ClgHs = 'N'
+   BEGIN
+	 UPDATE A SET A.CloseRate = B.mk_closerate
+	 FROM #tbl_CloseRate A, Market_rates(NOLOCK) B 
+	 WHERE A.Scrip = B.mk_scripcd AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	 WHERE mk_scripcd = B.mk_scripcd and mk_dt<=@dtToDate) AND  mk_exchange = 'B'
+	  
+	 UPDATE A SET A.CloseRate = B.mk_closerate
+	 FROM #tbl_CloseRate A, Market_rates(NOLOCK) B 
+	 WHERE A.Scrip = B.mk_scripcd 
+	 AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	 WHERE mk_scripcd = B.mk_scripcd 
+	 and mk_dt<=@dtToDate) AND  mk_exchange = 'N'
+   END  
+   ELSE
+   IF @CH_ClgHs = 'B'
+   BEGIN
+	 UPDATE A SET A.CloseRate = B.mk_closerate
+	 FROM #tbl_CloseRate A, Market_rates(NOLOCK) B 
+	 WHERE A.Scrip = B.mk_scripcd AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	 WHERE mk_scripcd = B.mk_scripcd and mk_dt<=@dtToDate) AND  mk_exchange = 'N'
+	  
+	 UPDATE A SET A.CloseRate = B.mk_closerate
+	 FROM #tbl_CloseRate A, Market_rates(NOLOCK) B 
+	 WHERE A.Scrip = B.mk_scripcd 
+	 AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	 WHERE mk_scripcd = B.mk_scripcd 
+	 and mk_dt<=@dtToDate) AND  mk_exchange = 'B'
+   END  
+   
+   UPDATE A SET A.CloseRate = B.mk_closerate
+   FROM #tbl_CloseRate A, Market_rates B
+   WHERE mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+   WHERE mk_scripcd = B.mk_scripcd and mk_dt<=@dtToDate)
+   AND A.Scrip = B.mk_scripcd	
+   AND A.CloseRate = 0
+
+   UPDATE A SET A.CloseRate = B.CloseRate, CurrentValue = BuyQty*B.CloseRate
+   FROM @tbl_HoldingRep A, #tbl_CloseRate B
+   WHERE A.ScripCode = B.Scrip
+   DECLARE @XMLDATA1 XML
+   IF @strRepType = 'Notional_Summary'
+   BEGIN
+     IF @strOutputType = 'X'
+	 BEGIN
+       SET @XMLDATA1 = (SELECT ClientCode, CLientName = M.cm_name, ScripCode, ScripName = SC.SS_NAME, BuyQty = SUM(BuyQty), 
+	   BuyRate = ROUND((CASE WHEN SUM(BuyQty)<>0 THEN SUM(BuyValue)/SUM(BuyQty) ELSE 0 END),4), 
+	   BuyValue = SUM(BuyValue), 
+	   SaleQty = SUM(SaleQty), 
+	   SaleRate = ROUND((CASE WHEN SUM(SaleQty)<>0 THEN SUM(SaleValue)/SUM(SaleQty) ELSE 0 END),2), 
+	   SaleValue = SUM(SaleValue), 
+	   CloseRate = MAX(CloseRate), CurrentValue = SUM(CurrentValue),
+       ShortTerm = SUM(CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))) - 365) = 1 THEN '' ELSE CurrentValue - BuyValue
+       END), 
+	   LongTerm = SUM(CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))) - 365) = 1 THEN 
+       CASE WHEN ((T112AFlag = 'Y') AND CloseRate < BuyRate) THEN 0 
+       ELSE ((CloseRate - BuyRate) * BuyQty) END ELSE 0 END), T112AFlag, [A112A_Rate] = ISNULL(MAX(Tmp_112ARate),''),
+	   [STT] = SUM((SaleQty+BuyQty)*td_stt)
+       FROM @tbl_HoldingRep A, Client_master(NOLOCK) M, Securities(NOLOCK) SC  
+       WHERE A.ClientCode = M.CM_CD AND A.ScripCode = SC.ss_cd
+	   GROUP BY ClientCode, M.cm_name, ScripCode, SC.SS_NAME, T112AFlag
+       ORDER BY ClientCode, SC.SS_NAME FOR XML PATH('CapGain'))
+	   SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	 END
+     ELSE
+     BEGIN
+	   SELECT ClientCode, CLientName = M.cm_name, ScripCode, ScripName = SC.SS_NAME, BuyQty = SUM(BuyQty), 
+	   BuyRate = ROUND((CASE WHEN SUM(BuyQty)<>0 THEN SUM(BuyValue)/SUM(BuyQty) ELSE 0 END),4), 
+	   BuyValue = SUM(BuyValue), 
+	   SaleQty = SUM(SaleQty), 
+	   SaleRate = ROUND((CASE WHEN SUM(SaleQty)<>0 THEN SUM(SaleValue)/SUM(SaleQty) ELSE 0 END),2), 
+	   SaleValue = SUM(SaleValue), 
+	   CloseRate = MAX(CloseRate), CurrentValue = SUM(CurrentValue),
+       ShortTerm = SUM(CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))) - 365) = 1 THEN '' ELSE CurrentValue - BuyValue
+       END), 
+	   LongTerm = SUM(CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))) - 365) = 1 THEN 
+       CASE WHEN ((T112AFlag = 'Y') AND CloseRate < BuyRate) THEN 0 
+       ELSE ((CloseRate - BuyRate) * BuyQty) END ELSE 0 END), T112AFlag, [A112A_Rate] = ISNULL(MAX(Tmp_112ARate),''),
+	   [STT] = SUM((SaleQty+BuyQty)*td_stt)
+       FROM @tbl_HoldingRep A, Client_master(NOLOCK) M, Securities(NOLOCK) SC  
+       WHERE A.ClientCode = M.CM_CD AND A.ScripCode = SC.ss_cd
+	   GROUP BY ClientCode, M.cm_name, ScripCode,  SC.SS_NAME, T112AFlag 
+       ORDER BY ClientCode, ScripCode 
+     END  	 
+   END
+   ELSE
+   IF @strRepType = 'Notional_Detail'
+   BEGIN
+     IF @strOutputType = 'X'
+	 BEGIN
+       SET @XMLDATA1 = ( SELECT ClientCode, CLientName = M.cm_name, ScripCode, ScripName = SC.SS_NAME, TradeDate, td_SRNO, td_Stlmnt = isnull(td_Stlmnt,''), BuyQty, 
+	   ActualBuyRate AS BuyRate, BuyValue, CloseRate, CurrentValue,
+       ShortTerm = (CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))) - 365) = 1 
+	   THEN '' ELSE CurrentValue - BuyValue
+       END), 
+	 --LongTerm = (CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))) - 365) = 1 
+	 --THEN CurrentValue - BuyValue ELSE '' 
+     --END), 
+	   LongTerm = (CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))) - 365) = 1 THEN 
+       CASE WHEN ((T112AFlag = 'Y') AND CloseRate < BuyRate) THEN 0 
+       ELSE ((CloseRate - BuyRate) * BuyQty) END ELSE 0 END), 
+	   PositionDays = ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))),
+	   T112AFlag, [A112A_Rate] = ISNULL(Tmp_112ARate,''), [STT] = (SaleQty+BuyQty)*td_stt
+       FROM @tbl_HoldingRep A, Client_master(NOLOCK) M, Securities(NOLOCK) SC  
+       WHERE A.ClientCode = M.CM_CD AND A.ScripCode = SC.ss_cd AND ISNULL(BuyQty,0) <> 0
+       ORDER BY ClientCode, ScripCode, TradeDate FOR XML PATH('CapGain'))
+	   SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+     END  
+     ELSE
+	 Begin
+	  SELECT ClientCode, CLientName = M.cm_name, ScripCode, ScripName = SC.SS_NAME, TradeDate, BuyQty, 
+	   ActualBuyRate AS BuyRate, BuyValue, CloseRate, CurrentValue,
+       ShortTerm = (CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))) - 365) = 1 
+	   THEN '' ELSE CurrentValue - BuyValue
+       END), 
+	 --LongTerm = (CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))) - 365) = 1 
+	 --THEN CurrentValue - BuyValue ELSE '' 
+     --END), 
+	   LongTerm = (CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))) - 365) = 1 THEN 
+       CASE WHEN ((T112AFlag = 'Y') AND CloseRate < BuyRate) THEN 0 
+       ELSE ((CloseRate - BuyRate) * BuyQty) END ELSE 0 END), 
+	   PositionDays = ABS(DATEDIFF(DAY, CAST(TradeDate AS DATE), CAST(getdate() AS DATE))),
+	   T112AFlag, [A112A_Rate] = ISNULL(Tmp_112ARate,''), [STT] = (SaleQty+BuyQty)*td_stt
+       FROM @tbl_HoldingRep A, Client_master(NOLOCK) M, Securities(NOLOCK) SC  
+       WHERE A.ClientCode = M.CM_CD AND A.ScripCode = SC.ss_cd AND ISNULL(BuyQty,0) <> 0
+       ORDER BY ClientCode, ScripCode, TradeDate
+     END	 
+    
+	 --SET @o_vcErrorMessage = 'Process Completed'
+   END	
+   SET @o_vcErrorFlag  = 'S'
+   RETURN 1   
+END
+GO
+
+CREATE OR ALTER PROCEDURE stpr_Rpt_OtherReports @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, 
+@o_vcErrorMessage VARCHAR(MAX) OUTPUT 
+WITH ENCRYPTION
+AS
+BEGIN
+   /*
+   ///////////////////////////////////////////////////////////////////////////////////////////
+   // Create By     : VAIBHAV GARG
+   // Created Date  : 22-FEB-2024
+   // Description   : 
+   // Reviewed By   : 
+   // Review Date   : 
+   //////////////////////////////////////////////////////////////////////////////////////////
+   */
+  DECLARE @dtFromDate VARCHAR(8), @strUserId VARCHAR(50), @strReportName VARCHAR(50), 
+  @strOutputType VARCHAR(1)='', @XMLData XML,
+  @strSelectTag VARCHAR(1)='', @strSelectUsers VARCHAR(500)='', @StrString VARCHAR(MAX)='', @SQ1 INT = 0,
+  @strSplFilter VARCHAR(MAX)='', @strRepType VARCHAR(50)='', @dtToDate VARCHAR(8)='', 
+  @strRepSubType VARCHAR(50), @strConsider112A VARCHAR(1)='N', @strProduct VARCHAR(50)='', 
+  @strHeader VARCHAR(MAX)='', @strCommmexDB VARCHAR(MAX)='', @strDocType VARCHAR(100)='', @strDocNO INT= 0 ,
+  @XMLDATA1 NVARCHAR(MAX)='', @strScrip VARCHAR(20)=''
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+  
+  SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+  
+  SELECT @dtFromDate = ISNULL(x.value('(FromDt)[1]', 'VARCHAR(8)'),''),
+  @strProduct = ISNULL(x.value('(Product)[1]', 'VARCHAR(50)'),''),
+  @dtToDate = ISNULL(x.value('(ToDt)[1]', 'VARCHAR(8)'),''),
+  @strUserId = ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+  @strSelectTag = ISNULL(x.value('(SelectTag)[1]', 'VARCHAR(1)'),''),
+  @strSelectUsers = ISNULL(x.value('(SelectUsers)[1]', 'VARCHAR(500)'),''),
+  @strOutputType = ISNULL(x.value('(OutputType)[1]', 'VARCHAR(1)'),''),
+  @strSplFilter = ISNULL(x.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''),
+  @strReportName = ISNULL(x.value('(ReportName)[1]', 'VARCHAR(100)'),''),
+  @strRepType = ISNULL(x.value('(RepType)[1]', 'VARCHAR(100)'),''),
+  @strRepSubType = ISNULL(x.value('(RepSubType)[1]', 'VARCHAR(100)'),''),
+  @strDocType = ISNULL(x.value('(DocumentType)[1]', 'VARCHAR(100)'),''),
+  @strDocNO = ISNULL(x.value('(DocumentNo)[1]', 'INT'),''),
+  @strScrip = ISNULL(x.value('(ScripCode)[1]', 'VARCHAR(20)'),'')
+  FROM @XMLData.nodes('/root') AS XTbl(x) 
+  
+
+  DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) )
+  INSERT INTO @tbl_UserList(Client_Code) 
+  SELECT * FROM DBO.[fn_GetClients](@strUserId,@strSelectTag,@strSelectUsers)
+  
+  IF ISNULL(@strProduct,'') =''
+  BEGIN
+    SET @strProduct = ''
+  END
+    
+  SET @strHeader = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50), DPClientCode VARCHAR(50) ) '
+
+  
+  SELECT @strCommmexDB = LTRIM(RTRIM(OP_DataBase)) FROM Other_Products(NOLOCK) WHERE OP_Product = 'Commex'
+  and OP_Status = 'A'	
+	
+	
+  DECLARE @strCrossCon VARCHAR(50)='', @strEstroCon VARCHAR(50)='', @strDefaultConn VARCHAR(50)='', 
+  @strCrossServer VARCHAR(50), @strEstroServer VARCHAR(50),
+  @strDefaultServer VARCHAR(50)=''
+  SELECT @strCrossCon = RTRIM(LTRIM(OP_DataBase)), @strCrossServer = RTRIM(LTRIM(OP_Server))  
+  FROM Other_Products(NOLOCK) where OP_Product = 'Cross' and RTRIM(LTRIM(op_status)) = 'A'
+  
+  SELECT @strEstroCon = RTRIM(LTRIM(OP_DataBase)), @strEstroServer = RTRIM(LTRIM(OP_Server))  
+  FROM Other_Products(NOLOCK) where OP_Product = 'Estro' and RTRIM(LTRIM(op_status)) = 'A'
+  
+  IF @strCrossCon = ''
+  BEGIN
+    SET @strDefaultConn = @strEstroCon
+	SET @strDefaultServer = @strEstroServer
+  END
+  ELSE
+  BEGIN
+    SET @strDefaultConn = @strCrossCon
+	SET @strDefaultServer = @strCrossServer
+  END
+ 	
+  IF @strSplFilter = ''
+  BEGIN
+    SET @strHeader = @strHeader+' INSERT INTO @tbl_UserList(Client_Code) '
+    +' SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''')'
+  END 	 
+  ELSE
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @strHeader = @strHeader+' INSERT INTO @tbl_UserList(Client_Code)  SELECT distinct CM_CD FROM Client_master(NOLOCK) WHERE 1 = 1  AND '+@strSplFilter
+  END	
+  SET @strHeader = @strHeader +' UPDATE A SET A.DPClientCode = B.da_actno FROM @tbl_UserList A, Dematact B WHERE A.Client_Code = B.da_clientcd AND da_defaultyn=''Y'' '
+  SET @strHeader = @strHeader +' UPDATE A SET A.DPClientCode = A.Client_code FROM @tbl_UserList A WHERE  ISNULL(DPClientCode,'''') = '''''
+  
+  IF @strReportName = 'IPO_GETDATA'
+  BEGIN
+    SELECT IPO_Category, IPO_NSE_Symbol, IPO_Company_Name, convert(CHAR, convert(DATE, IPO_Start_Date), 103) AS start_date, convert(CHAR, convert
+    (DATE, IPO_end_date), 103) AS end_date, convert(VARCHAR, IPO_min_price) + ' - ' + convert(VARCHAR, IPO_max_price) AS price_range, 
+    IPO_min_order AS min_order, IPO_Size AS size, IPO_Tick_Size AS tick_size, IPO_RHP_Link AS rhp, IPO_Upi_Link AS upi, CASE WHEN convert(DATE, 
+    IPO_Start_Date, 103) > CONVERT(DATE, getdate()) THEN 'Upcoming' WHEN convert(DATE, IPO_Start_Date, 103) <= CONVERT(DATE, getdate()) AND 
+    convert(DATE, IPO_End_Date, 103) >= CONVERT(DATE, getdate()) THEN 'Apply' ELSE '' END AS 'status',
+	IPO_Category_Descp = CASE WHEN IPO_Category = 'IND' THEN 'Individual Investor'
+	                          WHEN IPO_Category = 'SHA' THEN 'Shareholder'
+							  WHEN IPO_Category = 'CO' THEN 'Bodies Corporate'
+							  WHEN IPO_Category = 'POL' THEN 'Policy Holder'
+							  ELSE 'Individual Investor' END, IPO_Discount,
+    [DPRemarks] = CASE WHEN ISNULL(AP.IPA_AppNo,'') <>'' THEN CASE ISNULL(IPA_DpStatus,'') WHEN 'P' THEN 'Pending' WHEN 'S' THEN 'Success' WHEN 'R' THEN 'Rejected </br> <b>Reason :</b> ' + ISNULL(IPA_DpRemark,'') ELSE '' END ELSE '' END,
+    [BankRemarks] = CASE WHEN ISNULL(AP.IPA_AppNo,'') <>'' THEN CASE ISNULL(IPA_BnkPayStatus,'') WHEN '10' THEN '10- Request sent to UPI for acceptance' ELSE ISNULL(IPA_BnkRejectReason,'') END ELSE '' END,
+	[ApplyFlag] = CASE WHEN ISNULL(AP.IPA_AppNo,'') <>'' THEN CASE WHEN (ISNULL(IPA_DpStatus,'') = 'R' OR 
+	ISNULL(IPA_BnkPayStatus,'') in ('11','12','21','22','31') OR (ISNULL(IPA_DpStatus,'') = 'S' 
+	AND ISNULL(IPA_BnkPayStatus,'') = '' AND ISNULL(IPA_BnkRejectReason,'') = 'PENDING SUBMISSION')) THEN 'Y' ELSE 'N' END ELSE 'Y' END,
+	[StatusFlag] = CASE WHEN ISNULL(AP.IPA_AppNo,'') <>'' THEN CASE WHEN (ISNULL(IPA_DpStatus,'') = 'R' 
+	OR ISNULL(IPA_BnkPayStatus,'') in ('11','12','21','22','31') OR (ISNULL(IPA_DpStatus,'') = 'S' AND ISNULL(IPA_BnkPayStatus,'') = '' 
+	AND ISNULL(IPA_BnkRejectReason,'') = 'PENDING SUBMISSION')) THEN 'N' ELSE 'Y' END ELSE 'N' END,
+	[DeleteFlag] = CASE WHEN ISNULL(AP.IPA_AppNo,'') <>'' THEN CASE WHEN ISNULL(IPA_BnkPayStatus,'') = '10' THEN 'Y' ELSE 'N' END ELSE 'N' END
+    FROM IPOS(NOLOCK) x LEFT OUTER JOIN IPO_Application(NOLOCK) AP ON(X.IPO_NSE_Symbol = AP.IPA_ScripID AND IPA_Filler1 = IPO_Category
+	AND IPA_AppNo <> '' AND IPA_ClientCd = @strUserId)
+    WHERE CONVERT(DATE, getdate()) <= IPO_End_Date
+    ORDER BY IPO_Start_Date ASC
+  END
+  ELSE
+  IF @strReportName = 'OPENPOS'
+  BEGIN
+     IF @strProduct <> 'CASH'
+	 BEGIN
+	   DECLARE @TBL_OPENPOS TABLE(sm_desc VARCHAR(100), po_posqty VARCHAR(100) ,  po_posValue VARCHAR(100), po_settleprice MONEY, po_futvalue MONEY, 
+	   po_posActualValue MONEY)
+       SET @StrString = @strHeader+' '+'SELECT SS.sm_desc, po_posqty = CAST(CAST(ISNULL(po_postlongqty,0)-ISNULL(po_postshortqty,0) AS INT) AS VARCHAR)+'' ''+'
+	   +' CASE WHEN ISNULL(po_postlongqty,0)-ISNULL(po_postshortqty,0) >0 THEN ''(Long Qty)'' else ''(Short Qty)'' end, '
+	   +' po_posValue = CAST(CAST(ISNULL(po_postlongqty,0)-ISNULL(po_postshortqty,0) AS INT)*po_settleprice AS VARCHAR)+'' ''+ '
+	   +' CASE WHEN ISNULL(po_postlongqty,0)-ISNULL(po_postshortqty,0) >0 THEN ''(Long Value)'' else ''(Short Value)'' end, '
+	   +' po_settleprice, po_futvalue = ISNULL(po_futvalue,0)+ISNULL(po_Diffvalue,0)+ISNULL(po_netpremium,0), CAST(CAST(ISNULL(po_postlongqty,0)-ISNULL(po_postshortqty,0) AS INT)*po_settleprice AS MONEY)'
+       +' FROM Fpositions(NOLOCK) X, Series_master SS , @tbl_UserList X1 '
+       +' WHERE po_clientcd = X1.Client_Code '
+       +' AND po_dt IN(SELECT MAX(po_dt) FROM Fpositions(NOLOCK) WHERE po_companycode = X.po_companycode '
+       +' AND po_exchange = X.po_exchange AND po_Segment = X.po_Segment) '
+       +' AND X.po_seriesid = SS.sm_seriesid AND X.po_exchange = SS.sm_exchange AND X.po_Segment = SS.sm_Segment '
+       --+' AND po_postlongqty+po_postshortqty <> 0 '
+	   BEGIN TRY
+	     INSERT INTO @TBL_OPENPOS
+	     EXEC(@StrString)
+		 
+		 IF @strOutputType = 'X'
+		  BEGIN
+		    SET @XMLDATA1 = 
+		   (SELECT * FROM @TBL_OPENPOS  
+		    order by sm_desc  
+		    FOR XML PATH('OSPosition'))
+	        SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+			RETURN 1
+		  END
+		  ELSE
+		  BEGIN
+		    SELECT * FROM @TBL_OPENPOS  
+		    ORDER BY sm_desc  
+		  END 
+	     SET @o_vcErrorFlag  = 'S'
+         SET @o_vcErrorMessage = 'Process Executed'
+	     RETURN 1
+	   END TRY
+	   BEGIN CATCH
+	     SET @o_vcErrorFlag  = 'E'
+         SET @o_vcErrorMessage = ERROR_MESSAGE()
+         RETURN 1
+	   END CATCH
+    END
+  END	
+  ELSE
+  IF @strReportName = 'MARGIN_NEW'
+  BEGIN
+	 DECLARE @TBL_COLLPOSMARGIN TABLE(ClientCode VARCHAR(50),
+	 CashMargin MONEY NOT NULL DEFAULT 0, FnoMarin MONEY NOT NULL DEFAULT 0, CurrencyMargin MONEY NOT NULL DEFAULT 0, 
+	 TotalMargin MONEY NOT NULL DEFAULT 0, CashColl MONEY NOT NULL DEFAULT 0, Pledge MONEY NOT NULL DEFAULT 0, 
+	 TotalColl MONEY NOT NULL DEFAULT 0, ExcessShortage MONEY NOT NULL DEFAULT 0)
+	 
+	 INSERT INTO @TBL_COLLPOSMARGIN(ClientCode)
+	 SELECT Client_Code FROM @tbl_UserList
+	 
+	 UPDATE A SET A.Pledge = B.Pledge
+	 FROM @TBL_COLLPOSMARGIN A, (SELECT Client_Code, Pledge = SUM(ROUND(((FOCOLL*ClosingPrice) * (100-Haircut))/100,2))
+	 FROM tbl_DBHoldingDtl(NOLOCK) x, Securities S, @tbl_UserList X1  WHERE  FOCOLL <> 0 
+	 AND X.ScripCode = S.ss_cd AND ClientCode  = X1.Client_Code 
+	 GROUP BY Client_Code) B
+	 WHERE A.ClientCode = B.Client_Code
+	 
+	 UPDATE A SET A.CashColl = B.Amount
+	 FROM @TBL_COLLPOSMARGIN A,(
+     SELECT ld_clientcd, Amount = SUM(LD_AMOUNT)*-1 FROM ledger(NOLOCK)
+     WHERE ld_clientcd = @strUserId
+     Group By ld_clientcd
+     --HAVING SUM(LD_AMOUNT) <= 0
+	 ) B
+     WHERE A.ClientCode = B.ld_clientcd
+	 
+	 
+	 UPDATE A SET A.CashMargin = B.fm_TotalMrgn
+	 FROM @TBL_COLLPOSMARGIN A, (Select * from Fmargins(NOLOCK)
+     WHERE fm_dt IN(SELECT MAX(fm_dt) FROM Fmargins)
+     and fm_Segment = 'C') B
+	 WHERE A.ClientCode = B.fm_clientcd
+	 
+	 UPDATE A SET A.FnoMarin = B.fm_TotalMrgn
+	 FROM @TBL_COLLPOSMARGIN A, (Select * from Fmargins(NOLOCK)
+     WHERE fm_dt IN(SELECT MAX(fm_dt) FROM Fmargins)
+     and fm_Segment = 'F') B
+	 WHERE A.ClientCode = B.fm_clientcd
+	 
+	 UPDATE A SET A.CurrencyMargin = B.fm_TotalMrgn
+	 FROM @TBL_COLLPOSMARGIN A, (Select * from Fmargins(NOLOCK)
+     WHERE fm_dt IN(SELECT MAX(fm_dt) FROM Fmargins)
+     and fm_Segment = 'K') B
+	 WHERE A.ClientCode = B.fm_clientcd
+	 
+	 UPDATE A SET A.TotalMargin = ISNULL(A.CashMargin,0)+ISNULL(A.FnoMarin,0)+ISNULL(A.CurrencyMargin,0),
+	 ExcessShortage = (ISNULL(CashColl,0)+ISNULL(Pledge,0)) - (ISNULL(A.CashMargin,0)+ISNULL(A.FnoMarin,0)+ISNULL(A.CurrencyMargin,0)),
+	 A.TotalColl = ISNULL(CashColl,0)+ISNULL(Pledge,0)
+	 FROM @TBL_COLLPOSMARGIN A
+	 
+	 IF @strOutputType = 'X'
+	 BEGIN
+	   SET @XMLDATA1 = (SELECT * FROM @TBL_COLLPOSMARGIN 
+		                FOR XML PATH('MARGIN'))
+	    SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		RETURN 1
+	  END
+	  ELSE
+	  BEGIN
+		SELECT * FROM @TBL_COLLPOSMARGIN  
+	  END 
+	  SET @o_vcErrorFlag  = 'S'
+      SET @o_vcErrorMessage = 'Process Executed'
+	  RETURN 1
+  END	
+  ELSE
+  IF @strReportName = 'MARGIN2'
+  BEGIN
+     DECLARE @TBL_COLLPOSMARGIN2 TABLE(ClientCode VARCHAR(50),
+	 CashColl MONEY NOT NULL DEFAULT 0, Pledge MONEY NOT NULL DEFAULT 0,
+	 TotalColl MONEY NOT NULL DEFAULT 0)
+	 
+	 INSERT INTO @TBL_COLLPOSMARGIN2(ClientCode)
+	 SELECT Client_Code FROM @tbl_UserList
+	 
+	 
+	 UPDATE A SET A.Pledge = B.Pledge
+	 FROM @TBL_COLLPOSMARGIN2 A, (SELECT Client_Code, Pledge = SUM(ROUND(((FOCOLL*ClosingPrice) * (100-Haircut))/100,2))
+	 FROM tbl_DBHoldingDtl(NOLOCK) x, Securities S, @tbl_UserList X1  WHERE  FOCOLL <> 0 
+	 AND X.ScripCode = S.ss_cd AND ClientCode  = X1.Client_Code 
+	 GROUP BY Client_Code) B
+	 WHERE A.ClientCode = B.Client_Code
+	 
+	 UPDATE A SET A.CashColl = B.Amount
+	 FROM @TBL_COLLPOSMARGIN2 A,(
+     SELECT ld_clientcd, Amount = SUM(LD_AMOUNT)*-1 FROM ledger(NOLOCK)
+     WHERE ld_clientcd = @strUserId
+     Group By ld_clientcd
+     --HAVING SUM(LD_AMOUNT) <= 0
+	 ) B
+     WHERE A.ClientCode = B.ld_clientcd
+ 	 
+	 UPDATE A SET A.TotalColl = ISNULL(A.Pledge,0)+ISNULL(A.CashColl,0)
+	 FROM @TBL_COLLPOSMARGIN2 A
+	 
+	 IF @strOutputType = 'X'
+	 BEGIN
+	   SET @XMLDATA1 = (SELECT * FROM @TBL_COLLPOSMARGIN2 
+		                FOR XML PATH('MARGIN'))
+	    SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		RETURN 1
+	  END
+	  ELSE
+	  BEGIN
+		SELECT * FROM @TBL_COLLPOSMARGIN2  
+	  END 
+	  SET @o_vcErrorFlag  = 'S'
+      SET @o_vcErrorMessage = 'Process Executed'
+	  RETURN 1
+  END	
+  ELSE
+  IF @strReportName = 'MARGIN1'
+  BEGIN
+	 DECLARE @TBL_COLLPOSMARGIN1 TABLE(ClientCode VARCHAR(50),
+	 CashMargin MONEY NOT NULL DEFAULT 0, FnoMarin MONEY NOT NULL DEFAULT 0, CurrencyMargin MONEY NOT NULL DEFAULT 0, 
+	 TotalMargin MONEY NOT NULL DEFAULT 0)
+	 
+	 INSERT INTO @TBL_COLLPOSMARGIN1(ClientCode)
+	 SELECT Client_Code FROM @tbl_UserList
+	 
+	 /*
+	 UPDATE A SET A.Pledge = B.Pledge
+	 FROM @TBL_COLLPOSMARGIN A, (SELECT Client_Code, Pledge = SUM(ROUND(((FOCOLL*ClosingPrice) * (100-Haircut))/100,2))
+	 FROM tbl_DBHoldingDtl(NOLOCK) x, Securities S, @tbl_UserList X1  WHERE  FOCOLL <> 0 
+	 AND X.ScripCode = S.ss_cd AND ClientCode  = X1.Client_Code 
+	 GROUP BY Client_Code) B
+	 WHERE A.ClientCode = B.Client_Code
+	 
+	 UPDATE A SET A.CashColl = B.Amount
+	 FROM @TBL_COLLPOSMARGIN A,(
+     SELECT ld_clientcd, Amount = SUM(LD_AMOUNT)*-1 FROM ledger(NOLOCK)
+     WHERE ld_clientcd = @strUserId
+     Group By ld_clientcd
+     --HAVING SUM(LD_AMOUNT) <= 0
+	 ) B
+     WHERE A.ClientCode = B.ld_clientcd
+	 */
+	 
+	 UPDATE A SET A.CashMargin = B.fm_TotalMrgn
+	 FROM @TBL_COLLPOSMARGIN1 A, (Select * from Fmargins(NOLOCK)
+     WHERE fm_dt IN(SELECT MAX(fm_dt) FROM Fmargins)
+     and fm_Segment = 'C') B
+	 WHERE A.ClientCode = B.fm_clientcd
+	 
+	 UPDATE A SET A.FnoMarin = B.fm_TotalMrgn
+	 FROM @TBL_COLLPOSMARGIN1 A, (Select * from Fmargins(NOLOCK)
+     WHERE fm_dt IN(SELECT MAX(fm_dt) FROM Fmargins)
+     and fm_Segment = 'F') B
+	 WHERE A.ClientCode = B.fm_clientcd
+	 
+	 UPDATE A SET A.CurrencyMargin = B.fm_TotalMrgn
+	 FROM @TBL_COLLPOSMARGIN1 A, (Select * from Fmargins(NOLOCK)
+     WHERE fm_dt IN(SELECT MAX(fm_dt) FROM Fmargins)
+     and fm_Segment = 'K') B
+	 WHERE A.ClientCode = B.fm_clientcd
+	 
+	 UPDATE A SET A.TotalMargin = ISNULL(A.CashMargin,0)+ISNULL(A.FnoMarin,0)+ISNULL(A.CurrencyMargin,0)
+	 FROM @TBL_COLLPOSMARGIN1 A
+	 
+	 
+	 IF @strOutputType = 'X'
+	 BEGIN
+	   SET @XMLDATA1 = (SELECT * FROM @TBL_COLLPOSMARGIN1 
+		                FOR XML PATH('MARGIN'))
+	    SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		RETURN 1
+	  END
+	  ELSE
+	  BEGIN
+		SELECT * FROM @TBL_COLLPOSMARGIN1  
+	  END 
+	  SET @o_vcErrorFlag  = 'S'
+      SET @o_vcErrorMessage = 'Process Executed'
+	  RETURN 1
+  END	
+  ELSE
+  IF @strReportName = 'COLLPOS'
+  BEGIN
+     DECLARE @TBL_COLLPOS TABLE(ClientCode VARCHAR(50),
+	 ScripCode VARCHAR(20), ScripName VARCHAR(100), ISIN VARCHAR(20),
+	 PledgeQty MONEY, ClosingPrice MONEY, MarketValue MONEY, Haircut MONEY, HaricutValue MONEY)
+     
+	 SET @StrString = @strHeader+' '+'SELECT ClientCode, ScripCode, ss_name AS ScripName, ISIN, FOCOLL As PledgeQty, ClosingPrice = ROUND(ClosingPrice,2) ,'
+	 +' ROUND(FOCOLL*ClosingPrice,2) As MarketValue, Haircut, '
+	 +' ROUND(((FOCOLL*ClosingPrice) * (100-Haircut))/100,2) as HaricutValue '
+	 +' FROM tbl_DBHoldingDtl(NOLOCK) x, Securities S, @tbl_UserList X1  WHERE  FOCOLL <> 0 '
+	 +' AND X.ScripCode = S.ss_cd AND ClientCode  = X1.Client_Code '
+	 +' Order By ScripName '
+	 BEGIN TRY
+	   --SELECT @StrString
+	   INSERT INTO @TBL_COLLPOS
+	   EXEC(@StrString)
+		 
+	  IF @strOutputType = 'X'
+	  BEGIN
+		SET @XMLDATA1 = (SELECT * FROM @TBL_COLLPOS 
+		                 ORDER BY ScripName FOR XML PATH('COLLPOS'))
+	    SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		RETURN 1
+	  END
+	  ELSE
+	  BEGIN
+		SELECT * FROM @TBL_COLLPOS  
+		ORDER BY ScripName  
+	  END 
+	  SET @o_vcErrorFlag  = 'S'
+      SET @o_vcErrorMessage = 'Process Executed'
+	  RETURN 1
+	END TRY
+	BEGIN CATCH
+	  SET @o_vcErrorFlag  = 'E'
+      SET @o_vcErrorMessage = ERROR_MESSAGE()
+      RETURN 1
+	END CATCH
+  END	
+  ELSE
+  IF @strReportName = 'TradeListing'
+  BEGIN
+    IF @strRepType = 'SUMMARY'
+	BEGIN
+      SET @StrString = @strHeader+' '+'SELECT td_scripcd ,Rtrim(ss_lname) AS ScripName ,convert(DECIMAL(15, 0), sum(td_bqty)) Bqty, '
+	  +' convert(DECIMAL(15, 2), '
+	  +' CASE WHEN sum(td_rate * td_bqty) > 0 THEN sum(td_rate * td_bqty) / sum(td_bqty) ELSE 0 END) BRate '
+	  +' ,convert(DECIMAL(15, 2), sum(td_bqty * td_rate)) BAmt ,convert(DECIMAL(15, 0), sum(td_sqty)) sqty '
+	  +' ,convert(DECIMAL(15, 2), '
+	  +' CASE WHEN sum(td_rate * td_sqty) > 0 THEN sum(td_rate * td_sqty) / sum(td_sqty) ELSE 0 END) SRate '
+	  +' ,convert(DECIMAL(15, 2), sum(td_sqty * td_rate)) SAmt ' 
+	  +' ,convert(DECIMAL(15, 0), sum(td_bqty - td_sqty)) NetQty '
+	  +' ,convert(DECIMAL(15, 2), sum((td_bqty - td_sqty) * td_rate)) NAmt '
+      +' FROM TRX_INVPL(NOLOCK) ,Securities(NOLOCK), @tbl_UserList X '
+      +' WHERE td_clientcd = X.Client_Code '
+	  +' AND td_scripcd = ss_cd '
+	  +' AND td_dt BETWEEN '''+@dtFromDate+''''
+	  +' AND '''+@dtToDate+''' GROUP BY td_scripcd ,Rtrim(ss_lname) ORDER BY Rtrim(ss_lname) '
+	  BEGIN TRY
+	    EXEC(@StrString)
+		SET @o_vcErrorFlag  = 'S'
+        SET @o_vcErrorMessage = 'Process Executed'
+		RETURN 1
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+    END
+	ELSE IF @strRepType = 'DETAIL'
+	BEGIN
+	  SET @StrString = @strHeader+' '+'select td_srno, td_TRXFlag, case td_TRDType when '
+	  +' ''DL'' then ''Delivery'' When ''SQ'' then ''Jobbing'' else '''' end  td_TRDType , '
+      +' ltrim(rtrim(convert(char,convert(datetime,td_dt),103))) as td_dt,td_scripcd, Rtrim(ss_lname) AS ScripName, td_stlmnt , '
+      +' case td_bsflag when ''B'' then ''Buy'' when ''S'' then ''Sell'' else '''' end td_bsflag , '
+      +' convert(decimal(15,0) , td_bqty+td_sqty) as Qty,  '
+      +' convert(decimal(15,2) ,td_Rate) td_Rate,convert(decimal(15,2) ,td_Rate*(td_bqty+td_sqty)) Value , '
+	  +' convert(decimal(15,2) ,td_ServiceTax*(td_bqty+td_sqty)) td_ServiceTax, '
+      +' convert(decimal(15,2) ,td_STT *(td_bqty+td_sqty)) td_STT,convert(decimal(15,2) ,td_OtherChrgs1*(td_bqty+td_sqty)) td_OtherChrgs1,'
+	  +' convert(decimal(15,2) ,td_OtherChrgs2*(td_bqty+td_sqty)) td_OtherChrgs2  '
+      +' FROM TRX_INVPL(NOLOCK),Securities(NOLOCK), @tbl_UserList X '
+      +' WHERE td_clientcd = X.Client_Code '
+	  +' and td_scripcd = ss_cd '
+      +' and ((td_scripcd = '''+@strScrip+''' AND ISNULL('''+@strScrip+''','''') <> '''') OR ISNULL('''+@strScrip+''','''') = '''')' 
+	  +' AND td_dt BETWEEN '''+@dtFromDate+''''
+	  +' AND '''+@dtToDate+''' order by  CONVERT (char,convert(datetime,td_dt),112) '
+	  BEGIN TRY
+	    --SELECT @StrString
+	    EXEC(@StrString)
+		SET @o_vcErrorFlag  = 'S'
+        SET @o_vcErrorMessage = 'Process Executed'
+		RETURN 1
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+	END
+  END	
+  ELSE
+  IF @strReportName = 'Confirmation'
+  BEGIN
+    IF @strRepType = 'Cumulative'
+	BEGIN
+	  SET @StrString = @strHeader+' '+'SELECT * FROM (
+	  SELECT 1 AS SortOrder, ''Equity : '' + td_stlmnt AS type, td_stlmnt stlmnt, td_scripcd scripcode, replace(rtrim
+				(ss_Name) + '' ('' + td_scripcd + '')'', ''&'', '''') scripname, sum(td_bqty) ''Buy'', sum(convert(DECIMAL(15, 2), 
+				convert(MONEY, td_bqty * td_rate))) ''BuyAmount'', sum(td_sqty) ''Sell'', 
+				sum(convert(DECIMAL(15, 4), convert(MONEY, td_sqty * td_rate))) ''SellAmount'', sum(td_bqty - td_sqty) ''Net''
+			, sum(convert(DECIMAL(15, 4), convert(MONEY, (td_sqty - td_bqty) * td_rate))
+			) ''NetAmount'', cast(convert(MONEY, CASE WHEN sum(td_bqty - td_sqty) = 0 THEN 0 ELSE sum((td_bqty - td_sqty) 
+			* td_rate) / sum(td_bqty - td_sqty) END) AS DECIMAL(15, 2)) ''AvgRate'', cast(
+				sum(td_brokerage * (td_bqty + td_sqty)) AS DECIMAL(15, 4)) Brokerage, left(
+				td_stlmnt, 1) + ''/C/'' + td_scripcd ''Lookup''
+	  FROM trx(NOLOCK), securities(NOLOCK), Settlements(NOLOCK), @tbl_UserList X
+	  WHERE td_clientcd = X.Client_Code AND td_stlmnt = se_stlmnt AND td_scripcd = ss_cd AND td_dt >= '''+@dtFromDate+'''
+	  AND td_dt <= '''+@dtToDate+'''
+	  GROUP BY ''Equity : '' + td_stlmnt, td_stlmnt, td_scripcd, ss_Name, td_dt
+	  UNION ALL
+	  SELECT CASE right(sm_prodtype, 1) WHEN ''F'' THEN 2 ELSE 3 END, ''Equity '' + CASE right(sm_prodtype, 1) WHEN ''F'' THEN 
+						''Future'' ELSE ''Option'' END td_type, ''Exp: '' + convert(CHAR(10), convert(DATETIME, 
+					sm_expirydt), 105), td_seriesid scripcode, replace(rtrim(sm_symbol) + CASE right(
+						sm_prodtype, 1) WHEN ''F'' THEN '''' ELSE '' ('' + ltrim(convert(CHAR(8), sm_strikeprice)) + 
+						sm_callput + sm_optionstyle + '')'' END, ''&'', ''''), sum(td_bqty) ''bqty'', sum(convert(DECIMAL(
+						15, 2), convert(MONEY, td_bqty * td_rate))) ''bvalue'', sum(td_sqty) ''sqty'', sum(convert(
+					DECIMAL(15, 4), convert(MONEY, td_sqty * td_rate))) ''svalue'', sum(td_bqty - td_sqty) ''netqty'', 
+			sum(convert(DECIMAL(15, 4), convert(MONEY, (td_sqty - td_bqty) * td_rate))) 
+			''netvalue'', cast(convert(MONEY, CASE WHEN sum(td_bqty - td_sqty) = 0 THEN 0 ELSE sum((td_bqty - td_sqty
+									) * td_rate) / sum(td_bqty - td_sqty) END) AS DECIMAL(15, 2)) ''average'', cast(
+				sum(td_brokerage * (td_bqty + td_sqty)) AS DECIMAL(15, 4)) td_brokerage, 
+			td_Exchange + ''/'' + td_Segment + ''/'' + Ltrim(convert(CHAR, td_seriesid))
+	  FROM trades(NOLOCK), series_master WITH (NOLOCK), @tbl_UserList X
+	  WHERE td_clientcd = X.Client_Code AND td_seriesid = sm_seriesid AND td_Exchange = sm_exchange AND td_Segment = 
+			sm_Segment AND td_dt >= '''+@dtFromDate+''' AND td_dt <= '''+@dtToDate+''' AND td_segment IN (''F'') 
+	  GROUP BY sm_prodtype, sm_symbol, sm_desc, sm_expirydt, sm_strikeprice, sm_callput, sm_optionstyle, td_dt, 
+			td_Exchange, td_Segment, td_seriesid
+	  UNION ALL
+	  SELECT CASE ex_eaflag WHEN ''E'' THEN 4 ELSE 5 END, CASE ex_eaflag WHEN ''E'' THEN ''Exercise'' ELSE ''Assignment'' END 
+			Td_Type, ''Exp: '' + convert(CHAR(10), convert(DATETIME, sm_expirydt), 105), ltrim(convert(CHAR(8), 
+					sm_strikeprice)) + sm_callput, replace(rtrim(sm_symbol) + '' ('' + ltrim(convert(CHAR(8), 
+						sm_strikeprice)) + sm_callput + sm_optionstyle + '')'', ''&'', ''''), sum(ex_aqty) Bqty, sum(
+				ex_aqty * ex_diffrate) BAmt, sum(ex_eqty) Sqty, sum(ex_eqty * ex_diffrate) SAmt, sum(ex_aqty - 
+				ex_eqty) NQty, sum((ex_aqty - ex_eqty) * ex_diffrate) NAmt, cast(convert(MONEY, 
+					CASE WHEN sum(ex_aqty - ex_eqty) = 0 THEN 0 ELSE sum((ex_aqty - ex_eqty
+									) * ex_diffrate) / sum(ex_aqty - ex_eqty) END) AS DECIMAL(15, 2)) ''average'', 
+			cast(sum(ex_brokerage * (ex_eqty + ex_aqty)) AS DECIMAL(15, 4)) td_Brokerage, 
+			ex_exchange + ''/'' + ex_Segment + ''/'' + Ltrim(convert(CHAR, ex_seriesid))
+	  FROM exercise (NOLOCK), series_master (NOLOCK), @tbl_UserList X
+	  WHERE ex_clientcd = X.Client_Code AND ex_exchange = sm_exchange AND ex_Segment = sm_Segment AND ex_seriesid = 
+			sm_seriesid AND ex_dt >= '''+@dtFromDate+''' 
+	  GROUP BY ex_eaflag, sm_symbol, sm_desc, sm_expirydt, sm_strikeprice, sm_callput, sm_optionstyle, 
+			ex_exchange, ex_Segment, ex_dt, sm_prodtype, ex_seriesid
+	  UNION ALL
+	  SELECT CASE right(sm_prodtype, 1) WHEN ''F'' THEN 6 ELSE 7 END, CASE right(sm_prodtype, 1) WHEN ''F'' THEN 
+						''Currency Future'' ELSE ''Currency Option'' END td_type, ''Exp: '' + convert(CHAR(10), 
+				convert(DATETIME, sm_expirydt), 105), td_seriesid scripcode, replace(sm_symbol, ''&'', ''''), sum(
+				td_bqty), sum(round(convert(MONEY, td_bqty * td_rate * sm_multiplier), 2)), sum(td_sqty), sum(
+				round(convert(MONEY, td_sqty * td_rate * sm_multiplier), 2)), sum(td_bqty - td_sqty), sum(round(
+					convert(MONEY, (td_sqty - td_bqty) * td_rate * sm_multiplier), 4)), 
+			cast(convert(MONEY, CASE WHEN sum(td_bqty - td_sqty) = 0 THEN 0 ELSE sum((td_sqty - td_bqty
+									) * td_rate * sm_multiplier) / sum(td_bqty - td_sqty) END) AS DECIMAL(15, 2)), 
+			cast(sum(td_brokerage * (td_bqty + td_sqty)) AS DECIMAL(15, 4)) td_brokerage, 
+			td_Exchange + ''/'' + td_Segment + ''/'' + Ltrim(convert(CHAR, td_seriesid))
+	  FROM trades (NOLOCK), series_master(NOLOCK),  @tbl_UserList X
+	  WHERE td_clientcd = X.Client_Code AND td_seriesid = sm_seriesid AND td_Exchange = sm_exchange AND td_Segment = 
+			sm_Segment AND td_dt >= '''+@dtFromDate+''' AND td_dt <= '''+@dtToDate+''' AND td_Segment IN (''K'')
+	  GROUP BY sm_prodtype, sm_symbol, sm_desc, sm_expirydt, sm_callput, sm_strikeprice, td_exchange, 
+			td_Segment, td_dt, td_seriesid'
+	  
+	  IF @strCommmexDB <> ''
+	  BEGIN
+	    SET @StrString = @StrString +' UNION ALL SELECT CASE right(sm_prodtype, 1) WHEN ''F'' THEN 8 ELSE 9 END, CASE right(sm_prodtype, 1) WHEN ''F'' THEN 
+						''Commodity Future'' ELSE ''Commodity Option'' END td_type, ''Exp: '' + convert(CHAR(10), 
+				convert(DATETIME, sm_expirydt), 105), CASE right(sm_prodtype, 1) WHEN ''F'' THEN '''' ELSE convert(CHAR
+						(8), sm_strikeprice) + sm_callput END, replace(sm_symbol, ''&'', ''''), sum(td_bqty), sum(
+				round(convert(MONEY, td_bqty * td_rate), 4)), sum(td_sqty), sum(round(convert(MONEY, td_sqty * 
+						td_rate), 4)), sum(td_bqty - td_sqty), sum(round(convert(MONEY, (td_sqty - td_bqty
+							) * td_rate), 4)), cast(convert(MONEY, CASE WHEN sum(td_bqty - td_sqty) = 0 THEN 0 ELSE sum
+							((td_sqty - td_bqty) * td_rate) / sum(td_bqty - 
+								td_sqty) END) AS DECIMAL(15, 4)), cast(sum(td_brokerage * (td_bqty + td_sqty
+						) * sm_multiplier) AS DECIMAL(15, 4)), td_Exchange + ''/'' + ''X'' + ''/'' + Ltrim(convert(CHAR, 
+					td_seriesid))
+	    FROM '+@strCommmexDB+'.DBO.Trades, '+@strCommmexDB+'.DBO.Series_master,  @tbl_UserList X
+	    WHERE td_clientcd = X.Client_Code AND td_seriesid = sm_seriesid AND td_Exchange = sm_exchange AND td_dt =  '''+@dtFromDate+'''
+	    GROUP BY sm_prodtype, sm_symbol, sm_desc, sm_expirydt, sm_callput, sm_strikeprice, td_exchange, td_dt, 
+	    td_seriesid '
+	  END	 
+	  SET @StrString = @StrString +' ) a ORDER BY SortORder, stlmnt, scripname '
+	  BEGIN TRY
+	    
+	    EXEC(@StrString)
+		SET @o_vcErrorFlag  = 'S'
+        SET @o_vcErrorMessage = 'Process Executed'
+		RETURN 1
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+	END
+	ELSE IF @strRepType = 'Confirmation'
+	BEGIN
+	  SET @StrString = @strHeader+' '+'SELECT * FROM ( SELECT 1 AS orderid, 1 AS SortOrder, 
+	  ''Equity : '' + td_stlmnt AS type, td_stlmnt stlmnt, td_scripcd scripcode, 
+	  replace(ss_name, ''&'', '''') AS scripname, td_bqty AS buy, td_sqty AS sell, 
+	  cast((td_marketrate) AS DECIMAL(15, 4)) AS marketrate, cast((td_rate) AS DECIMAL(15, 4)) AS 
+		netrate, cast((((td_bqty + td_sqty) * td_rate)
+				) * (CASE td_bsflag WHEN ''S'' THEN ''1'' ELSE ''-1'' END) AS DECIMAL(15, 2)) netamount, 
+		cast((td_brokerage) AS DECIMAL(15, 4)) brokerage, left(td_stlmnt, 1) + ''/C/'' + 
+		td_scripcd AS lookup
+	  FROM trx WITH (INDEX (idx_trx_clientcd), NOLOCK), Settlements WITH (NOLOCK
+			), securities WITH (NOLOCK),  @tbl_UserList X
+	  WHERE td_clientcd = X.Client_Code AND td_stlmnt = se_stlmnt AND td_dt >= '''+@dtFromDate+''' AND td_dt <= '''+@dtToDate+''' AND td_scripcd = ss_cd 
+	  UNION ALL
+	  SELECT 3, 2 AS td_order, CASE td_segment WHEN ''F'' THEN CASE TD_EXCHANGE WHEN ''N'' THEN ''NSE F&O'' WHEN ''B'' THEN 
+								''BSE F&O'' END WHEN ''K'' THEN CASE TD_EXCHANGE WHEN ''M'' THEN ''MCX FX'' WHEN ''N'' THEN 
+								''NSE FX'' END END td_type, '''', sm_symbol, replace(sm_desc, ''&'', ''''), td_bqty AS 
+		bqty, td_sqty AS sqty, cast((td_marketrate) AS DECIMAL(15, 4)) AS diffrate, cast((td_rate
+				) AS DECIMAL(15, 4)) AS netrate, convert(DECIMAL(15, 2), (td_sqty-td_bqty) * 
+			td_rate * sm_multiplier) AS amount, cast((td_brokerage) AS DECIMAL(15, 4)), 
+		td_exchange + ''/'' + td_Segment + ''/'' + convert(CHAR, td_seriesid) AS td_lookup
+	  FROM trades WITH (INDEX (idx_trades_clientcd), NOLOCK), series_master WITH (NOLOCK
+			),  @tbl_UserList X
+	  WHERE td_seriesid = sm_seriesid AND td_Exchange = sm_exchange AND td_Segment = sm_Segment AND td_clientcd = X.Client_Code 
+	  AND td_dt >= '''+@dtFromDate+''' AND td_dt <= '''+@dtToDate+''' AND td_trxflag = ''N''  AND 
+      td_trxflag = ''N'') a
+      ORDER BY type, orderid, SortOrder, stlmnt, scripname '
+      BEGIN TRY
+	    EXEC(@StrString)
+		SET @o_vcErrorFlag  = 'S'
+        SET @o_vcErrorMessage = 'Process Executed'
+		RETURN 1
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+	END  
+  END
+  ELSE IF @strReportName = 'LedgerSummary'
+  BEGIN
+   SET @StrString = @strHeader+' '+'SELECT * FROM ( 
+   SELECT 1 AS Ord, ''Trading'' AS [Type], ld_clientcd AS [ClientCode], sum(CASE sign(datediff(d, '''+@dtFromDate+''', 
+						ld_dt)) WHEN - 1 THEN ld_amount ELSE 0 END) OpeningBalance, sum(CASE sign(datediff(d, 
+						'''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE ld_debitflag WHEN ''D'' THEN ld_amount ELSE 0 
+						END END) Debit, sum(CASE sign(datediff(d, '''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE 
+						ld_debitflag WHEN ''D'' THEN 0 ELSE ld_amount END END) Credit, sum(ld_amount) Balance, 
+		Rtrim(CES_Exchange) + ''-'' + CES_Segment [ExchSeg], LD_DPID AS CESCD, 1 AS TypeCode
+	FROM ledger WITH (NOLOCK), Companyexchangesegments WITH (NOLOCK), @tbl_UserList X
+	WHERE LD_DPID = CES_Cd AND ld_clientcd = X.Client_Code AND ld_dt <= '''+@dtToDate+'''
+	GROUP BY ld_dpid, ld_clientcd, CES_Exchange, CES_Segment '
+	IF @strRepType IN('MTF','ALL') AND EXISTS(SELECT 1 FROM SYS.TABLES WHERE NAME= 'MrgTdgFin_Clients')
+	BEGIN
+	  SET @StrString = @StrString+' '+' UNION ALL
+	  SELECT 2 AS Ord, ''MTF'' AS [Type], ld_clientcd AS [ClientCode], sum(CASE sign(datediff(d, '''+@dtFromDate+''', 
+						ld_dt)) WHEN - 1 THEN ld_amount ELSE 0 END) OpeningBalance, sum(CASE sign(datediff(d, 
+						'''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE ld_debitflag WHEN ''D'' THEN ld_amount ELSE 0 
+						END END) Debit, sum(CASE sign(datediff(d, '''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE 
+						ld_debitflag WHEN ''D'' THEN 0 ELSE ld_amount END END) Credit, sum(ld_amount) Balance, 
+		Rtrim(CES_Exchange) + ''-'' + CES_Segment [ExchSeg], LD_DPID AS CESCD, 1 AS TypeCode
+	  FROM ledger WITH (NOLOCK), Companyexchangesegments WITH (NOLOCK), MrgTdgFin_Clients(NOLOCK), @tbl_UserList X
+	  WHERE LD_DPID = CES_Cd AND ld_dt <= '''+@dtToDate+'''
+	  AND ld_clientcd = MTFC_FillerB AND MTFC_CMCD = X.Client_Code AND MTFC_FillerB <> ''''
+	  GROUP BY ld_dpid, ld_clientcd, CES_Exchange, CES_Segment '
+	END
+	IF @strRepType IN('Trading-Margin','ALL') 
+	BEGIN
+	  SET @StrString = @StrString+' '+' UNION ALL
+	  SELECT 3 AS Ord, ''Trading-Margin'' AS [Type], ld_clientcd AS [ClientCode], sum(CASE sign(datediff(d, '''+@dtFromDate+''', 
+						ld_dt)) WHEN - 1 THEN ld_amount ELSE 0 END) OpeningBalance, sum(CASE sign(datediff(d, 
+						'''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE ld_debitflag WHEN ''D'' THEN ld_amount ELSE 0 
+						END END) Debit, sum(CASE sign(datediff(d, '''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE 
+						ld_debitflag WHEN ''D'' THEN 0 ELSE ld_amount END END) Credit, sum(ld_amount) Balance, 
+		Rtrim(CES_Exchange) + ''-'' + CES_Segment [ExchSeg], LD_DPID AS CESCD, 1 AS TypeCode
+	  FROM ledger WITH (NOLOCK), Companyexchangesegments WITH (NOLOCK), Client_master(NOLOCK), @tbl_UserList X
+	  WHERE LD_DPID = CES_Cd AND ld_dt <= '''+@dtToDate+'''
+	  and ld_clientcd = cm_brkggroup and cm_cd = X.Client_Code
+	  GROUP BY ld_dpid, ld_clientcd, CES_Exchange, CES_Segment '
+	END
+	IF @strRepType IN('Commodity','ALL') AND @strCommmexDB <> ''
+	BEGIN
+	  SET @StrString = @StrString+' '+' UNION ALL
+	  SELECT 4 AS Ord, ''Commodity'' AS [Type], ld_clientcd AS [ClientCode], sum(CASE sign(datediff(d, '''+@dtFromDate+''', 
+						ld_dt)) WHEN - 1 THEN ld_amount ELSE 0 END) OpeningBalance, sum(CASE sign(datediff(d, 
+						'''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE ld_debitflag WHEN ''D'' THEN ld_amount ELSE 0 
+						END END) Debit, sum(CASE sign(datediff(d, '''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE 
+						ld_debitflag WHEN ''D'' THEN 0 ELSE ld_amount END END) Credit, sum(ld_amount) Balance, 
+	  Rtrim(CES_Exchange) + ''-'' + CES_Segment [ExchSeg], LD_DPID AS CESCD, 1 AS TypeCode
+	  FROM '+@strCommmexDB+'.dbo.ledger WITH (NOLOCK), '+@strCommmexDB+'.dbo.Companyexchangesegments WITH (NOLOCK), @tbl_UserList X
+	  WHERE LD_DPID = CES_Cd AND ld_dt <= '''+@dtToDate+'''
+	  and ld_clientcd = X.Client_Code
+	  GROUP BY ld_dpid, ld_clientcd, CES_Exchange, CES_Segment '
+	END
+	IF @strRepType IN('Commodity-Margin','ALL') AND @strCommmexDB <> ''
+	BEGIN
+	  SET @StrString = @StrString+' '+' UNION ALL 
+	  SELECT 5 AS Ord, ''Commodity-Margin'' AS [Type], ld_clientcd AS [ClientCode], sum(CASE sign(datediff(d, '''+@dtFromDate+''', 
+						ld_dt)) WHEN - 1 THEN ld_amount ELSE 0 END) OpeningBalance, sum(CASE sign(datediff(d, 
+						'''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE ld_debitflag WHEN ''D'' THEN ld_amount ELSE 0 
+						END END) Debit, sum(CASE sign(datediff(d, '''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE 
+						ld_debitflag WHEN ''D'' THEN 0 ELSE ld_amount END END) Credit, sum(ld_amount) Balance, 
+	  Rtrim(CES_Exchange) + ''-'' + CES_Segment [ExchSeg], LD_DPID AS CESCD, 1 AS TypeCode
+	  FROM commex.dbo.ledger WITH (NOLOCK), commex.dbo.Companyexchangesegments WITH (NOLOCK), commex.dbo.Client_master(NOLOCK), @tbl_UserList X
+	  WHERE LD_DPID = CES_Cd AND ld_dt <= '''+@dtToDate+'''
+	  and ld_clientcd = cm_brkggroup and cm_cd = X.Client_Code
+	  GROUP BY ld_dpid, ld_clientcd, CES_Exchange, CES_Segment '
+	END  
+	IF @strRepType IN('NBFC','ALL') AND EXISTS(SELECT 1 FROM SYS.TABLES WHERE NAME= 'NBFC_Ledger')
+	BEGIN
+	  SET @StrString = @StrString+' '+' UNION ALL
+	  SELECT 6 AS Ord, ''NBFC'' AS [Type], ld_clientcd [ClientCode], sum(CASE sign(datediff(d, '''+@dtFromDate+''', ld_dt)) 
+				WHEN - 1 THEN ld_amount ELSE 0 END) OpeningBalance, sum(CASE sign(datediff(d, '''+@dtFromDate+''', ld_dt)
+				) WHEN - 1 THEN 0 ELSE CASE ld_debitflag WHEN ''D'' THEN ld_amount ELSE 0 END END) Debit, sum(CASE sign(
+					datediff(d, '''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE ld_debitflag WHEN ''D'' THEN 0 ELSE 
+							ld_amount END END) Credit, sum(ld_amount) Balance, ''NBFC'' [ExchSeg], ''NBFC'' AS 
+		CESCD, 6 AS TypeCode
+	  FROM NBFC_Ledger WITH (NOLOCK), @tbl_UserList X
+	  WHERE ld_clientcd = X.Client_Code AND ld_dt <= '''+@dtToDate+'''
+	  GROUP BY ld_dpid, ld_clientcd '
+	END 
+	IF @strRepType IN('DP','ALL') AND @strDefaultConn <> ''
+	BEGIN
+	  SET @StrString = @StrString+' '+' UNION ALL
+	  SELECT 7 AS Ord, ''DP'' AS [Type], ld_clientcd [ClientCode], sum(CASE sign(datediff(d, '''+@dtFromDate+''', ld_dt)) 
+				WHEN - 1 THEN ld_amount ELSE 0 END) OpeningBalance, sum(CASE sign(datediff(d, '''+@dtFromDate+''', ld_dt)
+				) WHEN - 1 THEN 0 ELSE CASE ld_debitflag WHEN ''D'' THEN ld_amount ELSE 0 END END) Debit, sum(CASE sign(
+					datediff(d, '''+@dtFromDate+''', ld_dt)) WHEN - 1 THEN 0 ELSE CASE ld_debitflag WHEN ''D'' THEN 0 ELSE 
+							ld_amount END END) Credit, sum(ld_amount) Balance, ''DP'' [ExchSeg], ''DP'' AS 
+		CESCD, 6 AS TypeCode
+	  FROM '+@strDefaultConn+'.DBO.ledger WITH (NOLOCK), @tbl_UserList X
+	  WHERE ld_clientcd = X.DPClientCode AND ld_dt <= '''+@dtToDate+'''
+	  GROUP BY ld_dpid, ld_clientcd '
+	END 
+	SET @StrString = @StrString+' '+') a ORDER BY Ord, [Type], ClientCode, CESCD '
+	BEGIN TRY
+	  EXEC(@StrString)
+	  SET @o_vcErrorFlag  = 'S'
+      SET @o_vcErrorMessage = 'Process Executed'
+	  RETURN 1
+	END TRY
+	BEGIN CATCH
+	  SET @o_vcErrorFlag  = 'E'
+      SET @o_vcErrorMessage = ERROR_MESSAGE()
+      RETURN 1
+	END CATCH
+  END
+  ELSE IF @strReportName = 'Transaction'
+  BEGIN
+    IF @strRepType = 'TradeSummary'
+	BEGIN
+	  if @strRepSubType = 'DateWise' 
+	  BEGIN
+	    DECLARE @tbl_TradeSummaryDateWise TABLE(SerialNo INT IDENTITY(1,1), td_clientcd VARCHAR(50),
+		ListOrder INT, [type] VARCHAR(100), DATE VARCHAR(20), Scrip varchar(20), ScripName varchar(100), Stlmnt VARCHAR(100),
+		Buy MONEY, BuyAmount MONEY, Sell MONEY, SellAmount money, Net MONEY, NetAmount MONEY, LinkCode VARCHAR(200),
+		Date2 VARCHAR(20), LookUp VARCHAR(200))
+	
+	  
+	    SET @StrString = @strHeader+' '+'SELECT td_clientcd, Td_order ListOrder, Td_Type type, Dt DATE, Scrip, ScripName, td_stlmnt Stlmnt, Bqty Buy, BAmt BuyAmount, Sqty Sell, SAmt  '
+	    +' SellAmount, NQty Net, NAmt NetAmount, LinkCode, Dt1 Date2, LookUp '
+	    +' FROM (SELECT td_clientcd, 1 Td_order, ''Equity ['' + CASE WHEN left(td_stlmnt, 1) = ''B'' THEN ''BSE'' ELSE ''NSE'' END + '']'' Td_Type, td_scripcd Scrip, ss_name as ScripName, ltrim( '
+	    +' rtrim(convert(CHAR, convert(DATETIME, td_dt), 103))) Dt, rtrim(td_stlmnt) td_stlmnt, '
+	    +' sum(td_bqty) Bqty, convert(DECIMAL(15, 2), sum(td_bqty * td_rate)) BAmt, sum(td_sqty) Sqty, convert( '
+	    +' DECIMAL(15, 2), sum(td_sqty * td_rate)) SAmt, sum(td_bqty - td_sqty) NQty, convert(DECIMAL(15, 2), '
+	    +' sum((td_bqty - td_sqty) * td_rate)) NAmt, ''Equity|'' + Left(td_Stlmnt, 1) + ''|''' 
+	    +' LinkCode, td_dt Dt1, left(td_stlmnt, 1) + ''/C/'' + Max(td_scripcd) AS LookUp '
+	    +' FROM trx WITH (INDEX (idx_trx_clientcd), NOLOCK), Securities(nolock), @tbl_UserList X '
+	    +' WHERE td_clientcd = X.Client_COde AND td_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''' '
+		+' AND td_scripcd = ss_cd  AND '''+@strProduct+''' IN(''CASH'','''')' 
+	    +' GROUP BY td_clientcd, td_stlmnt, td_dt, td_scripcd, ss_name '
+	    +' UNION ALL '
+	    +' SELECT td_clientcd, CASE sm_prodtype WHEN ''CF'' THEN 4 ELSE CASE left(sm_productcd, 1) WHEN ''F'' THEN 2 ELSE 3 END END, CASE WHEN '
+	    +' td_segment = ''K'' THEN ''Currency '' ELSE ''Equity '' END + CASE left(sm_productcd, 1) WHEN ''F'' THEN '
+	    +' ''Future '' ELSE ''Option '' END + ''['' + CASE left(td_exchange, 1) WHEN ''B'' THEN ''BSE'' WHEN ''N'' THEN '
+	    +' ''NSE'' ELSE ''MCX'' END + '']'' Td_Type, td_seriesid Scrip, sm_sname ScripName,  ltrim(rtrim(convert(CHAR, convert(DATETIME, td_dt), '
+	    +' 103))) Dt, CASE left(sm_prodtype, 1) WHEN ''I'' THEN ''Index'' WHEN ''E'' THEN ''Stock'' ELSE '
+	    +' ''Currency'' END + CASE right(sm_prodtype, 1) WHEN ''F'' THEN '' Future'' ELSE '' Option'' END, sum( '
+	    +' td_bqty) Bqty, convert(DECIMAL(15, 2), sum(td_bqty * td_rate * sm_multiplier)) BAmt, sum(td_sqty) '
+	    +' Sqty, convert(DECIMAL(15, 2), sum(td_sqty * td_rate * sm_multiplier)) SAmt, sum(td_bqty - td_sqty) NQty, '
+	    +' convert(DECIMAL(15, 2), sum((td_bqty - td_sqty) * td_rate * sm_multiplier)) NAmt, '
+	    +' CASE WHEN td_segment = ''K'' THEN ''Currency'' ELSE ''Equity'' END + CASE left(sm_productcd, 1) WHEN ''F'' THEN '
+	    +' ''Future'' ELSE ''Option'' END + ''|'' + td_exchange + ''|'' +'' '' + ''|'' +'' ''+ ''|'' +'' ''+ ''|'' + '''' + ''|'' + sm_optionstyle +'
+	    + '''|'' + td_segment LinkCode, td_dt Dt1, td_exchange + ''/'' + td_Segment + ''/'' + convert(CHAR, Max(td_seriesid '
+	    +' )) AS Lookup FROM trades '
+	    +' WITH (INDEX (idx_trades_clientcd), NOLOCK), series_master WITH (NOLOCK),  @tbl_UserList X '
+	    +' WHERE td_clientcd = X.Client_COde AND sm_exchange = td_exchange AND sm_Segment = td_Segment AND td_seriesid = '
+	    +' sm_seriesid AND td_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+'''  AND td_trxflag <> ''O''  AND '''+@strProduct+''' IN(''FO'','''',''FX'') '
+	    +' GROUP BY td_clientcd, td_Dt, td_seriesid, sm_sname, sm_productcd, td_exchange, td_Segment, sm_prodtype, td_exchange, sm_optionstyle, sm_prodtype '
+ 	
+	    +' UNION ALL '
+	
+	    +' SELECT ex_clientcd AS td_clientcd, 5, CASE WHEN ex_segment = ''K'' THEN ''Currency '' ELSE ''Equity '' END + CASE ex_eaflag WHEN ''E'' THEN '
+	    +' ''Exercise '' ELSE ''Assignment '' END + ''['' + CASE left(ex_exchange, 1) WHEN ''B'' THEN ''BSE'' WHEN '
+	    +' ''N'' THEN ''NSE'' ELSE ''MCX'' END + '']'' Td_Type, ex_seriesid Scrip, sm_sname as ScripName, ltrim(rtrim(convert(CHAR, convert(DATETIME, ex_Dt) '
+	    +' , 103))) Dt, ( '
+	    +' CASE left(sm_prodtype, 1) WHEN ''I'' THEN ''Index'' WHEN ''E'' THEN ''Stock'' ELSE ''Currency'' END + CASE right( '
+	    +' sm_prodtype, 1) WHEN ''F'' THEN '' Future'' ELSE '' Option'' END '
+	    +' ),  sum(ex_aqty) Bqty, convert(DECIMAL(15, 2), sum(ex_aqty * ex_diffrate * CASE ex_eaflag WHEN ''A''  '
+	    +' THEN - 1 ELSE 1 END * sm_multiplier)) BAmt, sum(ex_eqty) Sqty, convert(DECIMAL(15, 2), '
+	    +' sum(ex_eqty * ex_diffrate * CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 END * sm_multiplier)) SAmt, sum( '
+	    +' ex_aqty - ex_eqty) NQty, convert(DECIMAL(15, 2), sum((ex_aqty - ex_eqty) * '
+	    +' ex_diffrate * CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 END * sm_multiplier)) NAmt, CASE WHEN  '
+	    +' ex_segment = ''K'' THEN ''Currency'' ELSE ''Equity'' END + CASE ex_eaflag WHEN ''E'' THEN ''Exercise'' ELSE '
+	    +' ''Assignment'' END + ''|'' + ex_exchange + ''|'' + ex_segment + ''|'' LinkCode, ex_Dt Dt1, ex_exchange + ''/'' + '
+	    +' ex_Segment + ''/'' + Ltrim(convert(CHAR, Max(ex_seriesid))) AS Lookup '
+	    +' FROM exercise WITH (NOLOCK), series_master WITH (NOLOCK) ,  @tbl_UserList X '
+	    +' WHERE ex_clientcd = X.Client_COde AND ex_exchange = sm_exchange AND ex_Segment = sm_Segment AND ex_seriesid = '
+	    +' sm_seriesid AND ex_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+'''  AND '''+@strProduct+''' IN(''FO'','''',''FX'') '
+	    +' GROUP BY ex_clientcd, ex_Dt, ex_seriesid,sm_sname, ex_eaflag, ex_exchange, ex_Segment, sm_prodtype '
+		IF @strCommmexDB <> ''
+		BEGIN
+		  SET @StrString = @StrString +' '+' UNION ALL '
+		  +' SELECT td_clientcd, 7, '
+	      +' ''Commodity''  + ''['' + CASE left(td_exchange, 1) WHEN ''M'' THEN ''MCX'' WHEN ''S'' THEN '
+		  +' ''NSEL'' ELSE ''NCDEX'' END + '']'' Td_Type, td_seriesid Scrip, sm_sname as ScripName, ltrim(rtrim(convert(CHAR, convert(DATETIME, td_dt), '
+		  +' 103))) Dt, ''Commodity'' , sum(td_bqty) Bqty, convert(DECIMAL(15, 2), sum(td_bqty * td_rate * sm_multiplier)) BAmt, sum(td_sqty) '
+		  +' Sqty, convert(DECIMAL(15, 2), sum(td_sqty * td_rate * sm_multiplier)) SAmt, sum(td_bqty - td_sqty) NQty, '
+		  +' convert(DECIMAL(15, 2), sum((td_bqty - td_sqty) * td_rate * sm_multiplier)) NAmt, '
+		  +' ''Commodity''  + ''|'' + td_exchange   LinkCode, td_dt Dt1, td_exchange + ''/''  + convert(CHAR, Max(td_seriesid)) AS Lookup '
+	      +' FROM '+@strCommmexDB+'.dbo.trades(NOLOCK), '+@strCommmexDB+'.dbo.series_master(NOLOCK), @tbl_UserList X '
+	      +' WHERE td_clientcd = X.Client_COde AND sm_exchange = td_exchange  AND td_seriesid = sm_seriesid AND'
+          +' td_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+'''   AND td_trxflag <> ''O'' '
+	      +' GROUP BY td_clientcd, td_Dt, sm_productcd, sm_sname, td_exchange, td_seriesid, sm_prodtype, td_exchange, sm_optionstyle, sm_prodtype '
+	      +' UNION ALL '
+	      +' SELECT ex_clientcd AS td_clientcd, 8, ''Commodity'' + CASE ex_eaflag WHEN ''E'' THEN  '
+		  +' ''Exercise '' ELSE ''Assignment '' END + ''['' + CASE left(ex_exchange, 1) WHEN ''M'' THEN ''MCX'' WHEN ''S'' THEN '
+		  +' ''NSEL'' ELSE ''NCDEX'' END + '']'' Td_Type,ex_seriesid,  sm_sname as ScripName, ltrim(rtrim(convert(CHAR, convert(DATETIME, ex_Dt) '
+		  +' , 103))) Dt, ''Commodity'' ,  sum(ex_aqty) Bqty, convert(DECIMAL(15, 2), sum(ex_aqty * ex_diffrate * CASE ex_eaflag WHEN ''A'' '
+		  +' THEN - 1 ELSE 1 END * sm_multiplier)) BAmt, sum(ex_eqty) Sqty, convert(DECIMAL(15, 2), '
+		  +' sum(ex_eqty * ex_diffrate * CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 END * sm_multiplier)) SAmt, sum( '
+		  +' ex_aqty - ex_eqty) NQty, convert(DECIMAL(15, 2), sum((ex_aqty - ex_eqty) * '
+		  +' ex_diffrate * CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 END * sm_multiplier)) NAmt, '
+		  +' ''Commodity'' + CASE ex_eaflag WHEN ''E'' THEN ''Exercise'' ELSE '
+		  +' ''Assignment'' END + ''|'' + ex_exchange  LinkCode, ex_Dt Dt1, ex_exchange + ''/'' + Ltrim(convert(CHAR, Max(ex_seriesid))) AS Lookup '
+	      +' FROM '+@strCommmexDB+'.dbo.exercise WITH (NOLOCK), '+@strCommmexDB+'.dbo.series_master WITH (NOLOCK), @tbl_UserList X '
+	      +' WHERE ex_clientcd = X.Client_COde AND ex_exchange = sm_exchange  AND ex_seriesid =  '
+		  +' sm_seriesid AND ex_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+'''  '
+	      +' GROUP BY ex_clientcd, ex_Dt, ex_eaflag, ex_seriesid, sm_sname, ex_exchange, sm_prodtype '
+        END
+		SET @StrString = @StrString +' ) a '
+		
+		if ISNULL(@strScrip,'') <> ''
+		BEGIN
+		  SET @StrString = @StrString +' WHERE Scrip  = '''+@strScrip+'''' 
+		END
+		
+		SET @StrString = @StrString +' ORDER BY Dt, Td_Type, ScripName'
+		BEGIN TRY
+		  --SELECT @StrString
+		  INSERT INTO @tbl_TradeSummaryDateWise (td_clientcd, ListOrder, 
+		  [type], DATE, Scrip, ScripName, Stlmnt, Buy, BuyAmount, Sell, SellAmount, Net, NetAmount, 
+		  LinkCode, Date2, LookUp)
+	      EXEC(@StrString)
+		  IF @strOutputType = 'X'
+		  BEGIN
+		    SET @XMLDATA1 = 
+		    (SELECT * FROM @tbl_TradeSummaryDateWise  
+		    order by SerialNo  
+		    FOR XML PATH('CapGain'))
+	        SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+			RETURN 1
+		  END
+		  ELSE
+		  BEGIN
+		    SELECT * FROM @tbl_TradeSummaryDateWise  
+		    ORDER BY SerialNo  
+		  END 
+	      SET @o_vcErrorFlag  = 'S'
+          --SET @o_vcErrorMessage = 'Process Executed'
+	      RETURN 1
+	    END TRY
+	    BEGIN CATCH
+	      SET @o_vcErrorFlag  = 'E'
+          SET @o_vcErrorMessage = ERROR_MESSAGE()
+          RETURN 1
+	    END CATCH
+      END
+	  if @strRepSubType = 'ItemWise' 
+	  BEGIN
+	  
+	    DECLARE @TBL_TradedItemWise TABLE(SerialNo INT IDENTITY(1,1),
+		td_clientcd VARCHAR(50), ListOrder INT, [Type] VARCHAR(100),
+		ScripCode VARCHAR(20), ScripName VARCHAR(100), Buy MONEY, BuyAmount MONEY, 
+		Sell MONEY, SellAmount MONEY, Net MONEY, NetAmount MONEY,
+		AvgRate MONEY, LinkCode VARCHAR(200), LookUp VARCHAR(100))
+		
+		
+	    SET @StrString = @strHeader+' '+'SELECT td_clientcd, ListOrder, Td_Type Type, td_scripnm ScripCode, snm ScripName, Bqty Buy, BAmt BuyAmount, Sqty Sell, SAmt '
+	    +' SellAmount, NQty Net, NAmt NetAmount, rate AvgRate, LinkCode, LookUp '
+        +' FROM ( SELECT td_clientcd, 1 ListOrder, '''' AS td_ac_type, '''' AS td_trxdate, '''' AS td_isin_code, '''' AS sc_company_name, '
+		+' cast(( CASE WHEN sum(td_bqty - td_sqty) = 0 THEN 0 ELSE sum((td_bqty - td_sqty) * td_rate) / sum(td_bqty - td_sqty) END '
+		+' ) AS DECIMAL(15, 4)) AS rate, ''Equity'' Td_Type, '''' AS FScripNm, '''' AS FExDt, rtrim(td_scripcd) '
+		+' td_scripnm, rtrim(ss_name) snm, sum(td_bqty) Bqty, convert(DECIMAL(15, 2), sum(td_bqty * td_rate)) '
+		+' BAmt, sum(td_sqty) Sqty, convert(DECIMAL(15, 2), sum(td_sqty * td_rate)) SAmt, sum(td_bqty - td_sqty) '
+		+' NQty, convert(DECIMAL(15, 2), sum((td_bqty - td_sqty) * td_rate)) NAmt, '''' AS '
+		+' td_debit_credit, 0 AS sm_strikeprice, '''' AS sm_callput, ''Equity|'' + '''' + ''|'' + td_scripcd LinkCode, ''/C/'' + td_scripcd AS lookup '
+	    +' FROM Trx WITH (INDEX (idx_trx_clientcd), NOLOCK), securities WITH (NOLOCK), @tbl_UserList X '
+	    +' WHERE td_clientcd = x.client_code AND td_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''' AND '''+@strProduct+''' IN(''CASH'','''') AND td_Scripcd = ss_cd '
+	    +' GROUP BY td_clientcd, td_scripcd, ss_name, ''Equity|'' + '''' + ''|'' + td_scripcd, ''/C/'' + td_scripcd, rtrim(td_scripcd) '
+	
+	    +' UNION ALL '
+	
+	    +' SELECT td_clientcd, CASE left(sm_productcd, 1) WHEN ''F'' THEN 2 ELSE 3 END, '''', '''', '''' AS td_isin_code, '''' AS sc_company_name,  '
+		+' cast((CASE WHEN sum(td_bqty - td_sqty) = 0 THEN 0 ELSE sum((td_bqty - td_sqty) * td_rate) / sum(td_bqty - td_sqty) END '
+		+' ) AS DECIMAL(15, 4)) AS rate, CASE WHEN td_segment = ''K'' THEN ''Currency '' ELSE ''Equity '' END + CASE '
+		+' left(sm_productcd, 1) WHEN ''F'' THEN ''Future '' ELSE ''Option '' END Td_Type, rtrim(sm_symbol), '
+		+' sm_expirydt, rtrim(td_seriesid), CASE left(sm_productcd, 1) WHEN ''F'' THEN ''Fut '' ELSE ''Opt '' END + rtrim( '
+		+' sm_symbol) + ''  Exp: '' + ltrim(rtrim(convert(CHAR, convert(DATETIME, sm_expirydt), 103))) + CASE '
+		+' left(sm_productcd, 1) WHEN ''F'' THEN '''' ELSE '''' + rtrim(convert(CHAR(9), sm_strikeprice)) + '
+		+' sm_callput + sm_optionstyle END, sum(td_bqty) Bqty, convert(DECIMAL(15, 2), sum(td_bqty * '
+		+' td_rate * sm_multiplier)) BAmt, sum(td_sqty) Sqty, convert(DECIMAL(15, 2), sum(td_sqty * '
+		+' td_rate * sm_multiplier)) SAmt, sum(td_bqty - td_sqty) NQty, convert(DECIMAL(15, 2), sum((td_bqty - td_sqty '
+		+' ) * td_rate * sm_multiplier)) NAmt, '''' AS td_debit_credit, sm_strikeprice, sm_callput, CASE '
+		+' WHEN td_segment = ''K'' THEN ''Currency'' ELSE ''Equity'' END + CASE left(sm_productcd, 1) WHEN ''F'' THEN '
+		+' ''Future'' ELSE ''Option'' END + ''|'' + '''' + ''|'' + replace(sm_symbol, ''&'', ''-'') + ''|'' + left( '
+		+' sm_productcd, 1) + ''|'' + sm_expirydt + ''|'' + Rtrim(Ltrim(Convert(CHAR, sm_strikeprice))) + ''|'' + '
+		+' sm_callput + ''|'' + sm_optionstyle + ''|'' + td_Segment LinkCode, ''/'' + td_Segment + ''/'' + convert( '
+		+' CHAR, td_seriesid) AS Lookup FROM trades WITH (INDEX (idx_trades_clientcd), NOLOCK), series_master WITH (NOLOCK) '
+		+', @tbl_UserList X '
+	    +' WHERE td_clientcd = x.Client_code AND sm_exchange = td_exchange AND sm_Segment = td_Segment AND td_seriesid = '
+		+' sm_seriesid AND td_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''' AND td_trxflag <> ''O''  AND '''+@strProduct+''' IN(''FO'','''',''FX'') '
+	    +' GROUP BY td_clientcd, sm_symbol, sm_productcd,  td_Segment, sm_expirydt, sm_strikeprice, sm_callput,  '
+		+' sm_optionstyle, ''/'' + td_Segment + ''/'' + convert(CHAR, td_seriesid), rtrim(td_seriesid) '
+	    +' UNION ALL '
+	    +' SELECT ex_clientcd, 4, '''', '''' AS td_trxdate, '''' AS td_isin_code, '''' AS sc_company_name, cast(( '
+		+' CASE WHEN sum(ex_aqty - ex_eqty) = 0 THEN 0 ELSE sum((ex_aqty - ex_eqty '
+	    +' ) * ex_diffrate * CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 END) / sum(ex_aqty - '
+		+' ex_eqty) END) AS DECIMAL(15, 2)) AS rate, CASE WHEN ex_Segment = ''K'' THEN ''Currency '' ELSE ''Equity '' END + CASE '
+		+' ex_eaflag WHEN ''E'' THEN ''Exercise '' ELSE ''Assignment '' END Td_Type, '''', '''', rtrim(ex_seriesid), CASE '
+		+' left(sm_productcd, 1) WHEN ''F'' THEN ''Fut '' ELSE ''Opt '' END + rtrim(sm_symbol) + ''  Exp: '' + ltrim( '
+		+' rtrim(convert(CHAR, convert(DATETIME, sm_expirydt), 103))) + CASE left(sm_productcd, 1) WHEN ''F'' ' 
+		+' THEN '''' ELSE '''' + rtrim(convert(CHAR(9), sm_strikeprice)) + sm_callput + sm_optionstyle END, sum '
+		+' (ex_aqty) Bqty, convert(DECIMAL(15, 2), sum(ex_aqty * ex_diffrate * CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 '
+		+' END * sm_multiplier)) BAmt, sum(ex_eqty) Sqty, convert(DECIMAL(15, 2), sum(ex_eqty * '
+		+' ex_diffrate * CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 END * sm_multiplier)) SAmt, sum(ex_aqty - '
+		+' ex_eqty) NQty, convert(DECIMAL(15, 2), sum((ex_aqty - ex_eqty) * ex_diffrate '
+		+' * CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 END * sm_multiplier)) NAmt, '''' AS td_debit_credit, 0, '''', '
+		+' CASE WHEN ex_segment = ''K'' THEN ''Currency'' ELSE ''Equity'' END + CASE ex_eaflag WHEN ''E'' THEN ''Exercise'' ELSE '
+		+' ''Assignment'' END + ''|'' + '''' + ''|'' + replace(sm_symbol, ''&'', ''-'') + ''|'' + left(sm_productcd, 1) + ''|'' + '
+		+' sm_expirydt + ''|'' + Rtrim(Ltrim(Convert(CHAR, sm_strikeprice))) + ''|'' + sm_callput + ''|'' + sm_optionstyle '
+		+' + ''|'' + ex_Segment LinkCode, ''/'' + ex_Segment + ''/'' + Ltrim(convert(CHAR, ex_seriesid)) AS Lookup '
+	    +' FROM exercise WITH (NOLOCK), series_master WITH (NOLOCK), @tbl_UserList X'
+	    +' WHERE ex_clientcd = x.Client_code AND ex_exchange = sm_exchange AND ex_Segment = sm_Segment AND ex_seriesid = '
+		+' sm_seriesid AND ex_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+'''  AND '''+@strProduct+''' IN(''FO'','''',''FX'') '
+	    +' GROUP BY ex_clientcd, ex_eaflag, sm_symbol, ex_Segment, sm_productcd, sm_expirydt, sm_strikeprice, sm_callput, '
+		+' sm_optionstyle, ''/'' + ex_Segment + ''/'' + Ltrim(convert(CHAR, ex_seriesid)), rtrim(ex_seriesid) '
+		IF @strCommmexDB <> ''
+		BEGIN
+		  SET @StrString = @StrString +' '+' UNION ALL '
+		  +' SELECT td_clientcd, 7, '''', '''', '''' AS td_isin_code, '''' AS ListOrder, '
+		  +' cast((CASE WHEN sum(td_bqty - td_sqty) = 0 THEN 0 ELSE sum((td_bqty - td_sqty ) * td_rate) / sum(td_bqty - td_sqty) END'
+		  +' ) AS DECIMAL(15, 4)) AS rate, ''Commodity'' Td_Type, rtrim(sm_symbol), '
+		  +' sm_expirydt, rtrim(td_seriesid), CASE left(sm_productcd, 1) WHEN ''F'' THEN ''Fut '' ELSE ''Opt '' END + rtrim( '
+		  +' sm_symbol) + ''  Exp: '' + ltrim(rtrim(convert(CHAR, convert(DATETIME, sm_expirydt), 103))) + CASE '
+		  +' left(sm_productcd, 1) WHEN ''F'' THEN '''' ELSE '''' + rtrim(convert(CHAR(9), sm_strikeprice)) + '
+		  +' sm_callput + sm_optionstyle END, sum(td_bqty) Bqty, convert(DECIMAL(15, 2), sum(td_bqty * '
+		  +' td_rate * sm_multiplier)) BAmt, sum(td_sqty) Sqty, convert(DECIMAL(15, 2), sum(td_sqty * '
+		  +' td_rate * sm_multiplier)) SAmt, sum(td_bqty - td_sqty) NQty, convert(DECIMAL(15, 2), sum((td_bqty - td_sqty '
+		  +' ) * td_rate * sm_multiplier)) NAmt, '''' AS td_debit_credit, sm_strikeprice, sm_callput, '
+		  +' ''Commodity'' + ''|'' + '''' + ''|'' + replace(sm_symbol, ''&'', ''-'') + ''|'' + left( '
+		  +' sm_productcd, 1) + ''|'' + sm_expirydt + ''|'' + Rtrim(Ltrim(Convert(CHAR, sm_strikeprice))) + ''|'' + '
+		  +' sm_callput + ''|'' + sm_optionstyle  LinkCode,  ''/'' + convert(CHAR, td_seriesid) AS Lookup '
+	      +' FROM '+@strCommmexDB+'.dbo.trades (NOLOCK), '+@strCommmexDB+'.dbo.series_master(NOLOCK),  @tbl_UserList X '
+	      +' WHERE td_clientcd = X.Client_COde AND sm_exchange = td_exchange AND  td_seriesid = '
+		  +' sm_seriesid AND td_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''' AND td_trxflag <> ''O'' '
+	      +' GROUP BY td_clientcd, sm_symbol, sm_productcd,  sm_expirydt, sm_strikeprice, sm_callput, '
+		  +' sm_optionstyle, ''/'' + convert(CHAR, td_seriesid), rtrim(td_seriesid) '
+		  +' UNION ALL '
+	      +' SELECT ex_clientcd AS td_clientcd, 8, '''', '''' AS td_trxdate, '''' AS td_isin_code, '''' AS sc_company_name, '
+		  +' cast((CASE WHEN sum(ex_aqty - ex_eqty) = 0 THEN 0 ELSE sum((ex_aqty - ex_eqty) * ex_diffrate * '
+		  +' CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 END) / sum(ex_aqty - ex_eqty) END) AS DECIMAL(15, 2)) AS rate, '
+		  +' ''Commodity'' + CASE ex_eaflag WHEN ''E'' THEN ''Exercise '' ELSE ''Assignment '' END Td_Type, '''', '''','
+          +' rtrim(ex_seriesid), CASE left(sm_productcd, 1) WHEN ''F'' THEN ''Fut '' ELSE ''Opt '' END + rtrim(sm_symbol) + ''  Exp: '' + ltrim('
+		  +' rtrim(convert(CHAR, convert(DATETIME, sm_expirydt), 103))) + CASE left(sm_productcd, 1) WHEN ''F'' '
+		  +' THEN '''' ELSE '''' + rtrim(convert(CHAR(9), sm_strikeprice)) + sm_callput + sm_optionstyle END, sum '
+		  +' (ex_aqty) Bqty, convert(DECIMAL(15, 2), sum(ex_aqty * ex_diffrate * CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 '
+		  +' END * sm_multiplier)) BAmt, sum(ex_eqty) Sqty, convert(DECIMAL(15, 2), sum(ex_eqty * '
+		  +' ex_diffrate * CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 END * sm_multiplier)) SAmt, '
+		  +' sum(ex_aqty - ex_eqty) NQty, convert(DECIMAL(15, 2), sum((ex_aqty - ex_eqty) * ex_diffrate '
+		  +' * CASE ex_eaflag WHEN ''A'' THEN - 1 ELSE 1 END * sm_multiplier)) NAmt, '''' AS td_debit_credit, 0, '''', '
+		  +' ''Commodity'' + CASE ex_eaflag WHEN ''E'' THEN ''Exercise'' ELSE '
+		  +' ''Assignment'' END + ''|'' + '''' + ''|'' + replace(sm_symbol, ''&'', ''-'') + ''|'' + left(sm_productcd, 1) + ''|'' + '
+		  +' sm_expirydt + ''|'' + Rtrim(Ltrim(Convert(CHAR, sm_strikeprice))) + ''|'' + sm_callput + ''|'' + sm_optionstyle as '
+		  +' LinkCode, ''/'' + Ltrim(convert(CHAR, ex_seriesid)) AS Lookup '
+	      +' FROM '+@strCommmexDB+'.dbo.exercise WITH (NOLOCK), '+@strCommmexDB+'.dbo.series_master WITH (NOLOCK),  @tbl_UserList X '
+	      +' WHERE ex_clientcd = X.Client_COde AND ex_exchange = sm_exchange AND ex_seriesid = '
+		  +' sm_seriesid AND ex_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''''
+	      +' GROUP BY ex_clientcd, ex_eaflag, sm_symbol, sm_productcd, sm_expirydt, sm_strikeprice, sm_callput, '
+		  +' sm_optionstyle, ''/'' + Ltrim(convert(CHAR, ex_seriesid)), rtrim(ex_seriesid) '
+        END
+		SET @StrString = @StrString +' ) a ORDER BY ListOrder, td_type, snm, td_scripnm '
+		BEGIN TRY
+		 INSERT INTO @TBL_TradedItemWise(td_clientcd, ListOrder, Type,
+		 ScripCode, ScripName, Buy, BuyAmount, Sell, SellAmount, Net, NetAmount,
+		 AvgRate, LinkCode, LookUp )
+		 EXEC(@StrString) 
+		 IF @strOutputType = 'X'
+		 BEGIN
+		   SET @XMLDATA1 = 
+		   (SELECT * FROM @TBL_TradedItemWise  
+		   order by SerialNo  
+		   FOR XML PATH('CapGain'))
+	       SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+			   return 1
+		 END
+		 ELSE
+		 BEGIN
+		   SELECT * FROM @TBL_TradedItemWise  
+		   ORDER BY SerialNo  
+		 END 
+	     SET @o_vcErrorFlag  = 'S'
+         SET @o_vcErrorMessage = 'Process Executed'
+	     RETURN 1
+	    END TRY
+	    BEGIN CATCH
+	      SET @o_vcErrorFlag  = 'E'
+          SET @o_vcErrorMessage = ERROR_MESSAGE()
+          RETURN 1
+	    END CATCH
+      END
+	END
+	ELSE
+    IF @strRepType = 'Receipts'
+    BEGIN
+	  DECLARE @tbl_JReceipts TABLE(SerialNo INT IDENTITY(1,1), Type VARCHAR(20), 
+	  ClientCode VARCHAR(20), DocumentNo VARCHAR(20), DATE VARCHAR(20),
+	  Particular VARCHAR(100), Debit MONEY, Credit MONEY)
+	  
+	  SET @StrString = @strHeader+' '+' SELECT ''1'' Type, ld_clientcd as ClientCode, ld_documentno DocumentNo, ltrim(rtrim(convert(CHAR, convert(DATETIME, ld_dt), 103))) DATE, '
+	                   +' ld_Particular Particular, ld_Chequeno Chequeno, convert(DECIMAL(15, 2), '
+					   +' CASE ld_documenttype WHEN ''R'' THEN (- 1) ELSE 1 END * ld_amount) Amount '
+                       +' FROM ledger WITH (NOLOCK), @tbl_UserList X '
+                       +' WHERE ld_documenttype = ''R'' AND ld_clientcd = X.Client_COde '
+					   +' AND ld_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''''  
+                       +' ORDER BY ld_dt DESC '
+	  BEGIN TRY
+		INSERT INTO @tbl_JReceipts (Type, ClientCode, DocumentNo, DATE,
+	    Particular, Debit, Credit)
+		EXEC(@StrString) 
+		
+		IF @strOutputType = 'X'
+		BEGIN
+		  SET @XMLDATA1 = (SELECT * FROM @tbl_JReceipts  
+		  order by SerialNo  
+		  FOR XML PATH('CapGain'))
+	      SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		  RETURN 1
+		END
+		ELSE
+		BEGIN
+		  SELECT * FROM @tbl_JReceipts  
+		  ORDER BY SerialNo  
+		END 
+	    SET @o_vcErrorFlag  = 'S'
+        --SET @o_vcErrorMessage = 'Process Executed'
+	    RETURN 1
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH			
+	END
+	ELSE
+    IF @strRepType = 'Payments'
+    BEGIN
+	  DECLARE @tbl_JPayments TABLE(SerialNo INT IDENTITY(1,1), Type VARCHAR(20), 
+	  ClientCode VARCHAR(20), DocumentNo VARCHAR(20), DATE VARCHAR(20),
+	  Particular VARCHAR(100), Debit MONEY, Credit MONEY)
+	  
+	  SET @StrString = @strHeader+' '+' SELECT ''2'' Type,ld_clientcd as ClientCode,  ld_documentno DocumentNo, ld_dt DATE, '
+	            +' ld_Particular Particular, ld_Chequeno Chequeno, convert(DECIMAL(15, 2), CASE ld_documenttype WHEN ''R'' THEN '
+				+' (- 1) ELSE 1 END * ld_amount) Amount '
+                +' FROM ledger WITH (NOLOCK), @tbl_UserList X '
+                +' WHERE ld_documenttype = ''P'' AND ld_clientcd = X.Client_COde '
+				+' AND ld_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''''  
+                +' ORDER BY ld_dt DESC '
+	  BEGIN TRY
+		INSERT INTO @tbl_JPayments (Type, ClientCode, DocumentNo, DATE,
+	    Particular, Debit, Credit)
+		EXEC(@StrString) 
+		
+		IF @strOutputType = 'X'
+		BEGIN
+		  SET @XMLDATA1 = (SELECT * FROM @tbl_JPayments  
+		  order by SerialNo  
+		  FOR XML PATH('CapGain'))
+	      SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		  RETURN 1
+		END
+		ELSE
+		BEGIN
+		  SELECT * FROM @tbl_JPayments  
+		  ORDER BY SerialNo  
+		END 
+	    SET @o_vcErrorFlag  = 'S'
+        --SET @o_vcErrorMessage = 'Process Executed'
+	    RETURN 1
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH			
+	END
+	ELSE
+    IF @strRepType = 'Journals'
+    BEGIN
+	  DECLARE @tbl_Journals TABLE(SerialNo INT IDENTITY(1,1), Type VARCHAR(20), 
+	  ClientCode VARCHAR(20), DocumentNo VARCHAR(20), DATE VARCHAR(20),
+	  Particular VARCHAR(100), Debit MONEY, Credit MONEY)
+	  
+	  SET @StrString = @strHeader+' '+' SELECT ''3'' Type, ld_clientcd as ClientCode, ld_documentno DocumentNo,  ld_dt DATE, '
+	       +' ld_Particular Particular, CASE ld_debitflag WHEN ''D'' THEN convert(DECIMAL(15, 2), ld_amount) ELSE 0 END Debit '
+	       +' , CASE ld_debitflag WHEN ''D'' THEN 0 ELSE convert(DECIMAL(15, 2), - ld_amount) END Credit '
+           +' FROM ledger WITH (NOLOCK) , @tbl_UserList X '
+           +' WHERE ld_documenttype = ''J'' AND ld_clientcd = X.Client_COde  AND ld_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''''  
+           +' ORDER BY ld_dt DESC'
+	  BEGIN TRY
+		INSERT INTO @tbl_Journals (Type, ClientCode, DocumentNo, DATE,
+	    Particular, Debit, Credit)
+		EXEC(@StrString) 
+		
+		IF @strOutputType = 'X'
+		BEGIN
+		  SET @XMLDATA1 = (SELECT * FROM @tbl_Journals  
+		  order by SerialNo  
+		  FOR XML PATH('CapGain'))
+	      SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		  RETURN 1
+		END
+		ELSE
+		BEGIN
+		  SELECT * FROM @tbl_Journals  
+		  ORDER BY SerialNo  
+		END 
+	    SET @o_vcErrorFlag  = 'S'
+        --SET @o_vcErrorMessage = 'Process Executed'
+	    RETURN 1
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH			
+	END
+	ELSE
+    IF @strRepType = 'Bills'
+    BEGIN
+	  DECLARE @tbl_bills TABLE(SerialNo INT IDENTITY(1,1), Type VARCHAR(20), 
+	  ClientCode VARCHAR(20), DocumentNo VARCHAR(20), DATE VARCHAR(20),
+	  Particular VARCHAR(100), Debit MONEY, Credit MONEY)
+	
+	  SET @StrString = @strHeader+' '+' SELECT ''4'' Type, ld_clientcd as ClientCode, ld_documentno DocumentNo, ld_dt DATE, '
+	      +' ld_Particular Particular, CASE ld_debitflag WHEN ''D'' THEN convert(DECIMAL(15, 2), ld_amount) ELSE 0 END Debit '
+	      +' , CASE ld_debitflag WHEN ''D'' THEN 0 ELSE convert(DECIMAL(15, 2), - ld_amount) END Credit '
+          +' FROM ledger WITH (NOLOCK), @tbl_UserList X '
+          +' WHERE ld_documenttype = ''B'' AND ld_clientcd = X.Client_COde AND ld_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''''  
+          +' ORDER BY ld_dt DESC '
+	  BEGIN TRY
+	    INSERT INTO @tbl_bills (Type, ClientCode, DocumentNo, DATE,
+	    Particular, Debit, Credit)
+		EXEC(@StrString) 
+		
+		IF @strOutputType = 'X'
+		BEGIN
+		  SET @XMLDATA1 = (SELECT * FROM @tbl_bills  
+		  order by SerialNo  
+		  FOR XML PATH('CapGain'))
+	      SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		  RETURN 1
+		END
+		ELSE
+		BEGIN
+		  SELECT * FROM @tbl_bills  
+		  ORDER BY SerialNo  
+		END 
+	    SET @o_vcErrorFlag  = 'S'
+        --SET @o_vcErrorMessage = 'Process Executed'
+	    RETURN 1
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH			
+	END
+	ELSE
+    IF @strRepType = 'AGTS'
+    BEGIN
+	  IF @strProduct LIKE 'Cash' 
+	  BEGIN
+	    DECLARE @tbl_AGTScash table(SerialNo INT IDENTITY(1,1), td_clientcd VARCHAR(50), td_scripcd VARCHAR(20), 
+		ScripName VARCHAR(100), td_stlmnt VARCHAR(50), td_dt VARCHAR(11), td_bsflag VARCHAR(1),
+		Qty MONEY, MarketRate MONEY, Brokerage MONEY, TradeRate MONEY, TradeValue MONEY,
+		SEBITO MONEY, GST MONEY, ExchTrxnChrg MONEY, STT MONEY, StampDuty MONEY, OtherCharges MONEY)
+	         
+	    SET @StrString = @strHeader+' '+' Select td_clientcd, td_scripcd, ss_name AS ScripName, td_stlmnt, td_dt, td_bsflag, '
+		   +' CASE td_bsflag WHEN ''B'' THEN td_bqty WHEN ''S'' THEN td_sqty ELSE 0 END Qty, '
+           +' td_marketrate as MarketRate, td_brokerage as Brokerage, td_rate as TradeRate, '
+           +' TradeValue = cast(round((CASE td_bsflag WHEN ''B'' THEN td_bqty WHEN ''S'' THEN td_sqty ELSE 0 END)*td_rate,2) as money), '
+           +' SEBITO = dbo.fnDecryptN(td_Chrg3), '
+           +' GST = dbo.fnDecryptN(td_Chrg6), ExchTrxnChrg = dbo.fnDecryptN(td_Chrg7), '
+      +' STT = dbo.fnDecryptN(td_Chrg5), StampDuty = dbo.fnDecryptN(td_Chrg2), OtherCharges = dbo.fnDecryptN(td_Chrg4) '
+           +' From GLOBAL_TRX(NOLOCK), Client_master(NOLOCK), Securities(NOLOCK), @tbl_UserList X  '
+           +' Where td_clientcd = cm_cd and td_dt between '''+@dtFromDate+''' AND '''+@dtToDate+''' and td_clientcd = x.Client_Code '
+           +' AND td_scripcd = ss_cd '
+		   IF @strRepSubType LIKE '%DateWise' 
+		   BEGIN
+		     SET @StrString = @StrString +' ORDER BY td_clientcd, td_dt, td_stlmnt, ss_name'
+		   END
+		   ELSE IF @strRepSubType LIKE '%ItemWise' 
+		   BEGIN
+		     SET @StrString = @StrString +' ORDER BY td_clientcd, ss_name, td_dt, td_stlmnt'
+		   END
+	      BEGIN TRY
+		    INSERT INTO @tbl_AGTScash(td_clientcd, td_scripcd, 
+		    ScripName, td_stlmnt, td_dt, td_bsflag, 
+			Qty, MarketRate, Brokerage, TradeRate, TradeValue,
+		    SEBITO, GST, ExchTrxnChrg, STT, StampDuty, OtherCharges)
+		    EXEC(@StrString) 
+			
+			IF @strOutputType = 'X'
+		    BEGIN
+		      SET @XMLDATA1 = (SELECT * FROM @tbl_AGTScash  
+		      order by SerialNo  
+		      FOR XML PATH('CapGain'))
+	          SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+			  RETURN 1
+		    END
+		    ELSE
+		    BEGIN
+		       SELECT * FROM @tbl_AGTScash  
+		       ORDER BY SerialNo  
+		    END 
+	        SET @o_vcErrorFlag  = 'S'
+            --SET @o_vcErrorMessage = 'Process Executed'
+	        RETURN 1
+	      END TRY
+	      BEGIN CATCH
+	        SET @o_vcErrorFlag  = 'E'
+            SET @o_vcErrorMessage = ERROR_MESSAGE()
+            RETURN 1
+	    END CATCH			
+	  END
+	  ELSE IF (@strProduct LIKE 'FO%' OR @strProduct LIKE 'FX%') 
+	  BEGIN
+	    DECLARE @tbl_AGTSFO TABLE(SerialNo INT IDENTITY(1,1), td_clientcd VARCHAR(20),
+        td_dt VARCHAR(11), 	td_seriesid NUMERIC(11), sm_symbol VARCHAR(50),
+		sm_sname VARCHAR(200), td_bsflag VARCHAR(1), Qty money,
+		MarketRate MONEY, Brokerage MONEY, TradeRate MONEY, TradeValue MONEY,
+		TrxnChrg MONEY, StampDuty MONEY, SEBITO MONEY, Other MONEY, STT MONEY, GST MONEY)
+		
+	    SET @StrString = @strHeader+' '+' SELECT td_clientcd, td_dt, td_seriesid, sm_symbol, sm_sname, td_bsflag, CASE td_bsflag '
+		+' WHEN ''B'' THEN td_bqty WHEN ''S'' THEN td_sqty ELSE 0 END AS Qty, '
+        +' td_marketrate as MarketRate, Brokerage = td_brokerage, td_rate as TradeRate, '
+      +' cast(CASE td_bsflag WHEN ''B'' THEN Round((td_bqty * td_rate * sm_multiplier), 2) WHEN ''S'' '
+        +' THEN Round((td_sqty * td_rate * sm_multiplier), 2) ELSE 0 END as money) TardeValue, '
+        +' TrxnChrg = dbo.fnDecryptN(td_Chrg1), StampDuty = dbo.fnDecryptN(td_Chrg2), SEBITO = dbo.fnDecryptN(td_Chrg3),  '
+        +' Other = dbo.fnDecryptN(td_Chrg4), STT = dbo.fnDecryptN(td_Chrg5), GST= dbo.fnDecryptN(td_Chrg6) '
+        +' FROM Global_Trades(NOLOCK), client_master(NOLOCK), Series_Master(NOLOCK), @tbl_UserList X   '
+        +' WHERE td_seriesId = sm_seriesid AND td_exchange = SM_exchange AND td_Segment = sm_Segment AND td_clientcd = cm_cd  '
+        +' AND td_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''' AND td_Segment = IIF('''+@strProduct+'''=''FO'',''F'',''X'') '
+		+' AND td_clientcd = x.Client_Code '
+		 IF @strRepSubType LIKE '%DateWise' 
+		   BEGIN
+		     SET @StrString = @StrString +' ORDER BY td_clientcd, td_dt, sm_sname'
+		   END
+		   ELSE IF @strRepSubType LIKE '%ItemWise' 
+		   BEGIN
+		     SET @StrString = @StrString +' ORDER BY td_clientcd, sm_sname, td_dt'
+		   END
+	    BEGIN TRY
+		   --SELECT @StrString
+		   INSERT INTO @tbl_AGTSFO (td_clientcd, td_dt, td_seriesid, sm_symbol,
+		   sm_sname, td_bsflag,Qty, MarketRate, Brokerage, TradeRate, TradeValue,
+		   TrxnChrg, StampDuty, SEBITO, Other, STT, GST)
+		   EXEC(@StrString) 
+		   IF @strOutputType = 'X'
+		    BEGIN
+		      SET @XMLDATA1 = (SELECT * FROM @tbl_AGTSFO  
+		      order by SerialNo  
+		      FOR XML PATH('CapGain'))
+	          SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+			  RETURN 1
+		    END
+		    ELSE
+		    BEGIN
+		       SELECT * FROM @tbl_AGTSFO  
+		       ORDER BY SerialNo  
+		    END 
+		   
+	       SET @o_vcErrorFlag  = 'S'
+           --SET @o_vcErrorMessage = 'Process Executed'
+	       RETURN 1
+	    END TRY
+	    BEGIN CATCH
+	      SET @o_vcErrorFlag  = 'E'
+          SET @o_vcErrorMessage = ERROR_MESSAGE()
+          RETURN 1
+	    END CATCH			
+	  END
+	END  
+	ELSE IF @strRepType = 'Deliveries'
+	BEGIN
+	  IF @strRepSubType = 'ItemWise' 
+	  BEGIN
+	    SET @StrString = @strHeader+' '+' SELECT ClientCode,  DATE, TrxNo, Description, Debit, Credit, SUM(Debit-Credit) '
+		+' OVER(PARTITION  BY ClientCode  ORDER BY RowNumber) AS Balance, Beneficiery, Settlment FROM('
+		+' SELECT x.Client_Code as ClientCode, td_trxdate AS DATE, td_reference AS TrxNo, CASE td_debit_credit WHEN ''D'''
+		                               +' THEN cast((td_qty ) AS DECIMAL(15, 0)) ELSE 0 END ''Debit'', '
+									   +' CASE td_debit_credit WHEN ''C'' THEN cast((td_qty) AS DECIMAL(15, 0)) '
+									   +' ELSE 0 END ''Credit'', 0 ''Balance'', td_description AS Description, '
+	                                   +' td_beneficiery AS Beneficiery, td_settlement AS Settlment, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS RowNumber '
+                        +' FROM ['+@strDefaultServer+'].'+@strDefaultConn+'.[dbo].TrxDetail a WITH (NOLOCK), ' 
+						+' ['+@strDefaultServer+'].'+@strDefaultConn+'.[dbo].Security WITH (NOLOCK), Client_master WITH (NOLOCK), '
+						+' ['+@strDefaultServer+'].'+@strDefaultConn+'.[dbo].Beneficiary_type WITH (NOLOCK), DematAct WITH (NOLOCK), @tbl_UserList X '
+                        +' WHERE td_isin_code = sc_isincode AND td_ac_type = bt_code AND '
+						+' td_trxdate BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+'''' 
+						+' AND td_ac_code = da_actno AND da_clientcd = cm_cd AND cm_cd = x.Client_Code) X1  '
+		BEGIN TRY
+		  EXEC(@StrString) 
+	      SET @o_vcErrorFlag  = 'S'
+          SET @o_vcErrorMessage = 'Process Executed'
+	      RETURN 1
+	    END TRY
+	    BEGIN CATCH
+	      SET @o_vcErrorFlag  = 'E'
+          SET @o_vcErrorMessage = ERROR_MESSAGE()
+          RETURN 1
+	    END CATCH			
+	  END
+	  ELSE IF @strRepSubType = 'DateWise' 
+	  BEGIN
+	    SET @StrString = @strHeader+' '+' SELECT  ClientCode, DATE, ISIN, SecurityDescription, Debit, Credit, SUM(Debit-Credit) '
+		+' OVER(PARTITION  BY ClientCode  ORDER BY RowNumber) AS Balance FROM( '
+		+' SELECT X.Client_code as ClientCode, td_trxdate AS DATE, td_isin_code AS ISIN, sc_isinname AS SecurityDescription, CASE td_debit_credit WHEN '
+			+' ''D'' THEN cast((td_qty) AS DECIMAL(15, 0)) ELSE 0 END ''Debit'', CASE '
+		+' td_debit_credit WHEN ''C'' THEN cast((td_qty) AS DECIMAL(15, 0)) ELSE 0 END ''Credit'', ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS RowNumber  '
+        +' FROM ['+@strDefaultServer+'].'+@strDefaultConn+'.DBO.TrxDetail a WITH (NOLOCK), '
+		+' ['+@strDefaultServer+'].'+@strDefaultConn+'.[dbo].Security WITH (NOLOCK), Client_master WITH (NOLOCK), '
+		+' ['+@strDefaultServer+'].'+@strDefaultConn+'.[dbo].Beneficiary_type WITH (NOLOCK), DematAct WITH (NOLOCK), @tbl_UserList X '
+        +' WHERE td_isin_code = sc_isincode AND td_ac_type = bt_code '
+		+' AND td_trxdate BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''''  
+		+' AND td_ac_code = da_actno AND da_clientcd = cm_cd AND cm_cd  = x.Client_Code) x123 '
+		BEGIN TRY
+		  EXEC(@StrString) 
+	      SET @o_vcErrorFlag  = 'S'
+          SET @o_vcErrorMessage = 'Process Executed'
+	      RETURN 1
+	    END TRY
+	    BEGIN CATCH
+	      SET @o_vcErrorFlag  = 'E'
+          SET @o_vcErrorMessage = ERROR_MESSAGE()
+          RETURN 1
+	    END CATCH	
+	  END
+	END
+  END
+  ELSE if @strReportName = 'CapitalGain'
+  BEGIN
+    IF @strRepType = 'Dividend'
+    BEGIN
+	  DECLARE @tbl_CapitalGainDividend TABLE(SerialNo int identity(1,1),
+	  ClientCode VARCHAR(50), ClientName VARCHAR(50),
+	  DividendDate VARCHAR(11), ScripCode VARCHAR(20), ScripName VARCHAR(100), 
+	  NoOfShare MONEY, DivRate MONEY, Amount MONEY)
+	  
+	  SET @StrString = @strHeader+' '+'SELECT DV_Clientcd ClientCode, cm_name As ClientName,  DV_Dt DividendDate, DV_Scripcd ScripCode, ss_lname ScripName, '
+      +' DV_NoOfShare NoOfShare, cast(DV_Amount / DV_NoOfShare AS MONEY) DivRate, DV_Amount Amount '
+      +' FROM INVPL_DIVIDEND(NOLOCK), Securities(NOLOCK), Client_Master(NOLOCK), Branch_master(NOLOCK),  @tbl_UserList X '
+      +' WHERE DV_Clientcd = cm_cd AND CM_CD = X.CLIENT_cODE AND cm_brboffcode = bm_branchcd '
+	  +' AND DV_scripcd = ss_cd AND DV_Amount > 0 '
+	  +' AND DV_Dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+'''' 
+      +' ORDER BY DV_Clientcd, DV_Dt, ss_lname '
+      BEGIN TRY
+	     INSERT INTO @tbl_CapitalGainDividend(ClientCode, ClientName, DividendDate, ScripCode,
+		 ScripName, NoOfShare, DivRate, Amount)
+		 EXEC(@StrString) 
+	     SET @o_vcErrorFlag  = 'S'
+         SET @o_vcErrorMessage = 'Process Executed'
+		 IF @strOutputType = 'X'
+		 BEGIN
+		   SET @XMLDATA1 = (SELECT * FROM @tbl_CapitalGainDividend order by SerialNo  FOR XML PATH('CapGain'))
+	       SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		 END
+		 ELSE
+		 BEGIN
+		   SELECT * FROM @tbl_CapitalGainDividend order by SerialNo
+		 END
+	     RETURN 1
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+	END
+	ELSE IF @strRepType = 'TradeListing'
+	BEGIN
+	  DECLARE @tbl_CapitalGainTradeListing TABLE(SerialNo INT IDENTITY(1,1), 
+	  td_clientcd VARCHAR(50), ClientName VARCHAR(165),
+	  td_scripcd VARCHAR(20), ScripName VARCHAR(100), Bqty MONEY, BRate MONEY, BAmt MONEY,
+	  sqty MONEY, SRate MONEY, SAmt MONEY, NetQty MONEY, Nrate MONEY, NAmt MONEY)
+	  
+	  SET @StrString = @strHeader+' '+'SELECT Rtrim(td_clientcd) td_clientcd, CM_NAME AS ClientName, td_scripcd, Rtrim(ss_lname) AS ScripName, convert(DECIMAL(15, 0), sum( '
+			+' td_bqty)) Bqty, convert(DECIMAL(15, 2), CASE WHEN sum(td_rate * td_bqty) > 0 THEN sum(td_rate * '
+						+' td_bqty) / sum(td_bqty) ELSE 0 END) BRate, convert(DECIMAL(15, 2), sum(td_bqty * '
+			+' td_rate)) BAmt, convert(DECIMAL(15, 0), sum(td_sqty)) sqty, convert(DECIMAL(15, 2), CASE WHEN sum('
+					+' td_rate * td_sqty) > 0 THEN sum(td_rate * td_sqty) / sum(td_sqty) ELSE 0 END) SRate, convert('
+		+' DECIMAL(15, 2), sum(td_sqty * td_rate)) SAmt, convert(DECIMAL(15, 0), sum(td_bqty - td_sqty)) NetQty, '
+		+' CASE WHEN convert(DECIMAL(15, 0), sum(td_bqty - td_sqty))<> 0 THEN round(sum((td_bqty - td_sqty) * td_rate)/ '
+      +' sum(td_bqty - td_sqty),2) ELSE 0 END NetRate, '
+	  +' convert(DECIMAL(15, 2), sum((td_bqty - td_sqty) * td_rate)) NAmt '
+      +' FROM TRX_INVPL(NOLOCK), Securities(NOLOCK), Client_master(NOLOCK), @tbl_UserList X '
+      +' WHERE td_clientcd = cm_cd AND CM_CD = X.CLIENT_cODE AND td_scripcd = ss_cd AND td_dt '
+	  +' BETWEEN '''+@dtFromDate+''' AND '''+@dtToDate+''''
+      +' GROUP BY td_clientcd, CM_NAME, td_scripcd, Rtrim(ss_lname) '
+      +' ORDER BY Rtrim(td_clientcd), Rtrim(ss_lname) '
+	  BEGIN TRY
+	     
+	     INSERT INTO @tbl_CapitalGainTradeListing(td_clientcd, ClientName,
+	     td_scripcd, ScripName, Bqty, BRate, BAmt, sqty, 
+		 SRate, SAmt, NetQty, Nrate, NAmt)
+		 EXEC(@StrString) 
+	     SET @o_vcErrorFlag  = 'S'
+         SET @o_vcErrorMessage = 'Process Executed'
+		 IF @strOutputType = 'X'
+		 BEGIN
+		   SET @XMLDATA1 = (SELECT * FROM @tbl_CapitalGainTradeListing order by SerialNo  FOR XML PATH('CapGain'))
+	       SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		 END
+		 ELSE
+		 BEGIN
+		   SELECT * FROM @tbl_CapitalGainTradeListing order by SerialNo
+		 END
+	     RETURN 1
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+	END
+  END
+  ELSE if @strReportName = 'Download'
+  BEGIN
+    DECLARE @Eop_Owner VARCHAR(50)='', @EOP_DataBase VARCHAR(50)=''
+   
+    SELECT @eop_Owner = LTRIM(RTRIM(OP_OWNER)), @eOP_DataBase = LTRIM(RTRIM(OP_DataBase)) 
+    FROM Other_Products(NOLOCK) WHERE OP_Product = 'ESIGN-TRADEPLUS'
+    AND OP_Status='A'
+   -- select @strRepType 
+    IF @strRepType = 'LIST'
+	BEGIN
+      if ISNULL(@EOP_DataBase,'') <> ''
+	  BEGIN
+	    DECLARE @TBL_DOWNLOAD TABLE(SerialNo int identity(1,1), Doctype VARCHAR(50), Download VARCHAR(50), DocumentNo INT, DocumentDesc VARCHAR(500),
+		DocumentDate VARCHAR(20),SettlementNo VARCHAR(20), ContractNo VARCHAR(20))
+        SET @StrString = @strHeader+' select ''Equity/Derivative'' Doctype, ''Download'' as download, dd_srno = cast(dd_srno as int), '
+              +' do_desc, dd_dt as dd_dt,dd_stlmnt, '
+              +' dd_contractno'
+              +' from '+@EOP_DataBase+'.'+@Eop_Owner+'.'+'digital_details, '+@EOP_DataBase+'.'+@Eop_Owner+'.'+'DocumentType_master ,  @tbl_UserList X '
+              +' where dd_clientcd =  X.CLIENT_cODE '
+              +' and dd_dt between '''+@dtFromDate+''' and '''+@dtToDate+''''
+              +' and dd_filetype = do_cd  '
+              +' and ((dd_filetype = DBO.fn_GetEsignDocType('''+@strDocType+'''' 
+			  + ','''','''','''','''') and '''+@strDocType+''' <> '''') OR '''+@strDocType+''' = '''' )' 
+             +' Order by convert(datetime,dd_dt) desc '
+        BEGIN TRY
+		  --select @StrString
+		  INSERT INTO @TBL_DOWNLOAD
+		  EXEC(@StrString)
+		 IF @strOutputType = 'X'
+		 BEGIN
+		   SET @XMLDATA1 = (SELECT * FROM @TBL_DOWNLOAD order by SerialNo  FOR XML PATH('Download'))
+	       SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		 END
+		 ELSE
+		 BEGIN
+		   SELECT * FROM @TBL_DOWNLOAD order by SerialNo
+		 END
+ 	     SET @o_vcErrorFlag  = 'S'
+          --SET @o_vcErrorMessage = 'Process Executed'
+	      RETURN 1
+		END TRY
+        BEGIN CATCH
+		  SET @o_vcErrorFlag  = 'E'
+          SET @o_vcErrorMessage = ERROR_MESSAGE()
+          RETURN 1
+        END CATCH		
+	  END
+	  else
+	  BEGIN
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = 'Connection Error'
+        RETURN 1
+      END	  
+	END  
+	ELSE IF @strRepType = 'DOCUMENT'
+	BEGIN
+      IF ISNULL(@EOP_DataBase,'') <> ''
+	  BEGIN
+	    SET @strString = 'SELECT Base64 = DBO.fnBinaryToBase64(dd_signature), FileName = replace(DD_FileName,''\'','''') '
+        +' FROM  '+@EOP_DataBase+'.DBO.Digital_details(NOLOCK) WHERE dd_srno = '''+CAST(@strDocNO AS VARCHAR)+''' '
+        BEGIN TRY
+		  EXEC(@StrString)
+		  SET @o_vcErrorFlag  = 'S'
+          SET @o_vcErrorMessage = 'Process Executed'
+	      RETURN 1
+		END TRY
+        BEGIN CATCH
+		  SET @o_vcErrorFlag  = 'E'
+          SET @o_vcErrorMessage = ERROR_MESSAGE()
+          RETURN 1
+        END CATCH	
+	  END	
+	  ELSE 
+	  BEGIN
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = 'Connection Error'
+        RETURN 1
+      END	  
+	END  
+  END
+END
+GO
+
+CREATE OR ALTER PROCEDURE stpr_Rpt_ProfitLossMTF @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, @o_vcErrorMessage VARCHAR(MAX) OUTPUT 
+WITH ENCRYPTION  
+AS
+BEGIN
+ /*
+ ///////////////////////////////////////////////////////////////////////////////////////////
+ // Create By     : VAIBHAV GARG
+ // Created Date  : XX-DEC-2023
+ // Description   : 
+ // Reviewed By   : 
+ // Review Date   : 
+ //////////////////////////////////////////////////////////////////////////////////////////
+*/
+ --- Parameter Declaration
+ 
+  DECLARE @dtFromDate VARCHAR(8)='', @dtToDt VARCHAR(8)='', @ExchSeg VARCHAR(50)='', 
+  @strStringMin VARCHAR(MAX)='', @strSplFilter VARCHAR(MAX)='', @strReportType VARCHAR(50)='', 
+  @strRateType VARCHAR(50)='',
+  @strConsiderOptionBF VARCHAR(1)='Y', @String VARCHAR(MAX)='', @XMLData XML, @strOptionType VARCHAR(MAX)=''
+  
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+
+  SET @XMLData = CAST(@vcXML AS XML)
+   
+  SELECT @dtFromDate =  Isnull(@XMLData.value('(FromDt)[1]', 'VARCHAR(8)'),''),
+  @dtToDt =    Isnull(@XMLData.value('(ToDt)[1]', 'VARCHAR(8)'),''),
+  @ExchSeg = Isnull(@XMLData.value('(ExchSeg)[1]', 'VARCHAR(100)'),''),
+  @strSplFilter = Isnull(@XMLData.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''), -- spl filtter
+  @strReportType = Isnull(@XMLData.value('(RepType)[1]', 'VARCHAR(MAX)'),''),
+  @strRateType = Isnull(@XMLData.value('(RepSubType)[1]', 'VARCHAR(MAX)'),''),
+  @strOptionType = Isnull(@XMLData.value('(OptionType)[1]', 'VARCHAR(MAX)'),'')
+  
+  IF @strRateType = ''
+  BEGIN
+    SET @strRateType = 'Market Rate'
+  END
+  
+  DECLARE @SehmentCH_ClgHs VARCHAR(1)='', @ch_EffDt VARCHAR(8)=''
+  
+  SELECT @SehmentCH_ClgHs = CH_ClgHs FROM ClearingHouse(NOLOCK)
+  WHERE CH_CompanyCode = 'A' AND CH_Segment = 'C' 
+  AND CH_EffDt = (SELECT Min(CH_EffDt) FROM ClearingHouse
+  WHERE CH_CompanyCode = 'A' AND CH_Segment = 'C' AND CH_EffDt <= @dtToDt)
+  
+  DECLARE @tbl_ClientPL TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),  ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+  Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), BF_QTY MONEY, BF_CloseRate MONEY, BF_VALUE MONEY, BOT_QTY MONEY, BOT_VALUE MONEY, 
+  SOLD_QTY MONEY,SOLD_VALUE MONEY, EX_QTY MONEY, EX_VALUE MONEY, AS_QTY MONEY, AS_VALUE MONEY, MTM MONEY,
+  NET_QTY MONEY, CMP MONEY, NET_VALUE MONEY)
+
+  DECLARE @tbl_BSClient TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10), ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+  Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), BOT_QTY MONEY, BOT_VALUE MONEY, 
+  SOLD_QTY MONEY, SOLD_VALUE MONEY)
+
+  DECLARE @tbl_CLClient TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),  ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+  Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), EX_QTY MONEY, EX_VALUE MONEY, AS_QTY MONEY, AS_VALUE MONEY)
+  
+ 
+  IF OBJECT_ID('tempdb..#tbl_TradeSqrup') IS NOT NULL
+  DROP TABLE #tbl_TradeSqrup
+
+  CREATE TABLE #tbl_TradeSqrup (SerialNo INT identity(1, 1), td_companycode VARCHAR(1) ,td_stlmnt VARCHAR(15)
+  ,td_clientcd VARCHAR(10) ,td_scripcd VARCHAR(10) ,td_dt VARCHAR(8) ,td_bsflag VARCHAR(1) ,td_bqty MONEY ,td_sqty MONEY
+  ,td_rate MONEY ,td_BrokerageType VARCHAR(5))
+
+  IF @strSplFilter = ''
+  BEGIN
+    SET @strSplFilter = ' 1 = 1'
+  END	
+  
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @strStringMin  = ' DECLARE @tbl_UserList TABLE (Client_Code VARCHAR(10)) '
+	                     +' INSERT INTO @tbl_UserList(Client_Code) SELECT distinct CM_CD FROM Client_master(NOLOCK) CM WHERE '
+                         +'	 EXISTS(SELECT 1 FROM MrgTdgFin_Clients(NOLOCK) WHERE  MTFC_CMCD = CM.CM_CD) AND '+@strSplFilter
+  END	
+  
+
+  CREATE INDEX indx_TradeSqrup ON #tbl_TradeSqrup (td_dt,td_stlmnt)
+
+  CREATE INDEX indx_TradeSqrup1 ON #tbl_TradeSqrup (SerialNo)
+
+    
+  SET @string = @strStringMin+' SELECT MTtd_companycode, MTtd_stlmnt, MTtd_clientcd, MTtd_scripcd, MTtd_dt, MTtd_bsflag, '
+	+' sum(MTtd_bqty), sum(MTtd_sqty),  '
+    +' SUM(MTtd_rate * (MTtd_bqty + MTtd_sqty)), '
+    +' IIF(MTtd_TrxFlag =''X'',''SD1'',''DLV'') AS td_BrokerageType  FROM(    '
+    +' SELECT MTtd_companycode, MTtd_stlmnt, MTtd_clientcd, MTtd_scripcd, MTtd_dt, MTtd_srno,  '
+    +' MTtd_bsflag, MTtd_bqty, MTtd_sqty, MTtd_rate = CAST(MTtd_rate AS MONEY), MTtd_TrxFlag '
+    +' FROM MrgTdgFin_TRX(NOLOCK), Settlements(NOLOCK) SETT, @tbl_UserList   '
+    +' WHERE MTtd_clientcd = Client_Code  AND MTtd_stlmnt = se_stlmnt  AND MTtd_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDt+''''
+  IF ISNULL(@ExchSeg,'') <> ''
+  BEGIN
+    SET @string =   @string+'  AND se_exchange IN(SELECT SUBSTRING(VALUE,2,1) FROM  ReturnTable('''+@ExchSeg+''','','')) '
+  END	
+	
+  SET @string =   @string+') X12 '
+    +' GROUP BY MTtd_companycode, MTtd_stlmnt, MTtd_clientcd, MTtd_scripcd, MTtd_dt, MTtd_bsflag , IIF(MTtd_TrxFlag=''X'',''SD1'',''DLV'') '
+    +' ORDER BY MTtd_dt'
+   
+  BEGIN TRY
+    INSERT INTO #tbl_TradeSqrup(td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, td_bqty, td_sqty, td_rate, td_BrokerageType)
+	EXEC(@string)
+  END TRY
+  BEGIN CATCH
+    SELECT ERROR_MESSAGE()
+  END CATCH  
+  
+  UPDATE A SET A.td_rate = B.SaleAVGRate*(A.td_bqty + A.td_sqty)
+  FROM #tbl_TradeSqrup A, (SELECT td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag,  
+  SaleAVGRate = SUM(td_rate * (td_bqty + td_sqty))/SUM(td_bqty + td_sqty)
+  FROM TRx(NOLOCK), Settlements(NOLOCK) SETT   
+  WHERE td_stlmnt = se_stlmnt  AND td_dt BETWEEN @dtFromDate AND @dtToDt and td_bsflag = 'S'
+  Group By td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag ) B
+  WHERE A.td_stlmnt = B.td_stlmnt
+  AND A.td_clientcd = B.td_clientcd
+  AND A.td_scripcd = B.td_scripcd
+  AND A.td_dt = B.td_dt
+  AND A.td_bsflag = B.td_bsflag
+  
+  UPDATE #tbl_TradeSqrup
+  SET td_rate = CASE WHEN (td_bqty + td_sqty) > 0 THEN td_rate / (td_bqty + td_sqty) ELSE 0 END
+	
+       
+  DECLARE @tbl_ProfileLOss TABLE(ClientCode VARCHAR(50), SettEndDate VARCHAR(8), 
+  SettlementNo VARCHAR(50),
+  ScripCode VARCHAR(20), ScripTag VARCHAR(1), TradingFlag VARCHAR(1), BuyQty MONEY, BuyRate MONEY, 
+  BuyValue MONEY, SaleQty MONEY,  SaleRate MONEY, SaleValue MONEY,
+  NetQty MONEY, NetValue MONEY, AvgRate MONEY, CMP MONEY, NotionalPL MONEY)
+	
+	
+  IF @strReportType <> 'Settlementwise Summary'
+  BEGIN
+	INSERT INTO @tbl_ProfileLOss(ClientCode, ScripCode, ScripTag, BuyQty, BuyRate, BuyValue, SaleQty,SaleRate, SaleValue, NetQty, NetValue, AvgRate)
+	SELECT td_clientcd, td_scripcd, IIF(td_brokeragetype = 'DLV','N','Y') AS td_flag,  
+	td_bqty = SUM(td_bqty), BuyRate = iif(SUM(td_bqty)>0,round(SUM(td_bqty*td_rate)/SUM(td_bqty),2),0),
+    BuyValue = SUM(td_bqty*td_rate), td_sqty = SUM(td_sqty), SaleRate = iif(SUM(td_sqty)>0,round(SUM(td_sqty*td_rate)/SUM(td_sqty),2),0),
+    saleValue = SUM(td_sqty*td_rate),  NetQty = SUM(td_bqty)-SUM(td_sqty), NetValue = round(SUM(td_sqty*td_rate) - SUM(td_bqty*td_rate),2),
+    AvgRate = abs(iif(SUM(td_bqty)-SUM(td_sqty)<>0,round(SUM(td_sqty*td_rate) - SUM(td_bqty*td_rate),2)/(SUM(td_bqty)-SUM(td_sqty)),0))
+    FROM #tbl_TradeSqrup
+    Group by td_clientcd, td_scripcd, IIF(td_brokeragetype = 'DLV','N','Y')
+  END
+  ELSE
+  IF @strReportType = 'Settlementwise Summary' 	
+  BEGIN
+	INSERT INTO @tbl_ProfileLOss(ClientCode, SettEndDate, SettlementNo, ScripCode, ScripTag,  BuyQty, 
+	BuyRate, BuyValue, SaleQty,SaleRate, SaleValue, NetQty, NetValue, AvgRate)
+	SELECT td_clientcd, se_endt, td_stlmnt, td_scripcd, IIF(td_brokeragetype = 'DLV','N','Y') AS td_flag,  
+	td_bqty = SUM(td_bqty), BuyRate = iif(SUM(td_bqty)>0,round(SUM(td_bqty*td_rate)/SUM(td_bqty),2),0),
+    BuyValue = SUM(td_bqty*td_rate), td_sqty = SUM(td_sqty), SaleRate = iif(SUM(td_sqty)>0,round(SUM(td_sqty*td_rate)/SUM(td_sqty),2),0),
+    saleValue = SUM(td_sqty*td_rate),  NetQty = SUM(td_bqty)-SUM(td_sqty), NetValue = round(SUM(td_sqty*td_rate) - SUM(td_bqty*td_rate),2),
+    AvgRate = abs(iif(SUM(td_bqty)-SUM(td_sqty)<>0,round(SUM(td_sqty*td_rate) - SUM(td_bqty*td_rate),2)/(SUM(td_bqty)-SUM(td_sqty)),0))
+	FROM #tbl_TradeSqrup X, Settlements(NOLOCK) SETT
+	WHERE X.td_stlmnt = SETT.se_stlmnt
+    Group by td_clientcd, td_scripcd,  se_endt, td_stlmnt, IIF(td_brokeragetype = 'DLV','N','Y')
+  END
+	
+  DECLARE @CH_ClgHs VARCHAR(1)=@SehmentCH_ClgHs
+    
+  DECLARE @tbl_CloseRate TABLE(Scrip VARCHAR(20), CloseRate MONEY)
+	
+  IF @strRateType IN('Market Rate' ,'Average Rate')
+  BEGIN 
+	INSERT INTO @tbl_CloseRate(Scrip, CloseRate)
+	SELECT DISTINCT ScripCode, '' AS CloseRate FROM @tbl_ProfileLOss
+	
+	IF @CH_ClgHs = 'N'
+	BEGIN
+	  UPDATE A SET A.CloseRate = B.mk_closerate
+	  FROM @tbl_CloseRate A, Market_rates(NOLOCK) B 
+      WHERE A.Scrip = B.mk_scripcd AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	  WHERE mk_exchange = 'B' and mk_dt<=@dtToDt) AND  mk_exchange = 'B'
+	  	  
+	  UPDATE A SET A.CloseRate = B.mk_closerate
+	  FROM @tbl_CloseRate A, Market_rates(NOLOCK) B 
+      WHERE A.Scrip = B.mk_scripcd 
+	  AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	  WHERE mk_exchange = 'N'
+	  and mk_dt<=@dtToDt) AND  mk_exchange = 'N'
+	END  
+	ELSE
+	IF @CH_ClgHs = 'B'
+	BEGIN
+	  UPDATE A SET A.CloseRate = B.mk_closerate
+	  FROM @tbl_CloseRate A, Market_rates(NOLOCK) B 
+      WHERE A.Scrip = B.mk_scripcd AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	  WHERE mk_exchange = 'N' and mk_dt<=@dtToDt) AND  mk_exchange = 'N'
+	  	  
+	  UPDATE A SET A.CloseRate = B.mk_closerate
+	  FROM @tbl_CloseRate A, Market_rates(NOLOCK) B 
+      WHERE A.Scrip = B.mk_scripcd 
+	  AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	  WHERE mk_exchange = 'B'
+	  and mk_dt<=@dtToDt) AND  mk_exchange = 'B'
+	END  
+	
+	UPDATE A SET A.CloseRate = B.mk_closerate
+	FROM @tbl_CloseRate A, Market_rates B
+	WHERE @CH_ClgHs = B.mk_exchange
+	AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	WHERE mk_scripcd = B.mk_scripcd and mk_dt<=@dtToDt)
+    AND A.Scrip = B.mk_scripcd	
+	AND A.CloseRate = 0
+	
+
+		
+ 	UPDATE A SET A.CMP = CloseRate, A.NotionalPL = (A.NetQty * CloseRate)+ISNULL(NetValue,0)
+    FROM @tbl_ProfileLOss A, @tbl_CloseRate B  
+	WHERE A.ScripCode = B.Scrip
+    AND NetQty <> 0
+	
+    UPDATE A SET A.NotionalPL = ISNULL(NetValue,0)
+    FROM @tbl_ProfileLOss A  
+    WHERE NetQty = 0
+			
+	UPDATE A SET A.NetValue = case when @strRateType IN('Market Rate','Average Rate') 
+	then abs(isnull(A.NetQty,0)*isnull(A.CMP,0)) else A.NetValue end 
+    FROM @tbl_ProfileLOss A
+  END
+  
+  ELSE IF @strRateType IN('COST')
+  BEGIN  
+	IF OBJECT_ID('tempdb..#TrxDLV1') IS NOT NULL
+	  DROP TABLE #TrxDLV1
+    IF OBJECT_ID('tempdb..#TrxSummaryDLV1') IS NOT NULL
+	  DROP TABLE #TrxSummaryDLV1
+    IF OBJECT_ID('tempdb..#tbl_TradeSqrup1') IS NOT NULL
+	  DROP TABLE #tbl_TradeSqrup1
+	
+    CREATE TABLE  #tbl_TradeSqrup1(SerialNo int identity(1,1), td_companycode VARCHAR(1), td_stlmnt VARCHAR(15), 
+	td_clientcd VARCHAR(10), td_scripcd VARCHAR(10), 
+    td_dt VARCHAR(8), td_bsflag VARCHAR(1), td_bqty MONEY, td_sqty MONEY, td_rate MONEY, td_marketrate MONEY, td_BrokerageType VARCHAR(5))
+	
+	CREATE INDEX indx_TradeSqrup1 ON #tbl_TradeSqrup1 (td_dt, td_stlmnt)
+    CREATE INDEX indx_TradeSqrup11 ON #tbl_TradeSqrup1 (SerialNo)
+	
+    INSERT INTO #tbl_TradeSqrup1(td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, td_bqty, td_sqty, td_rate,
+    td_BrokerageType)
+	SELECT td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, td_bqty, td_sqty, td_rate,
+    td_BrokerageType ='SD1'
+	FROM #tbl_TradeSqrup
+	WHERE td_brokeragetype = 'DLV'
+      
+	
+    
+    CREATE TABLE #TrxSummaryDLV1 (clientcd VARCHAR(8) NOT NULL, scripcd VARCHAR(6) NOT NULL, Buys MONEY, Sells MONEY)
+
+    INSERT INTO #TrxSummaryDLV1
+	SELECT td_clientcd, td_scripcd, Buys, Sells
+    FROM (SELECT MAX(td_companycode + left(td_stlmnt, 2)) td_companycode, td_clientcd, cm_name, td_scripcd, ss_name, 
+    ss_nsymbol, ss_nseries, sum(td_bqty) AS 'Buys', sum(td_sqty) 'Sells', sum(td_bqty - td_sqty) 'Delivery', 
+    count(*) Totalrec, ss_group, cm_type
+    FROM #tbl_TradeSqrup1, Client_master, Securities
+    WHERE cm_cd = td_clientcd AND td_scripcd = ss_cd
+    GROUP BY td_clientcd, cm_name, td_scripcd, ss_cd, ss_name, ss_nsymbol, ss_nseries, ss_group, cm_type
+    HAVING sum(td_bqty - td_sqty) <> 0) a
+
+    CREATE TABLE #TrxDLV1 (SrNo NUMERIC, Qty NUMERIC, FinalQty NUMERIC)
+
+    INSERT INTO #TrxDLV1
+	SELECT SerialNo, Qty, CASE WHEN NetQty >= Running THEN Qty ELSE NetQty - isNull(PrevRunning, 0) END FinalQty
+    FROM (
+	SELECT SerialNo, td_clientcd, td_scripcd, td_marketrate,  NetQty, Qty, Running, LAG(
+	Running) OVER (
+	PARTITION BY td_clientcd, td_scripcd ORDER BY td_dt DESC,  SerialNo DESC) PrevRunning
+	FROM (SELECT SerialNo, td_dt, td_clientcd, td_scripcd, td_bqty + td_sqty Qty, td_marketrate,  
+	abs(Buys - Sells) NetQty, Sum(td_bqty + td_sqty) 
+	OVER (PARTITION BY td_clientcd, td_scripcd ORDER BY td_dt DESC,  SerialNo DESC) Running
+	FROM #tbl_TradeSqrup1, Client_master, Securities, #TrxSummaryDLV1
+	WHERE cm_cd = td_clientcd AND td_scripcd = ss_cd
+	AND td_clientcd = clientcd AND td_scripcd = scripcd AND td_bsflag = CASE WHEN Buys > Sells THEN 'B' ELSE 'S' END) a) b
+    WHERE CASE WHEN NetQty >= Running THEN Qty ELSE NetQty - isNull(PrevRunning, 0) END > 0
+
+    INSERT INTO #tbl_TradeSqrup1(td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, td_bqty, td_sqty, td_rate,
+    td_marketrate, td_BrokerageType)
+    SELECT td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt,
+    td_bsflag, CASE td_bsflag WHEN 'B' THEN Qty - FinalQty ELSE 0 END, CASE td_bsflag WHEN 'S' THEN Qty - FinalQty ELSE 0 END
+    ,TD_RATE , td_marketrate, td_brokeragetype ='SD1'
+    FROM #tbl_TradeSqrup1 , #TrxDLV1
+    WHERE SerialNo = srno AND (Qty - FinalQty) > 0
+
+ 
+    UPDATE #tbl_TradeSqrup1
+    SET td_bqty = FinalQty, td_brokeragetype = 'DLV' 
+    FROM #TrxDLV1
+    WHERE SerialNo = srno  AND td_bsflag = 'B'
+
+    UPDATE #tbl_TradeSqrup1
+    SET td_sqty = FinalQty, td_brokeragetype = 'DLV' 
+    FROM #TrxDLV1
+    WHERE SerialNo = srno and td_bsflag = 'S'
+
+    DELETE #tbl_TradeSqrup1
+    WHERE td_bqty + td_sqty = 0
+
+
+    UPDATE A SET A.CMP = B.AugRate, A.AvgRate = B.AugRate, A.NetValue = ABS(B.NetValue), A.NetQty = B.NetQty
+	FROM @tbl_ProfileLOss A, (select td_clientcd, td_scripcd, SUM(td_bqty-td_sqty) As NetQty, 
+	Sum((td_sqty*td_rate)-(td_Bqty*td_rate)) As NetValue,
+	AugRate = ABS(IIF(SUM(td_bqty-td_sqty)<>0,Sum((td_sqty*td_rate)-(td_Bqty*td_rate))/SUM(td_bqty-td_sqty),0))
+	FROM #tbl_TradeSqrup1
+	WHERE td_brokeragetype = 'DLV'
+	GROUP BY td_clientcd, td_scripcd) B
+	where A.ClientCode = B.td_clientcd
+	AND A.ScripCode = B.td_scripcd
+	AND ScripTag = 'N'
+	
+	UPDATE A SET NotionalPL = SaleValue-BuyValue
+	FROM @tbl_ProfileLOss A
+	WHERE buyqty = saleQty
+	
+	UPDATE A SET NotionalPL = (SaleValue-BuyValue)+(ROUND(NetQty*AvgRate,2))
+	FROM @tbl_ProfileLOss A
+	WHERE buyqty <> saleQty and buyqty > 0 and saleQty > 0
+	  
+	UPDATE A SET NotionalPL = 0
+	FROM @tbl_ProfileLOss A
+	WHERE buyqty <> saleQty and (buyqty = 0 or saleQty = 0)
+  END
+  
+	
+  DECLARE @tbl_CashBill TABLE (Tag INT identity(1,1), ClientCode VARCHAR(50), ClientName VARCHAR(50),  SettEndDate varchar(8),
+  SettlementNo VARCHAR(50),
+  ScripCode VARCHAR(20), 
+  ScripName VARCHAR(100), ScripTag VARCHAR(1), TradingFlag VARCHAR(1),
+  BuyQty MONEY, BuyRate Money, BuyValue MONEY, SaleQty MONEY,  SaleRate MONEY, SaleValue MONEY, NetQty MONEY, NetValue MONEY, 
+  AvgRate MONEY, Cmp MONEY, NotPL MONEY)
+	
+  IF @strReportType <> 'Settlementwise Summary'
+  BEGIN
+	INSERT INTO @tbl_CashBill(ClientCode, ClientName,  ScripCode, ScripName,ScripTag, TradingFlag,
+	BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL)
+    SELECT ClientCode, ClientName = CM.cm_name,  ScripCode, ScripName = ss_name, ScripTag, TradingFlag, BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, 
+	NetQty, NetValue, AvgRate = ABS(AvgRate), 
+	CMP =ISNULL(cmp,0) , 
+    NotPL  = ISNULL(NotionalPL ,0)
+    FROM @tbl_ProfileLOss A, Securities(NOLOCK) S, Client_Master(NOLOCK) cm
+    WHERE A.ScripCode = S.ss_cd
+	and a.ClientCode = CM.CM_CD
+    ORDER BY  ClientCode, ss_name, ScripTag desc
+  END
+  ELSE	
+  IF @strReportType = 'Settlementwise Summary'
+  BEGIN
+    INSERT INTO @tbl_CashBill(ClientCode, ClientName, SettEndDate, SettlementNo, ScripCode, ScripName,ScripTag, TradingFlag, 
+	BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL)
+    SELECT ClientCode, ClientName = CM.cm_name, SettEndDate,SettlementNo,  
+	ScripCode, ScripName = ss_name, ScripTag, TradingFlag, BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate = ABS(AvgRate), 
+	CMP =ISNULL(cmp,0) , 
+    NotPL  = ISNULL(NotionalPL ,0)
+    FROM @tbl_ProfileLOss A, Securities(NOLOCK) S, Client_Master(NOLOCK) cm
+    WHERE A.ScripCode = S.ss_cd
+	and a.ClientCode = CM.CM_CD
+    ORDER BY  ClientCode, ss_name, ScripTag desc
+  END
+  SET @o_vcErrorMessage = 'Process Completed'	
+  IF @strOptionType = 'X'
+  BEGIN
+    DECLARE @XMLDATA1 XML
+    IF @strReportType not in( 'Settlementwise Summary','Stock Position Only')
+	BEGIN
+      
+      SET @XMLDATA1 = (select ClientCode, ClientName,  ScripCode, ScripName, ScripTag,  
+	  BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL 
+	  from  @tbl_CashBill order by ClientCode, Tag FOR XML PATH('ProfitLoss'))
+	  SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	END
+    IF @strReportType = 'Stock Position Only'
+    BEGIN    
+      SET @XMLDATA1 = (SELECT ClientCode, ClientName,  ScripCode, ScripName, ScripTag,  
+	  BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL 
+	  from  @tbl_CashBill where ISNULL(NetQty,0) <> 0 order by ClientCode, Tag FOR XML PATH('ProfitLoss'))
+	  SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	END
+  END 
+  ELSE
+  BEGIN
+    IF @strReportType not in( 'Settlementwise Summary','Stock Position Only')
+    BEGIN
+	  SELECT ClientCode, ClientName,  ScripCode, ScripName, ScripTag,  
+	  BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL 
+	  from  @tbl_CashBill order by ClientCode, Tag
+    end  
+    else IF @strReportType = 'Settlementwise Summary'
+    BEGIN
+	  select ClientCode, ClientName, SettEndDate = isnull(SettEndDate,''), SettlementNo = isnull(SettlementNo,''), ScripCode, ScripName, ScripTag,  
+	  BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL 
+	  from  @tbl_CashBill order by ClientCode, Tag
+    end	  
+    IF @strReportType = 'Stock Position Only'
+    BEGIN
+	  select ClientCode, ClientName,  ScripCode, ScripName, ScripTag,  
+	  BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL 
+	  from  @tbl_CashBill where ISNULL(NetQty,0) <> 0
+	  order by ClientCode, Tag
+    END
+  END
+  SET @o_vcErrorFlag  = 'S'
+  
+  RETURN 1
+END  
+GO
+
+CREATE OR ALTER PROCEDURE stpr_Rpt_ProfitLossNewDerv @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, @o_vcErrorMessage VARCHAR(MAX) OUTPUT 
+WITH ENCRYPTION
+AS
+BEGIN
+ /*
+ ///////////////////////////////////////////////////////////////////////////////////////////
+ // Create By     : VAIBHAV GARG
+ // Created Date  : 05-DEC-2023
+ // Description   : 
+ // Reviewed By   : 
+ // Review Date   : 
+ //////////////////////////////////////////////////////////////////////////////////////////
+*/
+ --- Parameter Declaration
+ 
+  DECLARE @dtFromDate VARCHAR(8), @dtToDt VARCHAR(8), @strUserId VARCHAR(500) = '', @strExchSeg VARCHAR(100),
+  @XMLData XML, @strAccountType VARCHAR(500)='', @strTable VARCHAR(50)='', @strString VARCHAR(MAX) = '',
+  @blnTplusCommex BIT, @StrCommexConn VARCHAR(MAX) = '', @strCommTable VARCHAR(100)='', @strCommClientMaster VARCHAR(100)='',
+  @strCommCompanyExchange VARCHAR(100)='', @strsql1 VARCHAR(500)='', @strsqlstart VARCHAR(MAX)='', @strsqlLast VARCHAR(500)='',
+  @strsqlHeader VARCHAR(MAX)='', @strSqlMain VARCHAR(MAX)='', @strSqlExecute VARCHAR(MAX)='', @strOutputType VARCHAR(1), 
+  @strProduct VARCHAR(50)='', @strSelectTag VARCHAR(1)='', @strSelectUsers VARCHAR(500)='', @ExchSeg VARCHAR(50)='', 
+  @strStringMin VARCHAR(MAX)='', @strSplFilter VARCHAR(MAX)='', @strReportType VARCHAR(50)='', @strRateType VARCHAR(50)='',
+  @strConsiderOptionBF VARCHAR(1)='Y', @strStringMinC VARCHAR(MAX)='', @strFIFO VARCHAR(1)='N', @strRequestFrom VARCHAR(1)='W',
+  @StrLookup VARCHAR(50)='', @StrSummary VARCHAR(1)='';
+  
+  DECLARE @SehmentCH_ClgHs VARCHAR(1)='', @ch_EffDt VARCHAR(8)=''
+  
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+
+  SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+  BEGIN TRY
+  
+  SELECT @dtFromDate = ISNULL(x.value('(FromDt)[1]', 'VARCHAR(8)'),''),
+  @strProduct = ISNULL(x.value('(Product)[1]', 'VARCHAR(50)'),'') ,
+  @dtToDt =    ISNULL(x.value('(ToDt)[1]', 'VARCHAR(8)'),''),
+  @strUserId =  ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+  @ExchSeg =  ISNULL(x.value('(ExchSeg)[1]', 'VARCHAR(500)'),''),
+  @strSelectTag = ISNULL(x.value('(SelectTag)[1]', 'VARCHAR(1)'),''),
+  @strSelectUsers = ISNULL(x.value('(SelectUsers)[1]', 'VARCHAR(500)'),''),
+  @strOutputType = ISNULL(x.value('(OutputType)[1]', 'VARCHAR(1)'),''),
+  @strSplFilter = ISNULL(x.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''),
+  @strReportType = ISNULL(x.value('(RepType)[1]', 'VARCHAR(100)'),''),
+  @strRateType = ISNULL(x.value('(RepSubType)[1]', 'VARCHAR(100)'),''),
+  @strConsiderOptionBF = ISNULL(x.value('(OptionBF)[1]', 'VARCHAR(100)'),''),
+  @strFIFO = ISNULL(x.value('(FIFOTag)[1]', 'VARCHAR(1)'),''),
+  @strRequestFrom = ISNULL(x.value('(RequestFrom)[1]', 'VARCHAR(1)'),''),
+  @StrLookup = ISNULL(x.value('(ScripCode)[1]', 'VARCHAR(50)'),''),
+  @StrSummary = ISNULL(x.value('(RequestSummary)[1]', 'VARCHAR(1)'),'')
+  FROM @XMLData.nodes('/root') AS XTbl(x) 
+  
+  IF LEN(ISNULL(@StrLookup,'')) <= 2  
+  BEGIN
+    SET @StrLookup = ''
+  END
+  
+  if ISNULL(@StrSummary,'') =''
+  Begin
+    SET @StrSummary = 'N'
+  END
+  
+  IF ISNULL(@strRequestFrom,'') =''
+  BEGIN
+    SET @strRequestFrom = 'W'
+  END
+  
+  if isnull(@strFIFO,'') = ''
+  begin
+    SET @strFIFO = 'N'
+  END
+  
+  if ISNULL(@strConsiderOptionBF,'')=''
+  BEGIN
+    SET @strConsiderOptionBF = 'Y'
+  END
+  
+  IF @strRateType = ''
+  BEGIN
+    SET @strRateType = 'Market Rate'
+  END
+  
+  
+  CREATE TABLE #tbl_ClientPL (CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),  ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+  Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), 
+  BF_QTY numeric, BF_CloseRate MONEY, BF_VALUE MONEY, BOT_QTY numeric, BOT_VALUE MONEY, 
+  SOLD_QTY numeric,SOLD_VALUE MONEY, EX_QTY numeric, EX_VALUE MONEY, AS_QTY numeric, AS_VALUE MONEY, MTM MONEY,
+  NET_QTY numeric, CMP MONEY, NET_VALUE MONEY, AccountType VARCHAR(1))
+  
+  CREATE INDEX indx_ClientPL ON #tbl_ClientPL (seriesid)
+    
+
+  DECLARE @tbl_BSClient TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10), ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+  Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), BOT_QTY numeric, BOT_VALUE MONEY, 
+  SOLD_QTY numeric, SOLD_VALUE MONEY)
+
+  DECLARE @tbl_CLClient TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),  ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+  Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), EX_QTY numeric, EX_VALUE MONEY, AS_QTY numeric, AS_VALUE MONEY)
+  
+
+  SET @strStringMin  = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50)) '
+  +' INSERT INTO @tbl_UserList(Client_Code) '
+  +' SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+  
+ 
+ 
+  IF @strProduct = 'DERV'
+  BEGIN 
+    
+    DECLARE  @iNoOfDay INT = 7, @dtDate VARCHAR(8)='', @iDateCounter INT = 0
+    
+    WHILE @iDateCounter<= @iNoOfDay
+    BEGIN
+      IF NOT EXISTS(select 1 from Fholiday_master where hm_companycode = 'A' and hm_exchange = 'N' and hm_segment ='F' 
+      and hm_dt = CONVERT(VARCHAR,DATEADD(DAY,@iDateCounter,CAST(@dtFromDate AS DATE)),112))
+      BEGIN
+	    SET @dtFromDate =  CONVERT(VARCHAR,DATEADD(DAY,@iDateCounter,@dtFromDate),112)
+	    GOTO ABC;
+      END
+	  SET @iDateCounter = @iDateCounter + 1
+    END
+    ABC:
+	
+	/*
+    SET @iDateCounter = 0
+    
+	WHILE @iDateCounter<= @iNoOfDay
+    BEGIN
+      IF NOT EXISTS(select 1 from Fholiday_master where hm_companycode = 'A' and hm_exchange = 'N' and hm_segment ='F' 
+      and hm_dt = CONVERT(VARCHAR,DATEADD(DAY,@iDateCounter,CAST(@dtToDt AS DATE)),112))
+      BEGIN
+	    SET @dtToDt =  CONVERT(VARCHAR,DATEADD(DAY,@iDateCounter*-1,@dtToDt),112)
+	    GOTO ABC1;
+      END
+	  SET @iDateCounter = @iDateCounter + 1
+    END
+    ABC1:
+	*/
+	
+	
+	IF @strSplFilter = ''
+	BEGIN
+	  SET @strStringMin  = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50)) '
+      +' INSERT INTO @tbl_UserList(Client_Code) '
+      +' SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+	END  
+	ELSE
+    IF @strSplFilter <> ''
+    BEGIN
+      SET @strStringMinC  = ' DECLARE @tbl_UserList TABLE (Client_Code VARCHAR(10)) '
+	                     +' INSERT INTO @tbl_UserList(Client_Code) SELECT distinct CM_CD FROM Client_master(NOLOCK) WHERE 1 = 1  AND '+@strSplFilter
+      SET @strStringMin = @strStringMinC					 
+    END	
+
+    IF ISNULL(@strFIFO,'N') = 'N'
+	BEGIN
+	  SET @strString  = @strStringMin+' SELECT  td_companycode, TD_Exchange, TD_Segment, td_clientcd, SM_DESC, sm_underlying, td_seriesid,td_expirydt, '
+      +' sm_multiplier, td_dt = '''+@dtFromDate+''', SUM(td_bqty - td_sqty) AS BFQty, '
+	  +' BF_CloseRate = (CASE WHEN sum(td_bqty- td_sqty) <> 0 THEN SUM(CASE WHEN TD_BSFlag=''B'' THEN td_bqty*CAST(td_rate AS numeric(19,6)) '
+	  +' ELSE td_sqty*CAST(td_rate AS numeric(19,6))*-1 END)'
+	  +' /sum(td_bqty- td_sqty) ELSE 0 END), '
+      +' BF_VALUE = SUM(CASE WHEN TD_BSFlag=''B'' THEN td_bqty*CAST(td_rate AS numeric(19,6))*-1 ELSE td_sqty*CAST(td_rate AS numeric(19,6)) END) '
+	  +' FROM Trades (NOLOCK), Series_master(NOLOCK), @tbl_UserList X  '
+      +' WHERE  td_dt < '''+@dtFromDate+''' '
+      +' AND td_clientcd = X.Client_Code '
+      +' AND td_expirydt >= '''+@dtFromDate+''' '
+      +' AND td_exchange = sm_exchange and td_segment = sm_segment '
+      +' and td_seriesid = sm_seriesid '
+      +' and sm_expirydt >= '''+@dtFromDate +''''
+      +' AND (('''+@strConsiderOptionBF+''' = ''N'' AND sm_prodtype NOT IN(''EO'',''CO'',''IO'')) OR '''+@strConsiderOptionBF+''' = ''Y'')'
+      +' AND ltrim(rtrim(td_groupid)) <> ''B'' '
+	
+	  IF ISNULL(@ExchSeg,'') <> ''
+      BEGIN
+        SET @strString =   @strString+'  AND td_companycode+td_exchange+td_segment IN(SELECT VALUE FROM  ReturnTable('''+@ExchSeg+''','',''))'
+      END	
+	  
+	  IF ISNULL(@StrLookup,'') <> ''
+      BEGIN
+        SET @strString =   @strString+'  AND TD_Exchange+TD_Segment+cast(td_seriesid as varchar)  = '''+@StrLookup+''''
+      END	
+	  
+	
+      SET @strString =   @strString+' GROUP BY td_companycode, TD_Exchange, TD_Segment, td_clientcd, SM_DESC,sm_underlying, td_seriesid, td_expirydt, sm_multiplier '
+      +' HAVING sum(td_bqty - td_sqty) <> 0 '
+	  BEGIN TRY
+        INSERT INTO #tbl_ClientPL(CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, TrxnDate,  BF_QTY, BF_CloseRate, BF_VALUE)
+	    EXEC(@strString)
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+	  
+	  UPDATE A SET A.BF_CloseRate = ms_prcloseprice, a.BF_VALUE = (a.BF_QTY*a.Multiplier*ms_prcloseprice)*-1
+      FROM #tbl_ClientPL A, Market_summary(NOLOCK) X, Series_master SR  
+      WHERE ms_seriesid = seriesid 
+      and ms_exchange = exchange and ms_segment = Segment
+      and ms_dt = (select  max(ms_dt) from Market_summary(NOLOCK)  
+	  WHERE ms_exchange = X.ms_exchange and ms_segment = X.ms_segment and ms_dt <= @dtFromDate)
+	  AND A.exchange = SR.sm_exchange
+	  AND A.Segment  = sm_Segment
+	  AND A.seriesid = SR.sm_seriesid
+	  AND ((sm_prodtype NOT IN('EO','CO','IO') AND @strRateType in('Underlying Close Price')) 
+	  OR @strRateType not in('Underlying Close Price'))
+	
+	
+      UPDATE A SET A.BF_CloseRate = ms_prcloseprice, a.BF_VALUE = 0
+      FROM #tbl_ClientPL A, Market_summary(NOLOCK) X, Series_master SR  
+      WHERE ms_seriesid = seriesid 
+      and ms_exchange = exchange and ms_segment = Segment
+      and ms_dt = (select  max(ms_dt) from Market_summary(NOLOCK)  
+	  WHERE ms_exchange = X.ms_exchange and ms_segment = X.ms_segment and ms_dt <= @dtFromDate)
+	  AND A.exchange = SR.sm_exchange
+	  AND A.Segment  = sm_Segment
+	  AND A.seriesid = SR.sm_seriesid
+	  AND sm_prodtype IN('EO','CO','IO') 
+	  AND @strRateType = 'Do not Valuate' 
+	
+	  IF @strRateType = 'Underlying Close Price'
+	  BEGIN
+	    declare @BFseriesid INT, @spotCloseRate MONEY=0, @strExchange VARCHAR(1)='',
+		@strSegment VARCHAR(1)=''
+	    DECLARE db_CursorRateBF CURSOR FOR         
+        SELECT distinct seriesid, Exchange,  Segment
+        FROM #tbl_ClientPL A 
+	    where BF_QTY <> 0 and EXISTS(SELECT 1 FROM Series_master(NOLOCK)
+	    WHERE sm_Segment =  A.Segment AND sm_exchange = A.Exchange AND sm_seriesid = A.seriesid   
+		AND sm_productcd = 'OPTSTK')
+        OPEN db_CursorRateBF       
+        FETCH NEXT FROM db_CursorRateBF INTO @BFseriesid, @strExchange, @strSegment
+        WHILE @@FETCH_STATUS = 0     
+        BEGIN
+	      SELECT TOP 1 @spotCloseRate = mk_closerate FROM Market_Rates(NOLOCK) X WHERE mk_scripcd IN(
+          SELECT SS_cD FROM Securities WHERE ss_bsymbol IN(
+          SELECT sm_symbol FROM Series_master(NOLOCK) WHERE sm_exchange = @strExchange 
+		  AND sm_Segment = @strSegment AND sm_seriesid = @BFseriesid))
+          AND mk_dt   IN(SELECT MAX(mk_dt) FROM Market_Rates(NOLOCK) WHERE mk_dt < @dtFromDate)
+          ORDER BY CASE WHEN mk_exchange='N' THEN 1 ELSE 2 END
+	  
+	      UPDATE A SET A.BF_CloseRate = @spotCloseRate, a.BF_VALUE =(a.BF_QTY*@spotCloseRate)*-1
+	      FROM #tbl_ClientPL A
+	      WHERE A.seriesid = @BFseriesid
+		  AND A.Exchange = @strExchange
+		  AND A.Segment = @strSegment
+		  
+	      FETCH NEXT FROM db_CursorRateBF INTO @BFseriesid, @strExchange, @strSegment
+        END        
+        CLOSE db_CursorRateBF        
+        DEALLOCATE db_CursorRateBF	
+	  END 
+	  
+	  SET @strString  = @strStringMin+' SELECT td_companycode, TD_Exchange, TD_Segment, td_clientcd, SM_DESC, sm_underlying, td_seriesid, '
+	  +' td_expirydt, sm_multiplier, TrxnDate = CASE WHEN ISNULL('''+@strReportType+''','''')  = ''Series Wise Detail'' THEN  td_dt ELSE '''+@dtFromDate+''' END,'
+      +' SUM(td_bqty) BQty, '
+      +' sum(td_bqty * cast(td_rate as money)*sm_multiplier) BuyValue, '
+      +' SUM(td_Sqty) SQty, '
+      +' sum(td_sqty * cast(td_rate as money)*sm_multiplier) SaleValue '
+      +' FROM Trades (NOLOCK), Series_master(NOLOCK) , @tbl_UserList X  '
+      +' WHERE  td_dt >= '''+@dtFromDate+''' '
+      +' and td_dt <= '''+@dtToDt+''' '
+      +' AND td_clientcd = X.Client_Code '
+      +' AND td_expirydt >= '''+@dtFromDate+''' '
+      +' AND td_exchange = sm_exchange and td_segment = sm_segment  '
+      +' and td_seriesid = sm_seriesid '
+      +' AND ltrim(rtrim(td_groupid)) <> ''B'' '
+ 	
+      IF ISNULL(@ExchSeg,'') <> ''
+      BEGIN
+        SET @strString =   @strString+'  AND td_companycode+td_exchange+td_segment IN(SELECT VALUE FROM  ReturnTable('''+@ExchSeg+''','',''))'
+      END	
+	  
+	  IF ISNULL(@StrLookup,'') <> ''
+      BEGIN
+        SET @strString =   @strString+'  AND TD_Exchange+TD_Segment+cast(td_seriesid as varchar)  = '''+@StrLookup+''''
+      END	
+	
+      SET @strString =   @strString+' GROUP BY td_companycode, TD_Exchange, TD_Segment, td_clientcd, SM_DESC,sm_underlying, td_seriesid,td_expirydt, sm_multiplier'
+	  +',  CASE WHEN ISNULL('''+@strReportType+''','''') = ''Series Wise Detail'' THEN  td_dt ELSE  '''+@dtFromDate+''' END '
+      
+	  BEGIN TRY
+        INSERT INTO @tbl_BSClient (CompanyCode, Exchange, Segment,  ClientCode, Scrip, Symbol, seriesid, 
+        ExpiryDate, Multiplier, TrxnDate, BOT_QTY, BOT_VALUE, SOLD_QTY,SOLD_VALUE)
+	    EXEC(@strString)
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+
+
+      SET @strString  = @strStringMin+'SELECT ex_companycode, ex_Exchange, ex_segment, ex_clientcd, SM_DESC, sm_underlying, ex_seriesid, '
+       +'	sm_expirydt, sm_multiplier, CASE WHEN ISNULL('''+@strReportType+''','''') = ''Series Wise Detail'' THEN  ex_dt ELSE '''+@dtFromDate+''' END'
+      +'	 ,  ex_eqty = sum(ex_eqty) , '
+      +' EX_VALUE = sum((ex_eqty)*ex_diffbrokrate*sm_multiplier*-1), ex_aqty = sum(ex_aqty), '
+      +' AS_VALUE = sum((ex_aqty)*ex_diffbrokrate*sm_multiplier*-1) '
+      +' From Exercise(NOLOCK), Series_master(NOLOCK), @tbl_UserList X  '
+      +' WHERE ex_dt between '''+@dtFromDate+''' and '''+@dtToDt+''' '
+      +' and ex_clientcd = X.Client_Code '
+      +' and sm_expirydt >= '''+@dtFromDate+''' ' 
+      +' and ex_exchange = sm_exchange '
+      +' and ex_segment = sm_segment And ex_seriesid = sm_seriesid '
+	
+	
+      IF ISNULL(@ExchSeg,'') <> ''
+      BEGIN
+        SET @strString =   @strString+'  AND ex_companycode+ex_exchange+ex_segment IN(SELECT VALUE FROM  ReturnTable('''+@ExchSeg+''','',''))'
+      END	
+	    
+	  IF ISNULL(@StrLookup,'') <> ''
+      BEGIN
+        SET @strString =   @strString+'  AND ex_Exchange+ex_segment+cast(ex_seriesid as varchar)  = '''+@StrLookup+''''
+      END	
+	  
+      SET @strString =   @strString+' GROUP BY ex_companycode, ex_Exchange, ex_segment, ex_clientcd, SM_DESC, sm_underlying, ex_seriesid, sm_expirydt, sm_multiplier '
+	  +', CASE WHEN ISNULL('''+@strReportType+''','''') = ''Series Wise Detail'' THEN ex_dt ELSE '''+@dtFromDate+''' END '
+    
+	  BEGIN TRY
+        INSERT INTO @tbl_CLClient(CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, TrxnDate, EX_QTY, EX_VALUE,
+        AS_QTY, AS_VALUE)
+	    EXEC(@strString)
+	  END TRY
+	  BEGIN CATCH
+	    SET @o_vcErrorFlag  = 'E'
+        SET @o_vcErrorMessage = ERROR_MESSAGE()
+        RETURN 1
+	  END CATCH
+	
+      UPDATE A SET A.BOT_QTY = B.BOT_QTY, A.BOT_VALUE = B.BOT_VALUE, A.SOLD_QTY = B.SOLD_QTY,
+      A.SOLD_VALUE = B.SOLD_VALUE
+      FROM #tbl_ClientPL A, @tbl_BSClient B
+      WHERE A.ClientCode = B.ClientCode
+      AND A.Scrip = B.Scrip
+      AND A.Exchange = B.Exchange
+      AND A.seriesid = B.seriesid
+	  AND A.Segment = B.Segment
+	  AND CASE WHEN A.TrxnDate='' THEN @dtFromDate ELSE A.TrxnDate END = 
+	  CASE WHEN B.TrxnDate='' THEN @dtFromDate ELSE B.TrxnDate END
+
+      INSERT INTO #tbl_ClientPL(CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, TrxnDate, BF_QTY, BF_CloseRate, BF_VALUE,
+      BOT_QTY, BOT_VALUE, SOLD_QTY, SOLD_VALUE)
+      SELECT CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, TrxnDate, BF_QTY = 0, BF_CloseRate= 0, BF_VALUE = 0,
+      BOT_QTY, BOT_VALUE, SOLD_QTY, SOLD_VALUE
+      FROM @tbl_BSClient B
+      WHERE NOT EXISTS(SELECT 1 FROM #tbl_ClientPL A WHERE A.ClientCode = B.ClientCode
+      AND A.Scrip = B.Scrip
+      AND A.Exchange = B.Exchange
+      AND A.seriesid = B.seriesid
+	  AND A.Segment = B.Segment
+	  and CASE WHEN A.TrxnDate='' THEN @dtFromDate ELSE A.TrxnDate END 
+	  = CASE WHEN B.TrxnDate='' THEN @dtFromDate ELSE B.TrxnDate END)
+	  
+	  
+      UPDATE A SET A.EX_QTY = B.EX_QTY, A.EX_VALUE = B.EX_VALUE, A.AS_QTY = B.AS_QTY,
+      A.AS_VALUE = B.AS_VALUE
+      FROM #tbl_ClientPL A, @tbl_CLClient B
+      WHERE A.ClientCode = B.ClientCode
+      AND A.Scrip = B.Scrip
+      AND A.Exchange = B.Exchange
+      AND A.seriesid = B.seriesid
+	  AND A.Segment = B.Segment
+	  and CASE WHEN A.TrxnDate='' THEN @dtFromDate ELSE A.TrxnDate END = 
+	  CASE WHEN B.TrxnDate='' THEN @dtFromDate ELSE B.TrxnDate END
+	  
+	  INSERT INTO #tbl_ClientPL(CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, TrxnDate, BF_QTY, BF_CloseRate, BF_VALUE,
+      BOT_QTY, BOT_VALUE, SOLD_QTY, SOLD_VALUE, EX_QTY, EX_VALUE, AS_QTY, AS_VALUE)
+      SELECT CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, Multiplier, 
+	  TrxnDate, BF_QTY = 0, BF_CloseRate= 0, BF_VALUE = 0,
+      BOT_QTY = 0, BOT_VALUE = 0, SOLD_QTY = 0, SOLD_VALUE = 0, EX_QTY, EX_VALUE, AS_QTY, AS_VALUE
+      FROM @tbl_CLClient B
+      WHERE NOT EXISTS(SELECT 1 FROM #tbl_ClientPL A WHERE A.ClientCode = B.ClientCode
+      AND A.Scrip = B.Scrip
+      AND A.Exchange = B.Exchange
+      AND A.seriesid = B.seriesid
+	  AND A.Segment = B.Segment
+	  and CASE WHEN A.TrxnDate='' THEN @dtFromDate ELSE A.TrxnDate END 
+	  = CASE WHEN B.TrxnDate='' THEN @dtFromDate ELSE B.TrxnDate END)
+  
+    END
+	
+	ELSE IF ISNULL(@strFIFO,'N') = 'Y'
+	BEGIN
+	  IF OBJECT_ID('tempdb..#tbl_ClientPLFIFO') IS NOT NULL
+      DROP TABLE #tbl_ClientPLFIFO
+
+      CREATE TABLE #tbl_ClientPLFIFO (CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),  ClientCode VARCHAR(50), 
+      ClientName VARCHAR(100), 
+      Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), 
+      td_SRNO INT,  td_bsflag VARCHAR(1), Qty_NS MONEY, VALUES_NS MONEY, td_Rate MONEY)
+    
+	  CREATE INDEX indx_ClientPLFIFO ON #tbl_ClientPLFIFO (seriesid)
+
+      IF OBJECT_ID('tempdb..#tbl_DelvTrxn') IS NOT NULL
+        DROP TABLE #tbl_DelvTrxn
+      IF OBJECT_ID('tempdb..#tbl_DelvTrxn1') IS NOT NULL
+        DROP TABLE #tbl_DelvTrxn1
+      IF OBJECT_ID('tempdb..#TrxSummaryDLV1') IS NOT NULL
+        DROP TABLE #TrxSummaryDLV1
+      IF OBJECT_ID('tempdb..#TrxDLV1') IS NOT NULL
+        DROP TABLE #TrxDLV1
+      IF OBJECT_ID('tempdb..#tbl_CloseRate') IS NOT NULL
+        DROP TABLE #tbl_CloseRate
+      IF OBJECT_ID('tempdb..#tbl_DelvTrxnN') IS NOT NULL
+        DROP TABLE #tbl_DelvTrxnN
+	  IF OBJECT_ID('tempdb..#tbl_DelvTrxnN1') IS NOT NULL
+        DROP TABLE #tbl_DelvTrxnN1
+	  IF OBJECT_ID('tempdb..#tbl_DelvTrxnN2') IS NOT NULL
+        DROP TABLE #tbl_DelvTrxnN2
+      IF OBJECT_ID('tempdb..#tbl_Rep') IS NOT NULL
+        DROP TABLE #tbl_Rep
+	
+	  DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50))
+	  IF @strSplFilter = ''
+	  BEGIN
+	    INSERT INTO @tbl_UserList(Client_Code) 
+        SELECT * FROM DBO.[fn_GetClients](@strUserId,@strSelectTag,@strSelectUsers) 
+	  END  
+	  ELSE
+      IF @strSplFilter <> ''
+      BEGIN
+        SET @strStringMinC  = 'SELECT distinct CM_CD FROM Client_master(NOLOCK) WHERE 1 = 1  AND '+@strSplFilter
+		INSERT INTO @tbl_UserList(Client_Code) 
+		EXEC(@strStringMinC)
+      END	
+  
+      CREATE TABLE #tbl_DelvTrxn (
+      SerialNo int identity(1,1), td_companycode VARCHAR(1), TD_Exchange VARCHAR(1), 
+	  TD_Segment VARCHAR(1), td_SRNO INT, td_dt VARCHAR(8), td_clientcd VARCHAR(20), 
+	  td_scripcd VARCHAR(20), td_expirydt VARCHAR(8), SM_DESC VARCHAR(500), sm_underlying VARCHAR(50),
+      sm_multiplier INT, td_bsflag VARCHAR(1), Qty_NS MONEY, VALUES_NS MONEY, td_Rate MONEY, 
+	  XTAG11 INT, LONG_TAG VARCHAR(1), SQR_TAG VARCHAR(1), Tmp_RefNo numeric, td_Filler1 VARCHAR(8))
+
+      INSERT INTO #tbl_DelvTrxn(td_SRNO, td_companycode, TD_Exchange, TD_Segment, 
+	  td_dt, td_clientcd, td_scripcd, td_expirydt, SM_DESC, sm_underlying,
+	  sm_multiplier, td_bsflag, Qty_NS, VALUES_NS, td_Rate)
+      SELECT  td_SRNO, td_companycode, TD_Exchange, TD_Segment, td_dt, td_clientcd, td_seriesid,  td_expirydt, SM_DESC, sm_underlying,
+	  sm_multiplier, td_bsflag, Qty_NS = ISNULL(td_bqty,0)+ISNULL(td_sqty,0), 
+      VALUES_NS = (ISNULL(td_bqty,0)+ISNULL(td_sqty,0))*td_rate*sm_multiplier, td_rate
+      FROM Trades (NOLOCK), Series_master(NOLOCK), @tbl_UserList X
+      WHERE  td_clientcd = X.Client_Code
+      AND td_dt < @dtFromDate
+      AND td_expirydt >= @dtFromDate
+      AND td_exchange = sm_exchange and td_segment = sm_segment 
+      AND td_seriesid = sm_seriesid 
+      AND ltrim(rtrim(td_groupid)) <> 'B'
+      ORDER BY td_seriesid, td_dt
+
+      CREATE TABLE #TrxSummaryDLV1 (clientcd VARCHAR(8) NOT NULL, scripcd VARCHAR(6) NOT NULL, td_expirydt VARCHAR(8), 
+	  Buys MONEY, Sells MONEY)
+  
+      INSERT INTO #TrxSummaryDLV1
+      SELECT td_clientcd, td_scripcd, td_expirydt, Buys, Sells
+      FROM (SELECT td_clientcd, td_scripcd, td_expirydt, sum(CASE WHEN td_bsflag='B' THEN Qty_ns ELSE 0 END) AS 'Buys', 
+      SUM(CASE WHEN td_bsflag='S' THEN Qty_ns ELSE 0 END) 'Sells', 
+      SUM(CASE WHEN td_bsflag='B' THEN Qty_ns ELSE 0 END) - sum(CASE WHEN td_bsflag='S' THEN Qty_ns ELSE 0 END) AS 'Delivery', 
+      COUNT(*) Totalrec
+      FROM #tbl_DelvTrxn
+      GROUP BY td_clientcd, td_scripcd, td_expirydt
+      HAVING sum(CASE WHEN td_bsflag='B' THEN Qty_ns ELSE 0 END) - sum(CASE WHEN td_bsflag='S' THEN Qty_ns ELSE 0 END) <> 0) a
+
+      CREATE TABLE #TrxDLV1 (SrNo NUMERIC, Qty NUMERIC, FinalQty NUMERIC)
+      CREATE INDEX indx_SrNo ON #TrxDLV1 (SrNo) 
+
+      INSERT INTO #TrxDLV1
+      SELECT SerialNo, Qty, CASE WHEN NetQty >= Running THEN Qty ELSE NetQty - isNull(PrevRunning, 0) END FinalQty
+      FROM (
+      SELECT SerialNo, td_clientcd, td_scripcd, td_marketrate,  NetQty, Qty, Running, LAG(Running) OVER (
+      PARTITION BY td_clientcd, td_scripcd ORDER BY td_dt DESC,  SerialNo DESC) PrevRunning
+      FROM (SELECT SerialNo, td_dt, td_clientcd, td_scripcd, Qty_ns Qty, td_marketrate = td_Rate,  abs(Buys - Sells) NetQty, Sum(Qty_ns) OVER (
+			PARTITION BY td_clientcd, td_scripcd ORDER BY td_dt DESC,  SerialNo DESC) Running
+      FROM #tbl_DelvTrxn,  #TrxSummaryDLV1 
+      WHERE td_clientcd = clientcd AND td_scripcd = scripcd AND td_bsflag = CASE WHEN Buys > Sells THEN 'B' ELSE 'S' END) a) b
+      WHERE CASE WHEN NetQty >= Running THEN Qty ELSE NetQty - isNull(PrevRunning, 0) END > 0
+
+
+      INSERT INTO #tbl_DelvTrxn(td_SRNO, td_companycode, TD_Exchange, TD_Segment, td_dt, td_clientcd, td_scripcd, td_expirydt,  
+	  SM_DESC, sm_underlying, 
+	  sm_multiplier, td_bsflag, Qty_NS, VALUES_NS, td_Rate)
+      SELECT td_SRNO, td_companycode, TD_Exchange, TD_Segment, td_dt, td_clientcd, 
+	  td_scripcd, td_expirydt, SM_DESC, sm_underlying, sm_multiplier, td_bsflag,
+      Qty - FinalQty, VALUES_NS = (Qty - FinalQty)*td_Rate, td_Rate
+      FROM #tbl_DelvTrxn , #TrxDLV1
+      WHERE SerialNo = srno AND (Qty - FinalQty) > 0
+
+      UPDATE #tbl_DelvTrxn
+      SET Qty_NS = FinalQty, VALUES_NS = FinalQty*td_Rate, SQR_TAG = 'Y' 
+      FROM #TrxDLV1
+      WHERE SerialNo = srno  AND td_bsflag = 'B'
+
+      UPDATE #tbl_DelvTrxn
+      SET Qty_NS = FinalQty, VALUES_NS = FinalQty*td_Rate, SQR_TAG = 'Y' 
+      FROM #TrxDLV1
+      WHERE SerialNo = srno and td_bsflag = 'S'
+
+      DELETE #tbl_DelvTrxn
+      WHERE Qty_NS = 0
+
+	  INSERT INTO #tbl_ClientPLFIFO(CompanyCode, Exchange, Segment, ClientCode, Symbol, 
+	  seriesid, ExpiryDate, Scrip, Multiplier, TrxnDate,  td_SRNO,  td_bsflag, Qty_NS, VALUES_NS, td_Rate)
+      SELECT td_companycode, TD_Exchange, TD_Segment, td_clientcd, sm_underlying ,td_scripcd, td_expirydt, SM_DESC, sm_multiplier, td_dt,
+	  td_SRNO,  td_bsflag, Qty_NS, VALUES_NS, td_Rate
+	  FROM #tbl_DelvTrxn WHERE ISNULL(SQR_TAG,'N') = 'Y'
+      ORDER BY td_scripcd, td_expirydt
+  
+      CREATE TABLE #tbl_DelvTrxnN (CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),
+	  td_SRNO INT, td_dt VARCHAR(8), td_clientcd VARCHAR(20), td_seriesid VARCHAR(20), 
+	  td_expirydt VARCHAR(8), td_bsflag VARCHAR(1), Qty_NS MONEY, VALUES_NS MONEY, td_Rate MONEY, FIFONo INT, 
+	  XTAG11 INT, LONG_TAG VARCHAR(1), SQR_TAG VARCHAR(1))
+
+	  CREATE TABLE #tbl_DelvTrxnN1 (CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),
+	  td_SRNO INT, td_dt VARCHAR(8), td_clientcd VARCHAR(20), td_seriesid VARCHAR(20), 
+	  td_expirydt VARCHAR(8), td_bsflag VARCHAR(1), Qty_NS MONEY, VALUES_NS MONEY, td_Rate MONEY, FIFONo INT, 
+	  XTAG11 INT, LONG_TAG VARCHAR(1), SQR_TAG VARCHAR(1))
+
+	  CREATE TABLE #tbl_DelvTrxnN2 (CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),
+	  td_SRNO INT, td_dt VARCHAR(8), td_clientcd VARCHAR(20), td_seriesid VARCHAR(20), 
+	  td_expirydt VARCHAR(8), td_bsflag VARCHAR(1), Qty_NS MONEY, VALUES_NS MONEY, td_Rate MONEY, FIFONo INT, 
+	  XTAG11 INT, LONG_TAG VARCHAR(1), SQR_TAG VARCHAR(1))
+
+	 
+	  CREATE INDEX indx_DelvTrxnN1 ON #tbl_DelvTrxnN1 (td_clientcd, td_seriesid, td_SRNO, FIFONO)
+      CREATE INDEX indx_DelvTrxnN ON #tbl_DelvTrxnN (td_clientcd, td_seriesid, td_SRNO, FIFONO)
+	  CREATE INDEX indx_DelvTrxnN2 ON #tbl_DelvTrxnN2 (td_clientcd, td_seriesid, td_SRNO, FIFONO)
+      CREATE INDEX indx_DelvTrxn1N ON #tbl_DelvTrxnN (td_clientcd, FIFONO)
+
+      INSERT INTO #tbl_DelvTrxnN (CompanyCode, Exchange,  Segment, td_SRNO, td_dt,  
+	  td_clientcd, td_seriesid, td_bsflag, Qty_NS, VALUES_NS, td_Rate, FIFONO)
+
+      SELECT X.*, FIFONO = ROW_NUMBER() OVER (
+		PARTITION BY td_clientcd ORDER BY td_seriesid, TD_DT, td_SRNO)
+      FROM (
+	  
+	  SELECT CompanyCode, Exchange, Segment, 
+	  td_SRNO, td_dt = TrxnDate, td_clientcd =  ClientCode, td_seriesid = seriesid,  td_bsflag, 
+      Qty_NS  , VALUES_NS, td_Rate
+	  FROM #tbl_ClientPLFIFO
+	  UNION ALL
+	  SELECT td_companycode as CompanyCode, TD_Exchange as Exchange, TD_Segment as Segment, 
+	  td_SRNO, td_dt, td_clientcd, td_seriesid, td_bsflag, 
+      Qty_NS = ABS(td_bqty - td_Sqty),
+	  VALUES_NS = td_Rate * ABS(td_bqty - td_Sqty), td_Rate
+	  FROM Trades(NOLOCK), Series_master(NOLOCK), @tbl_UserList X
+      WHERE  td_clientcd = x.Client_Code
+      AND td_dt >= @dtFromDate
+      AND td_dt <= @dtToDt
+      AND td_exchange = sm_exchange and td_segment = sm_segment 
+      AND td_seriesid = sm_seriesid 
+      AND ltrim(rtrim(td_groupid)) <> 'B' ) X --WHERE X.td_seriesid='219504'
+
+
+	  DECLARE @SQR_QTY MONEY = 0, @SQR_QTY1 MONEY = 0, @td_clientcdC1 VARCHAR(10) = '', @td_scripcdC1 VARCHAR(10) = '', 
+	  @td_BuyQtyC1 MONEY = 0, @td_SaleQtyC1 MONEY = 0, @COUNTER INT = 0, @td_SRNOB INT, 
+	  @td_dtB VARCHAR(8),  @td_clientcdB VARCHAR(50), @td_scripcdB VARCHAR(50), 
+	  @td_bsflagB VARCHAR(1), @QTY_NSB MONEY, @td_RateB MONEY, @VALUES_NSB MONEY, 
+	  @td_SRNOS INT, @td_dtS VARCHAR(8), @td_clientcdS VARCHAR(50), @td_scripcdS 
+	  VARCHAR(50), @td_bsflagS VARCHAR(1), @QTY_NSS MONEY, @td_RateS MONEY, @buyQty MONEY = 0, @SaleQty MONEY = 0, 
+	  @BQTY MONEY = 0, @SQTY MONEY = 0, @VALUES_NSS MONEY, @FIFONOB INT, @FIFONOS INT, @SQ MONEY = 0, @TAG VARCHAR(1) = 'C', 
+	  @strFlag VARCHAR(1)='N', @strsaleflag VARCHAR(1)='', @TD_STTB MONEY, 
+	  @TD_STTS MONEY, @BDATE varchar(8), @SDATE VARCHAR(8), @CompanyCodeb VARCHAR(10), @Exchangeb VARCHAR(10), 
+	  @Segmentb VARCHAR(10), @CompanyCodeS VARCHAR(10), @ExchangeS VARCHAR(10), 
+	  @SegmentS VARCHAR(10)
+
+	
+      DECLARE CursorC1Main CURSOR
+      FOR
+      SELECT td_clientcd, td_seriesid, SUM(CASE WHEN td_bsflag = 'B' THEN Qty_NS ELSE 0 END) BuyQty, 
+      SUM(CASE WHEN td_bsflag = 'S' THEN Qty_NS ELSE 0 END) SaleQty
+      FROM #tbl_DelvTrxnN x
+      GROUP BY td_clientcd, td_seriesid
+      HAVING SUM(CASE WHEN td_bsflag = 'B' THEN Qty_NS ELSE 0 END) <> 0 
+      AND SUM(CASE WHEN td_bsflag = 'S' THEN Qty_NS ELSE 0 END) <> 0
+
+      OPEN CursorC1Main
+      FETCH NEXT
+      FROM CursorC1Main
+      INTO @td_clientcdC1, @td_scripcdC1, @td_BuyQtyC1, @td_SaleQtyC1
+      WHILE @@FETCH_STATUS = 0
+      BEGIN
+	    IF SIGN(@td_BuyQtyC1 - @td_SaleQtyC1) <> 1
+	    BEGIN
+		  SET @SQR_QTY = @td_BuyQtyC1
+		  SET @SQR_QTY1 = @td_BuyQtyC1
+		  set @strsaleflag = 'B'
+	    END
+	    ELSE
+	    BEGIN
+		  SET @SQR_QTY = @td_SaleQtyC1
+		  SET @SQR_QTY1 = @td_SaleQtyC1
+		  set @strsaleflag = 'S'
+	    END
+	
+	
+	    DECLARE CursorBMain CURSOR
+	    FOR SELECT CompanyCode, Exchange,  Segment, td_SRNO, td_dt, td_clientcd, td_seriesid, td_bsflag, 
+		Qty_NS, td_Rate, VALUES_NS, FIFONO
+	    FROM #tbl_DelvTrxnN
+	    WHERE td_clientcd = @td_clientcdC1 AND td_seriesid = @td_scripcdC1 AND td_bsflag = 'B' AND Qty_NS <> 0
+	    ORDER BY td_clientcd, td_seriesid, FIFONO, td_SRNO
+	
+	    DECLARE CursorSMain CURSOR
+	    FOR
+	    SELECT CompanyCode, Exchange,  Segment, td_SRNO, td_dt, td_clientcd, td_seriesid, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO
+	    FROM #tbl_DelvTrxnN
+	    WHERE td_clientcd = @td_clientcdC1 AND td_seriesid = @td_scripcdC1 AND td_bsflag = 'S' AND Qty_NS <> 0
+	    ORDER BY td_clientcd, td_seriesid, FIFONO, td_SRNO
+	    OPEN CursorBMain
+	    OPEN CursorSMain
+	    WHILE @@FETCH_STATUS = 0
+	    BEGIN
+	      SET @COUNTER = @COUNTER + 1
+          IF @SQR_QTY <> 0
+          BEGIN
+            IF @BQTY = 0
+            BEGIN
+              FETCH NEXT FROM CursorBMain
+			  INTO @CompanyCodeb, @Exchangeb, @Segmentb, @td_SRNOB, @td_dtB,  @td_clientcdB, @td_scripcdB, @td_bsflagB, @Qty_NSB, @td_RateB, 
+					@VALUES_NSB, @FIFONOB
+              SET @BQTY = @QTY_NSB
+              SET @BDATE = @td_dtB
+            END
+          END
+          IF @SQR_QTY1 <> 0
+          BEGIN
+            IF @SQTY = 0
+            BEGIN
+              FETCH NEXT FROM CursorSMain 
+			  INTO @CompanyCodes, @Exchanges, @SegmentS, @td_SRNOS, @td_dtS, @td_clientcdS, @td_scripcdS, @td_bsflagS, @Qty_NSS, @td_RateS, 
+			       @VALUES_NSS, @FIFONOS
+              SET @SQTY = @QTY_NSS
+              SET @SDATE  =  @td_dtS
+            END
+          END
+		  IF @BQTY >= @SQTY 
+		  BEGIN
+		    IF @BQTY > 0
+		    BEGIN
+		      SET @SQ = @SQTY
+		    END	
+		  END
+		  ELSE
+		  BEGIN
+		    IF @SQTY > 0
+		    BEGIN
+		      SET @SQ = @BQTY
+		    END	
+		  END
+		  INSERT INTO #tbl_DelvTrxnN2 (
+			CompanyCode, Exchange,  Segment, td_SRNO, td_dt, td_clientcd, td_seriesid, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, XTAG11, 
+			LONG_TAG, SQR_TAG
+			)
+		  VALUES (
+			@CompanyCodeb, @Exchangeb, @Segmentb, @td_SRNOB, @td_dtB, @td_clientcdB, @td_scripcdB, @td_bsflagB, @SQ, @td_RateB, @SQ * @td_RateB, 
+			@FIFONOB, @COUNTER, (CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(@td_dtB AS DATE), CAST(@td_dtS AS DATE))) - 365) = 1 THEN 'L' ELSE '' END
+				), 'Y')
+
+		  SET @BQTY = @BQTY - @SQ
+     
+         		
+		  INSERT INTO #tbl_DelvTrxnN2 (
+			CompanyCode, Exchange,  Segment, td_SRNO, td_dt, td_clientcd, td_seriesid, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, XTAG11, 
+			LONG_TAG, SQR_TAG
+			)
+		  VALUES (
+			@CompanyCodes, @Exchanges, @Segments, @td_SRNOS, @td_dtS, @td_clientcdS, @td_scripcdS, @td_bsflagS, @SQ, @td_RateS, @SQ * @td_RateS, 
+			@FIFONOS, @COUNTER, (CASE WHEN SIGN(ABS(DATEDIFF(DAY, CAST(@td_dtB AS DATE), CAST(@td_dtS AS DATE))) - 365) = 1 THEN 'L' ELSE '' END
+				), 'Y'
+			)
+		  SET @SQTY = @SQTY - @SQ
+    	  IF @BQTY = 0
+		  BEGIN
+			UPDATE #tbl_DelvTrxnN
+			SET SQR_TAG = @TAG
+			WHERE td_clientcd = @td_clientcdB AND FIFONO = @FIFONOB
+		  END
+		
+		  IF @SQTY = 0
+		  BEGIN
+			UPDATE #tbl_DelvTrxnn
+			SET SQR_TAG = @TAG
+			WHERE td_clientcd = @td_clientcdS AND FIFONO = @FIFONOS
+		  END
+
+		  SET @SQR_QTY1 = @SQR_QTY1 - @SQ 
+		  SET @SQR_QTY = @SQR_QTY - @SQ
+		  SET @strFlag = 'N'
+
+		  IF (@SQR_QTY1 = 0 AND @SQR_QTY = 0)
+		  BEGIN
+			BREAK;
+		  END
+ 	    END
+	    CLOSE CursorBMain;
+	    CLOSE CursorSMain;
+	    DEALLOCATE CursorBMain;
+	    DEALLOCATE CursorSMain;
+	    IF @BQTY <> 0
+	    BEGIN
+		  INSERT INTO #tbl_DelvTrxnN2 (
+			CompanyCode, Exchange,  Segment, td_SRNO, td_dt, td_clientcd, td_seriesid, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, XTAG11, 
+			LONG_TAG, SQR_TAG
+			)
+		  VALUES (
+			@CompanyCodeb, @Exchangeb, @Segmentb, @td_SRNOB, @td_dtB,  @td_clientcdB, @td_scripcdB, @td_bsflagB, @BQTY, @td_RateB, @BQTY * 
+			@td_RateB, @FIFONOB, @COUNTER, '', ''
+			)
+		  UPDATE #tbl_DelvTrxnn
+		  SET SQR_TAG = @TAG
+		  WHERE td_clientcd = @td_clientcdB AND FIFONO = @FIFONOB
+	    END
+	
+	    IF @SQTY <> 0
+	    BEGIN
+		  INSERT INTO #tbl_DelvTrxnN2 (
+			CompanyCode, Exchange,  Segment, td_SRNO, td_dt, td_clientcd, td_seriesid, td_bsflag, Qty_NS, td_Rate, VALUES_NS, FIFONO, XTAG11, 
+			LONG_TAG, SQR_TAG
+			)
+		  VALUES (
+			@CompanyCodeb, @Exchangeb, @Segmentb, @td_SRNOS, @td_dtS, @td_clientcdS, @td_scripcdS, @td_bsflagS, @SQTY, @td_RateS, @SQTY * 
+			@td_RateB, @FIFONOS, @COUNTER, '', ''
+			)
+		  UPDATE #tbl_DelvTrxnN
+		  SET SQR_TAG = @TAG
+		  WHERE td_clientcd = @td_clientcdS AND FIFONO = @FIFONOS
+	    END
+	    SET @SQ = 0
+	    SET @BQTY = 0
+	    SET @SQTY = 0
+	    SET @SQR_QTY = 0
+	    SET @SQR_QTY1 = 0
+	    FETCH NEXT
+	    FROM CursorC1Main
+	    INTO @td_clientcdC1, @td_scripcdC1, @td_BuyQtyC1, @td_SaleQtyC1
+      END
+      CLOSE CursorC1Main
+      DEALLOCATE CursorC1Main
+	
+      DELETE FROM #tbl_DelvTrxnN WHERE SQR_TAG = 'C'
+  
+      INSERT INTO #tbl_DelvTrxnN 
+      SELECT * FROM #tbl_DelvTrxnN2 WHERE isnull(Qty_NS,0) <> 0 
+
+      DECLARE @tbl_CLClientAS TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),  ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+      Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), EX_QTY MONEY, EX_VALUE MONEY, AS_QTY MONEY, AS_VALUE MONEY)
+  
+      INSERT INTO @tbl_CLClientAS(CompanyCode, Exchange, Segment, ClientCode, Scrip, Symbol, seriesid, ExpiryDate, 
+	  Multiplier, TrxnDate, EX_QTY, EX_VALUE,
+      AS_QTY, AS_VALUE)
+
+      SELECT ex_companycode, ex_Exchange, ex_segment, ex_clientcd, SM_DESC, sm_underlying, ex_seriesid, 
+      sm_expirydt, sm_multiplier,  ex_dt,  ex_eqty = sum(ex_eqty) ,
+      EX_VALUE = sum((ex_eqty)*ex_diffbrokrate*sm_multiplier*-1), ex_aqty = sum(ex_aqty), 
+      AS_VALUE = sum((ex_aqty)*ex_diffbrokrate*sm_multiplier*-1) 
+      FROM Exercise(NOLOCK), Series_master(NOLOCK), @tbl_UserList X  
+      WHERE ex_dt between @dtFromDate and @dtToDt 
+      AND ex_clientcd = X.Client_Code 
+      and sm_expirydt >= @dtFromDate
+      and ex_exchange = sm_exchange 
+      and ex_segment = sm_segment And ex_seriesid = sm_seriesid 
+	  GROUP BY ex_companycode, ex_Exchange, ex_segment, ex_clientcd, SM_DESC, sm_underlying, ex_seriesid, 
+      sm_expirydt, sm_multiplier,  ex_dt
+
+      
+      INSERT INTO #tbl_ClientPL(CompanyCode, Exchange, Segment, ClientCode, seriesid, Scrip, 
+	  ExpiryDate, Symbol, Multiplier, TrxnDate, BF_QTY, BF_CloseRate, BF_VALUE,
+      BOT_QTY, BOT_VALUE, SOLD_QTY, SOLD_VALUE, EX_QTY, EX_VALUE,
+      AS_QTY, AS_VALUE, AccountType)
+      SELECT CompanyCode, Exchange,  Segment, td_clientcd, td_seriesid, ScripName, ExpriryDate, sm_underlying,
+	  sm_multiplier, td_dt,
+      BF_Qty, BF_RATE = ABS(CASE WHEN BF_Qty <> 0 THEN ROUND(BF_Value/BF_Qty,2) ELSE 0 END),
+      BF_Value,
+      BuyQty, BuyValue, SaleQty, SaleValue, 
+      EX_QTY = ISNULL(ex_eqty,0),
+      EX_VALUE = ISNULL(EX_VALUE,0),
+      AS_QTY = ISNULL(ex_aqty,0),
+      AS_VALUE = ISNULL(AS_VALUE,0), SQR_TAG
+      FROM(
+      SELECT CompanyCode, Exchange,  Segment, td_clientcd, td_seriesid, ScripName = SR.SM_DESC,  
+	  ExpriryDate =   SR.sm_expirydt, sm_underlying, sm_multiplier, 
+	  td_dt = CASE WHEN ISNULL(@strReportType,'')  = 'Series Wise Detail' THEN  td_dt ELSE @dtFromDate END,
+      BF_Qty = SUM(CASE WHEN td_dt < @dtFromDate THEN (CASE WHEN td_bsflag = 'B' THEN  
+      Qty_NS ELSE Qty_NS*-1 END) else 0 end), 
+      BF_Value = ROUND(SUM(CASE WHEN td_dt < @dtFromDate AND Qty_NS <> 0 THEN (CASE WHEN td_bsflag = 'B' THEN  
+      (Qty_NS*TD_RATE)*-1 ELSE (Qty_NS*TD_RATE) END) else 0 end),2), 
+      BuyQty = SUM(CASE WHEN td_dt >= @dtFromDate THEN (CASE WHEN td_bsflag = 'B' THEN  
+      Qty_NS ELSE 0 END) else 0 end),
+      BuyValue = SUM(CASE WHEN td_dt >= @dtFromDate THEN (CASE WHEN td_bsflag = 'B' THEN  
+      Qty_NS*td_rate ELSE 0 END) else 0 end),
+      SaleQty = SUM(CASE WHEN td_dt >= @dtFromDate THEN (CASE WHEN td_bsflag = 'S' THEN  
+      Qty_NS ELSE 0 END) else 0 end),
+      SaleValue = SUM(CASE WHEN td_dt >= @dtFromDate THEN (CASE WHEN td_bsflag = 'S' THEN  
+      Qty_NS*td_rate ELSE 0 END) else 0 end), SQR_TAG = ISNULL(SQR_TAG,'')
+      FROM #tbl_DelvTrxnN X, Series_master(NOLOCK) SR
+      where x.td_seriesid = sr.sm_seriesid
+	  AND x.exchange = SR.sm_exchange
+	  AND X.Segment  = SR.sm_Segment
+      Group By CompanyCode, Exchange,  Segment, td_clientcd, td_seriesid, SR.SM_DESC, SR.sm_expirydt, ISNULL(SQR_TAG,''), 
+	  sm_multiplier, sm_underlying, CASE WHEN ISNULL(@strReportType,'')  = 'Series Wise Detail' THEN  td_dt ELSE @dtFromDate END) X123 LEFT OUTER JOIN ( select ClientCode, seriesid, 
+	  TrxnDate = CASE WHEN ISNULL(@strReportType,'')  = 'Series Wise Detail' THEN  TrxnDate ELSE @dtFromDate END, 
+	  ex_eqty = sum(EX_QTY) ,
+      EX_VALUE = sum(EX_VALUE), ex_aqty = sum(AS_QTY), 
+      AS_VALUE = sum(AS_VALUE) 
+      FROM @tbl_CLClientAS
+      GROUP BY ClientCode, seriesid, CASE WHEN ISNULL(@strReportType,'')  = 'Series Wise Detail' 
+	  THEN  TrxnDate ELSE @dtFromDate END) EXAS 
+	  ON( td_clientcd = EXAS.ClientCode AND td_seriesid = EXAS.seriesid and ISNULL(SQR_TAG,'') = ''
+      AND td_dt = TrxnDate)
+      ORDER BY ScripName
+    END
+	
+	
+	
+	IF @strRateType NOT IN('Underlying Close Price','Do not Valuate')
+	BEGIN
+	  ---@@VAIBHAV/03-JUL-2024 START
+	  if @strRateType = 'Average price' 
+	  BEGIN
+	    
+		UPDATE A SET A.NET_QTY = (ISNULL(A.BF_QTY,0)+ISNULL(A.BOT_QTY,0))-ISNULL(A.SOLD_QTY,0)-ISNULL(A.AS_QTY,0)- ISNULL(A.EX_QTY,0),
+        A.NET_VALUE = ROUND(((ISNULL(A.BF_QTY,0)+ISNULL(A.BOT_QTY,0))-ISNULL(A.SOLD_QTY,0)-ISNULL(A.AS_QTY,0)- ISNULL(A.EX_QTY,0))*ms_lastprice*isnull(Multiplier,1),2),
+        cmp = ms_lastprice
+        FROM #tbl_ClientPL A , Market_summary(NOLOCK) X
+        WHERE ms_seriesid = seriesid 
+        and ms_exchange = exchange and ms_segment = Segment 
+        and ms_dt  = (select  max(ms_dt) from Market_summary(NOLOCK)  
+	    WHERE ms_exchange = X.ms_exchange and ms_segment = X.ms_segment and ms_dt<=@dtToDt)
+		
+		UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
+        FROM #tbl_ClientPL A	  
+	  		
+	  	UPDATE A SET A.MTM =((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0)),
+	    A.NET_VALUE = 0 
+	    FROM #tbl_ClientPL A
+	    WHERE  EXISTS(SELECT 1 FROM Series_master(NOLOCK)
+	    WHERE sm_Segment =  A.Segment AND sm_exchange = A.Exchange AND sm_seriesid = A.seriesid   
+		AND sm_prodtype IN('EO','CO','IO'))
+	    AND A.NET_QTY <> 0	
+	    AND ExpiryDate <= @dtToDt
+	  
+	    UPDATE A SET A.MTM = case WHEN NET_QTY > 0 THEN 
+		((ABS(ISNULL(A.BOT_QTY,0)*ROUND((ISNULL(A.BOT_VALUE,0)/ISNULL(A.BOT_QTY,0)),2))-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))
+		ELSE ((ISNULL(A.SOLD_VALUE,0)-ABS(ISNULL(A.SOLD_QTY,0)*ROUND((ISNULL(A.SOLD_VALUE,0)/ISNULL(A.SOLD_QTY,0)),2)))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0)) END,
+	    A.NET_VALUE = 0 
+	    FROM #tbl_ClientPL A
+	    WHERE EXISTS(SELECT 1 FROM Series_master(NOLOCK)
+	    WHERE sm_Segment =  A.Segment AND sm_exchange = A.Exchange AND sm_seriesid = A.seriesid   
+		AND sm_prodtype IN('EO','CO','IO'))
+		AND A.NET_QTY <> 0	
+	    AND ExpiryDate > @dtToDt
+			
+      END
+	  ELSE
+	  BEGIN
+	  
+	    UPDATE A SET A.NET_QTY = (ISNULL(A.BF_QTY,0)+ISNULL(A.BOT_QTY,0))-ISNULL(A.SOLD_QTY,0)-ISNULL(A.AS_QTY,0)- ISNULL(A.EX_QTY,0),
+        A.NET_VALUE = ROUND(((ISNULL(A.BF_QTY,0)+ISNULL(A.BOT_QTY,0))-ISNULL(A.SOLD_QTY,0)-ISNULL(A.AS_QTY,0)- ISNULL(A.EX_QTY,0))*ms_lastprice*isnull(Multiplier,1),2),
+        cmp = ms_lastprice
+        FROM #tbl_ClientPL A , Market_summary(NOLOCK) X
+        WHERE ms_seriesid = seriesid 
+        and ms_exchange = exchange and ms_segment = Segment 
+        and ms_dt  = (select  max(ms_dt) from Market_summary(NOLOCK)  
+	    WHERE ms_exchange = X.ms_exchange and ms_segment = X.ms_segment and ms_dt<=@dtToDt )
+	  
+  	    UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
+        FROM #tbl_ClientPL A	  
+	  
+	    UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0)),
+	    A.NET_VALUE = 0 
+	    FROM #tbl_ClientPL A
+	    WHERE  EXISTS(SELECT 1 FROM Series_master(NOLOCK)
+	    WHERE sm_Segment =  A.Segment AND sm_exchange = A.Exchange AND sm_seriesid = A.seriesid   
+		AND sm_prodtype IN('EO','CO','IO'))
+	    AND A.NET_QTY <> 0	
+	    AND ExpiryDate <= @dtToDt
+	  END
+      ---@@VAIBHAV/03-JUL-2024 END	  
+	END  
+	IF @strRateType = 'Do not Valuate'
+	BEGIN
+	  UPDATE A SET A.NET_QTY = (ISNULL(A.BF_QTY,0)+ISNULL(A.BOT_QTY,0))-ISNULL(A.SOLD_QTY,0)-ISNULL(A.AS_QTY,0)- ISNULL(A.EX_QTY,0),
+      A.NET_VALUE = ROUND(((ISNULL(A.BF_QTY,0)+ISNULL(A.BOT_QTY,0))-ISNULL(A.SOLD_QTY,0)-ISNULL(A.AS_QTY,0)- ISNULL(A.EX_QTY,0))*ms_lastprice*Multiplier,2),
+      cmp = ms_lastprice
+      FROM #tbl_ClientPL A, Market_summary(NOLOCK) X
+      WHERE ms_seriesid = seriesid 
+      and ms_exchange = exchange and ms_segment = Segment 
+      and ms_dt  = (select  max(ms_dt) from Market_summary(NOLOCK)  
+	  WHERE ms_exchange = X.ms_exchange and ms_segment = X.ms_segment and ms_dt<=@dtToDt )
+	  
+	  UPDATE A SET A.NET_VALUE = 0 
+	  FROM #tbl_ClientPL A
+	  WHERE EXISTS(SELECT 1
+	  FROM Series_master(NOLOCK) WHERE sm_Segment =  A.Segment AND sm_exchange = A.Exchange 
+	  AND sm_seriesid = A.seriesid  AND sm_prodtype IN('EO','CO','IO')) 
+	  AND A.NET_QTY <> 0
+	  
+	  UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
+      FROM #tbl_ClientPL A
+	  
+	END
+	IF @strRateType = 'Underlying Close Price'
+	BEGIN
+	  UPDATE A SET A.NET_QTY = (ISNULL(A.BF_QTY,0)+ISNULL(A.BOT_QTY,0))-ISNULL(A.SOLD_QTY,0)-ISNULL(A.AS_QTY,0)- ISNULL(A.EX_QTY,0),
+      A.NET_VALUE = ROUND(((ISNULL(A.BF_QTY,0)+ISNULL(A.BOT_QTY,0))-ISNULL(A.SOLD_QTY,0)-ISNULL(A.AS_QTY,0)- ISNULL(A.EX_QTY,0))*ms_lastprice*Multiplier,2),
+      cmp = ms_lastprice
+      FROM #tbl_ClientPL A, Market_summary(NOLOCK) X
+      WHERE ms_seriesid = seriesid 
+      and ms_exchange = exchange and ms_segment = Segment 
+      and ms_dt  = (select  max(ms_dt) from Market_summary(NOLOCK)  
+	  WHERE ms_exchange = X.ms_exchange and ms_segment = X.ms_segment and ms_dt<=@dtToDt )
+	  AND NOT EXISTS(SELECT 1
+	  FROM Series_master(NOLOCK) WHERE sm_Segment =  A.Segment AND sm_exchange = A.Exchange 
+	  AND sm_seriesid = A.seriesid  AND sm_prodtype IN('EO','CO','IO'))  
+
+	  SET @BFseriesid = 0 
+	  SET @spotCloseRate =0
+	  SET @strSegment = ''
+	  SET @strExchange = ''
+
+	  DECLARE db_CursorRateCF CURSOR FOR         
+      SELECT distinct seriesid, Exchange, Segment
+      FROM #tbl_ClientPL A 
+	  where NET_QTY <> 0 and EXISTS(SELECT 1 FROM Series_master(NOLOCK)
+	  WHERE sm_Segment =  A.Segment AND sm_exchange = A.Exchange  AND sm_seriesid = A.seriesid AND sm_productcd in('OPTSTK'))
+      OPEN db_CursorRateCF       
+      FETCH NEXT FROM db_CursorRateCF INTO @BFseriesid, @strExchange, @strSegment
+      WHILE @@FETCH_STATUS = 0     
+      BEGIN
+	    SELECT TOP 1 @spotCloseRate = mk_closerate FROM Market_Rates(NOLOCK) X WHERE mk_scripcd IN(
+        SELECT SS_cD FROM Securities WHERE ss_bsymbol IN(
+        SELECT sm_symbol FROM Series_master(NOLOCK) WHERE sm_Segment = @strSegment and sm_exchange = @strExchange 
+		AND sm_seriesid = @BFseriesid))
+        AND mk_dt   IN(SELECT MAX(mk_dt) FROM Market_Rates(NOLOCK) WHERE mk_dt <= @dtToDt)
+        ORDER BY CASE WHEN mk_exchange='N' THEN 1 ELSE 2 END
+	  
+	    UPDATE A SET A.cmp = @spotCloseRate, a.NET_VALUE =(a.NET_QTY*@spotCloseRate)*-1
+	    FROM #tbl_ClientPL A
+	    WHERE A.seriesid = @BFseriesid
+		AND A.Exchange = @strExchange
+		AND A.Segment = @strSegment
+	   FETCH NEXT FROM db_CursorRateCF INTO @BFseriesid, @strExchange, @strSegment
+      END        
+      CLOSE db_CursorRateCF        
+      DEALLOCATE db_CursorRateCF	
+
+	  UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
+      FROM #tbl_ClientPL A
+	  
+	  UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0)),
+	  A.NET_VALUE = 0 
+	  FROM #tbl_ClientPL A
+	  WHERE  EXISTS(SELECT 1 FROM Series_master(NOLOCK)
+	  WHERE sm_Segment =  A.Segment AND sm_exchange = A.Exchange AND sm_seriesid = A.seriesid   
+	  AND sm_prodtype IN('EO','CO','IO'))
+	  AND A.NET_QTY <> 0	
+	  AND ExpiryDate <= @dtToDt
+	  
+	  /*(UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0)),
+	  A.NET_VALUE = 0 
+	  FROM #tbl_ClientPL A
+	  WHERE EXISTS(SELECT 1
+	  FROM Series_master(NOLOCK) WHERE sm_seriesid = A.seriesid  AND sm_prodtype IN('EO','CO','IO')) 
+	  AND A.NET_QTY > 0	
+	  */
+	END    
+	
+    UPDATE A SET A.ClientName = CM.cm_name
+    FROM #tbl_ClientPL A, Client_Master CM
+    WHERE A.ClientCode = CM.cm_cd
+
+  
+    declare @tbl_billCharges TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10), 
+    ClientCode VARCHAR(10) NOT NULL,
+    ChargesDescp [char] (40) NOT NULL,
+    [bc_amount] [money] NOT NULL)
+  
+    INSERT INTO @tbl_billCharges (CompanyCode, Exchange, Segment, ClientCode, ChargesDescp, [bc_amount])
+    SELECT fc_companycode, fc_Exchange, fc_segment, fc_clientcd, fc_desc, round(sum(fc_amount),2)  
+    FROM Fspecialcharges(NOLOCK), (SELECT DISTINCT Client_Code = ClientCode  FROM #tbl_ClientPL) X
+    where fc_clientcd = x.Client_COde and fc_dt >= @dtFromDate and fc_dt<= @dtToDt 
+    AND ((fc_companycode+fc_exchange+fc_segment IN(SELECT VALUE FROM ReturnTable(@ExchSeg,',')) and @ExchSeg <> '') OR @ExchSeg = '')
+    GROUP BY fc_clientcd, fc_desc,fc_companycode, fc_Exchange, fc_segment
+    HAVING ROUND(SUM(fc_amount),2) <> 0
+ 
+    INSERT INTO @tbl_billCharges (CompanyCode, Exchange, Segment, ClientCode, ChargesDescp, [bc_amount])
+    SELECT fc_companycode, fc_Exchange, fc_segment, fc_clientcd,'SERVICE TAX', round(sum(fc_servicetax),2)
+    FROM Fspecialcharges(NOLOCK), (SELECT DISTINCT Client_Code =ClientCode FROM #tbl_ClientPL) X
+    WHERE fc_clientcd = x.Client_COde
+    AND fc_dt >= @dtFromDate and fc_dt<= @dtToDt 
+    AND ((fc_companycode+fc_exchange+fc_segment IN(SELECT VALUE FROM ReturnTable(@ExchSeg,',')) and @ExchSeg <> '') OR @ExchSeg = '')
+    GROUP BY fc_clientcd,fc_desc,fc_companycode, fc_Exchange, fc_segment 
+    HAVING ROUND(SUM(fc_servicetax),2) <> 0
+    DECLARE @XMLDATA1 XML=''
+	IF ISNULL(@strReportType,'') in('Series Wise','')
+	BEGIN
+	  IF @strOutputType = 'X'
+	  BEGIN
+	    IF ISNULL(@StrSummary,'N') = 'N'
+		BEGIN
+	      SET @XMLDATA1 = (SELECT * FROM (
+	      SELECT TAG = '1', Exchange, Segment, ClientCode, ClientName, 
+          seriesid, ExpiryDate, Scrip, Multiplier,  BF_QTY = ISNULL(BF_QTY,0), BF_CloseRate = ISNULL(BF_CloseRate,0), 
+          BF_VALUE = ISNULL(BF_VALUE,0), BOT_QTY = ISNULL(BOT_QTY,0), 
+	      BOT_RATE = CAST(round((CASE WHEN ISNULL(BOT_QTY,0) <> 0 THEN ISNULL(BOT_VALUE,0)/ISNULL(BOT_QTY,0) ELSE 0 END),4) AS MONEY),
+	      BOT_VALUE = ISNULL(BOT_VALUE,0), 
+          SOLD_QTY = ISNULL(SOLD_QTY,0), 
+	      SOLD_RATE = CAST(round((CASE WHEN ISNULL(SOLD_QTY,0) <> 0 THEN ISNULL(SOLD_VALUE,0)/ISNULL(SOLD_QTY,0) ELSE 0 END),4) AS MONEY),
+	      SOLD_VALUE = ISNULL(SOLD_VALUE,0), EX_QTY = ISNULL(EX_QTY,0), EX_VALUE = ISNULL(EX_VALUE,0), 
+	      AS_QTY = ISNULL(AS_QTY,0), 
+          AS_VALUE = ISNULL(AS_VALUE,0), NET_QTY = ISNULL(NET_QTY,0),
+          CMP =  ISNULL(CMP,0), NET_VALUE = ISNULL(NET_VALUE,0), MTM = ISNULL(MTM ,0), 
+	      AccountType = ISNULL(AccountType,'N'),
+          RelPL = CASE WHEN (ISNULL(AccountType,'N') ='Y' OR ISNULL(NET_QTY,0) = 0) 
+	      THEN ISNULL(MTM ,0) ELSE 0 END,
+	      UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END,
+		  Lookup = Exchange+Segment+CAST(seriesid AS VARCHAR), Charges = 0
+          FROM #tbl_ClientPL
+          UNION ALL
+          SELECT TAG = 2, Exchange, Segment, ClientCode, ClientName = '', seriesid = '', ExpiryDate= '', Scrip = ChargesDescp, 
+	      Multiplier = 0,BF_QTY = 0, BF_CloseRate = 0, BF_VALUE = 0, BOT_QTY = 0, BOT_RATE = 0, BOT_VALUE = 0,
+	      SOLD_QTY = 0, SOLD_RATE = 0, SOLD_VALUE = 0, EX_QTY = 0, EX_VALUE = 0, AS_QTY = 0, AS_VALUE = 0, NET_QTY = 0, CMP = 0, NET_VALUE = 0, 
+	      MTM = (bc_amount)*-1, AccountType = '', RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0, Lookup = Exchange+Segment, Charges = ISNULL(bc_amount,0)*-1
+	      FROM @tbl_billCharges) X1 --WHERE ((@strRequestFrom = 'M' AND TAG <> 2) OR  @strRequestFrom <> 'M')
+		  WHERE ((seriesid <> '' and @StrLookup <> '') or isnull(@StrLookup,'') = '')
+		  ORDER BY ClientCode, TAG, Scrip FOR XML PATH('ProfitLoss'))
+	      SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	    END
+	    ELSE
+	    IF ISNULL(@StrSummary,'N') = 'Y'
+		BEGIN
+		  SET @XMLDATA1 = (SELECT TotalCharges = SUM(CASE WHEN ISNULL(seriesid,'') = '' THEN round(isnull(MTM,0),2) ELSE 0 END),
+		  RelPl = SUM(CASE WHEN ISNULL(seriesid,'') <> '' THEN round(isnull(RelPl,0),2) ELSE 0 END), 
+		  UnRelPL = SUM(CASE WHEN seriesid <> '' THEN round(UnRelPL,2) ELSE 0 END)  FROM (
+	      SELECT TAG = '1', Exchange, Segment, ClientCode, ClientName, 
+          seriesid, ExpiryDate, Scrip, Multiplier,  BF_QTY = ISNULL(BF_QTY,0), BF_CloseRate = ISNULL(BF_CloseRate,0), 
+          BF_VALUE = ISNULL(BF_VALUE,0), BOT_QTY = ISNULL(BOT_QTY,0), 
+	      BOT_RATE = CAST(round((CASE WHEN ISNULL(BOT_QTY,0) <> 0 THEN ISNULL(BOT_VALUE,0)/ISNULL(BOT_QTY,0) ELSE 0 END),4) AS MONEY),
+	      BOT_VALUE = ISNULL(BOT_VALUE,0), 
+          SOLD_QTY = ISNULL(SOLD_QTY,0), 
+	      SOLD_RATE = CAST(round((CASE WHEN ISNULL(SOLD_QTY,0) <> 0 THEN ISNULL(SOLD_VALUE,0)/ISNULL(SOLD_QTY,0) ELSE 0 END),4) AS MONEY),
+	      SOLD_VALUE = ISNULL(SOLD_VALUE,0), EX_QTY = ISNULL(EX_QTY,0), EX_VALUE = ISNULL(EX_VALUE,0), 
+	      AS_QTY = ISNULL(AS_QTY,0), 
+          AS_VALUE = ISNULL(AS_VALUE,0), NET_QTY = ISNULL(NET_QTY,0),
+          CMP =  ISNULL(CMP,0), NET_VALUE = ISNULL(NET_VALUE,0), MTM = ISNULL(MTM ,0), 
+	      AccountType = ISNULL(AccountType,'N'),
+          RelPL = CASE WHEN (ISNULL(AccountType,'N') ='Y' OR ISNULL(NET_QTY,0) = 0) 
+	      THEN ISNULL(MTM ,0) ELSE 0 END,
+	      UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END,
+		  Lookup = Exchange+Segment+CAST(seriesid AS VARCHAR)
+          FROM #tbl_ClientPL
+          UNION ALL
+          SELECT TAG = 2, Exchange, Segment, ClientCode, ClientName = '', seriesid = '', ExpiryDate= '', Scrip = ChargesDescp, 
+	      Multiplier = 0,BF_QTY = 0, BF_CloseRate = 0, BF_VALUE = 0, BOT_QTY = 0, BOT_RATE = 0, BOT_VALUE = 0,
+	      SOLD_QTY = 0, SOLD_RATE = 0, SOLD_VALUE = 0, EX_QTY = 0, EX_VALUE = 0, AS_QTY = 0, AS_VALUE = 0, NET_QTY = 0, CMP = 0, NET_VALUE = 0, 
+	      MTM = (bc_amount)*-1, AccountType = '', RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0, Lookup = Exchange+Segment
+	      FROM @tbl_billCharges) X1 
+		  FOR XML PATH('ProfitLoss'))
+	      SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	    END
+      END		
+	  ELSE
+	  BEGIN
+		SELECT * FROM (
+	    SELECT TAG = '1', Exchange, ClientCode, ClientName, 
+        seriesid, ExpiryDate, Scrip, Multiplier,  BF_QTY = ISNULL(BF_QTY,0), BF_CloseRate = ISNULL(BF_CloseRate,0), 
+        BF_VALUE = ISNULL(BF_VALUE,0), BOT_QTY = ISNULL(BOT_QTY,0), 
+	    BOT_RATE = CAST(round((CASE WHEN ISNULL(BOT_QTY,0) <> 0 THEN ISNULL(BOT_VALUE,0)/ISNULL(BOT_QTY,0) ELSE 0 END),4) AS MONEY),
+	    BOT_VALUE = ISNULL(BOT_VALUE,0), 
+        SOLD_QTY = ISNULL(SOLD_QTY,0), 
+	    SOLD_RATE = CAST(round((CASE WHEN ISNULL(SOLD_QTY,0) <> 0 THEN ISNULL(SOLD_VALUE,0)/ISNULL(SOLD_QTY,0) ELSE 0 END),4) AS MONEY),
+	    SOLD_VALUE = ISNULL(SOLD_VALUE,0), EX_QTY = ISNULL(EX_QTY,0), EX_VALUE = ISNULL(EX_VALUE,0), 
+	    AS_QTY = ISNULL(AS_QTY,0), 
+        AS_VALUE = ISNULL(AS_VALUE,0), NET_QTY = ISNULL(NET_QTY,0),
+        CMP =  ISNULL(CMP,0), NET_VALUE = ISNULL(NET_VALUE,0), MTM = ISNULL(MTM ,0), 
+	    AccountType = ISNULL(AccountType,'N'),
+        RelPL = CASE WHEN (ISNULL(AccountType,'N') ='Y' OR ISNULL(NET_QTY,0) = 0) 
+	    THEN ISNULL(MTM ,0) ELSE 0 END,
+	    UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END
+        FROM #tbl_ClientPL
+        UNION ALL
+        SELECT TAG = 2, Exchange, ClientCode, ClientName = '', seriesid = '', ExpiryDate= '', Scrip = ChargesDescp, 
+	    Multiplier = 0,BF_QTY = 0, BF_CloseRate = 0, BF_VALUE = 0, BOT_QTY = 0, BOT_RATE = 0, BOT_VALUE = 0,
+	    SOLD_QTY = 0, SOLD_RATE = 0, SOLD_VALUE = 0, EX_QTY = 0, EX_VALUE = 0, AS_QTY = 0, AS_VALUE = 0, NET_QTY = 0, CMP = 0, NET_VALUE = 0, 
+	    MTM = (bc_amount)*-1, AccountType = '', RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0
+	    FROM @tbl_billCharges) X1 ORDER BY ClientCode, TAG, Scrip
+		
+	  END  
+	  
+	END
+    ELSE IF ISNULL(@strReportType,'') in('Underlying wise')	
+	BEGIN
+	  SELECT * FROM (
+	  select TAG = '1', Exchange, ClientCode, ClientName, Symbol, BOT_QTY = sum(BOT_QTY), 
+	  SOLD_QTY = sum(SOLD_QTY), 
+	  NET_VALUE = Sum(NET_VALUE), MTM = sum(MTM)
+	  from(
+	  SELECT Exchange, ClientCode, ClientName, 
+      Symbol, seriesid, ExpiryDate, Scrip, Multiplier,  BF_QTY = ISNULL(BF_QTY,0), BF_CloseRate = ISNULL(BF_CloseRate,0), 
+      BF_VALUE = ISNULL(BF_VALUE,0), BOT_QTY = ISNULL(BOT_QTY,0), BOT_VALUE = ISNULL(BOT_VALUE,0), 
+      SOLD_QTY = ISNULL(SOLD_QTY,0), 
+	  SOLD_VALUE = ISNULL(SOLD_VALUE,0), EX_QTY = ISNULL(EX_QTY,0), EX_VALUE = ISNULL(EX_VALUE,0), AS_QTY = ISNULL(AS_QTY,0), 
+      AS_VALUE = ISNULL(AS_VALUE,0), NET_QTY = ISNULL(NET_QTY,0),
+      CMP =  ISNULL(CMP,0), NET_VALUE = ISNULL(NET_VALUE,0), MTM = ISNULL(MTM ,0)
+      FROM #tbl_ClientPL X) x12 GROUP BY Exchange, ClientCode, ClientName, Symbol
+      UNION ALL
+      SELECT TAG = 2, Exchange, ClientCode, ClientName = '', Symbol = ChargesDescp, BOT_QTY = 0, SOLD_QTY = 0,
+	  NET_VALUE = 0, 
+	  MTM = (ISNULL(bc_amount,0))*-1
+	  FROM @tbl_billCharges) X1 ORDER BY ClientCode, TAG, Symbol
+	END
+	ELSE IF ISNULL(@strReportType,'') in('Series Wise Detail','')
+	BEGIN
+	  IF @strOutputType <> 'X'
+	  BEGIN
+	    SELECT * FROM (
+	    SELECT TAG = '1', Exchange, ClientCode, ClientName, 
+        seriesid, ExpiryDate, Scrip, Multiplier,  TrxnDate, BF_QTY = ISNULL(BF_QTY,0), BF_CloseRate = ISNULL(BF_CloseRate,0), 
+        BF_VALUE = ISNULL(BF_VALUE,0), BOT_QTY = ISNULL(BOT_QTY,0), 
+	    BOT_RATE = CAST(ROUND((CASE WHEN ISNULL(BOT_QTY,0) <> 0 THEN ISNULL(BOT_VALUE,0)/ISNULL(BOT_QTY,0) ELSE 0 END),4) AS MONEY),
+	    BOT_VALUE = ISNULL(BOT_VALUE,0), 
+        SOLD_QTY = ISNULL(SOLD_QTY,0), 
+	    SOLD_RATE = CAST(ROUND((CASE WHEN ISNULL(SOLD_QTY,0) <> 0 THEN ISNULL(SOLD_VALUE,0)/ISNULL(SOLD_QTY,0) ELSE 0 END),4) AS MONEY),
+	    SOLD_VALUE = ISNULL(SOLD_VALUE,0), EX_QTY = ISNULL(EX_QTY,0), EX_VALUE = ISNULL(EX_VALUE,0), AS_QTY = ISNULL(AS_QTY,0), 
+        AS_VALUE = ISNULL(AS_VALUE,0), NET_QTY = ISNULL(NET_QTY,0),
+        CMP =  ISNULL(CMP,0), NET_VALUE = ISNULL(NET_VALUE,0), MTM = ISNULL(MTM ,0), 
+	    AccountType = ISNULL(AccountType,'N'),
+        RelPL = CASE WHEN (ISNULL(AccountType,'N') ='Y' OR ISNULL(NET_QTY,0) = 0) 
+	    THEN ISNULL(MTM ,0) ELSE 0 END,
+	    UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END
+        FROM #tbl_ClientPL
+        UNION ALL
+        SELECT TAG = 2, Exchange, ClientCode, ClientName = '', seriesid = '', ExpiryDate= '', Scrip = ChargesDescp, 
+	    Multiplier = 0,TrxnDate = @dtToDt , BF_QTY = 0, BF_CloseRate = 0, BF_VALUE = 0, BOT_QTY = 0, BOT_RATE = 0, 
+	    BOT_VALUE = 0,
+	    SOLD_QTY = 0, SOLD_RATE = 0, SOLD_VALUE = 0, EX_QTY = 0, EX_VALUE = 0, AS_QTY = 0, AS_VALUE = 0, NET_QTY = 0, CMP = 0, NET_VALUE = 0, 
+	    MTM = (bc_amount)*-1, AccountType = '', RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0
+	    FROM @tbl_billCharges) X1 ORDER BY ClientCode, TAG, Scrip, TrxnDate
+	  END
+	  ELSE IF @strOutputType = 'X'
+	  BEGIN
+		SET @XMLDATA1 = (SELECT * FROM (
+	    SELECT TAG = '1', Exchange, ClientCode, ClientName, 
+        seriesid, ExpiryDate, Scrip, Multiplier,  TrxnDate, BF_QTY = ISNULL(BF_QTY,0), BF_CloseRate = ISNULL(BF_CloseRate,0), 
+        BF_VALUE = ISNULL(BF_VALUE,0), BOT_QTY = ISNULL(BOT_QTY,0), 
+	    BOT_RATE = CAST(ROUND((CASE WHEN ISNULL(BOT_QTY,0) <> 0 THEN ISNULL(BOT_VALUE,0)/ISNULL(BOT_QTY,0) ELSE 0 END),4) AS MONEY),
+	    BOT_VALUE = ISNULL(BOT_VALUE,0), 
+        SOLD_QTY = ISNULL(SOLD_QTY,0), 
+	    SOLD_RATE = CAST(ROUND((CASE WHEN ISNULL(SOLD_QTY,0) <> 0 THEN ISNULL(SOLD_VALUE,0)/ISNULL(SOLD_QTY,0) ELSE 0 END),4) AS MONEY),
+	    SOLD_VALUE = ISNULL(SOLD_VALUE,0), EX_QTY = ISNULL(EX_QTY,0), EX_VALUE = ISNULL(EX_VALUE,0), AS_QTY = ISNULL(AS_QTY,0), 
+        AS_VALUE = ISNULL(AS_VALUE,0), NET_QTY = ISNULL(NET_QTY,0),
+        CMP =  ISNULL(CMP,0), NET_VALUE = ISNULL(NET_VALUE,0), MTM = ISNULL(MTM ,0), 
+	    AccountType = ISNULL(AccountType,'N'),
+        RelPL = CASE WHEN (ISNULL(AccountType,'N') ='Y' OR ISNULL(NET_QTY,0) = 0) 
+	    THEN ISNULL(MTM ,0) ELSE 0 END,
+	    UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END
+        FROM #tbl_ClientPL
+        UNION ALL
+        SELECT TAG = 2, Exchange, ClientCode, ClientName = '', seriesid = '', ExpiryDate= '', Scrip = ChargesDescp, 
+	    Multiplier = 0,TrxnDate = @dtToDt , BF_QTY = 0, BF_CloseRate = 0, BF_VALUE = 0, BOT_QTY = 0, BOT_RATE = 0, 
+	    BOT_VALUE = 0,
+	    SOLD_QTY = 0, SOLD_RATE = 0, SOLD_VALUE = 0, EX_QTY = 0, EX_VALUE = 0, AS_QTY = 0, AS_VALUE = 0, NET_QTY = 0, CMP = 0, NET_VALUE = 0, 
+	    MTM = (bc_amount)*-1, AccountType = '', RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0
+	    FROM @tbl_billCharges) X1 
+		WHERE ((seriesid <> '' and @StrLookup <> '') or isnull(@StrLookup,'') = '')
+		ORDER BY ClientCode, TAG, Scrip, TrxnDate 
+		FOR XML PATH('ProfitLoss'))
+	    SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+	  END
+	END
+  END
+  DROP TABLE #tbl_ClientPL
+  END TRY
+  BEGIN CATCH
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = ERROR_MESSAGE()
+    RETURN 1
+  END CATCH
+  SET @o_vcErrorFlag  = 'S'
+  --SET @o_vcErrorMessage = 'Process Completed'
+  RETURN 1
+END  
+GO
+
+CREATE OR ALTER PROCEDURE stpr_Rpt_ProfitLossNewCash @vcXML NVARCHAR(MAX), @o_vcErrorFlag VARCHAR(1) OUTPUT, @o_vcErrorMessage VARCHAR(MAX) OUTPUT 
+WITH ENCRYPTION
+AS
+BEGIN
+ /*
+ ///////////////////////////////////////////////////////////////////////////////////////////
+ // Create By     : VAIBHAV GARG
+ // Created Date  : 05-DEC-2023
+ // Description   : 
+ // Reviewed By   : 
+ // Review Date   : 
+ //////////////////////////////////////////////////////////////////////////////////////////
+*/
+ --- Parameter Declaration
+ 
+  DECLARE @dtFromDate VARCHAR(8), @dtToDt VARCHAR(8), @strUserId VARCHAR(500) = '', @strExchSeg VARCHAR(100),
+  @XMLData XML, @strAccountType VARCHAR(500)='', @strTable VARCHAR(50)='', @strString VARCHAR(MAX) = '',
+  @blnTplusCommex BIT, @StrCommexConn VARCHAR(MAX) = '', @strCommTable VARCHAR(100)='', @strCommClientMaster VARCHAR(100)='',
+  @strCommCompanyExchange VARCHAR(100)='', @strsql1 VARCHAR(500)='', @strsqlstart VARCHAR(MAX)='', @strsqlLast VARCHAR(500)='',
+  @strsqlHeader VARCHAR(MAX)='', @strSqlMain VARCHAR(MAX)='', @strSqlExecute VARCHAR(MAX)='', @strOutputType VARCHAR(1), 
+  @strProduct VARCHAR(50)='', @strSelectTag VARCHAR(1)='', @strSelectUsers VARCHAR(500)='', @ExchSeg VARCHAR(50)='', 
+  @strStringMin VARCHAR(MAX)='', @strSplFilter VARCHAR(MAX)='', @strReportType VARCHAR(50)='', @strRateType VARCHAR(50)='',
+  @strConsiderOptionBF VARCHAR(1)='Y', @String VARCHAR(MAX)='', @strClientCode VARCHAR(50)='', @strScripCode VARCHAR(50)='',
+  @strDetailReportCode VARCHAR(50)='', @strDetailReportCategroy VARCHAR(100), @strRequestFrom VARCHAR(1)='W', @strSummary VARCHAR(1)=''
+  
+  
+  IF @vcXML = ''
+  BEGIN
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = 'Please Send Input Parameter(s)'
+    RETURN 1
+  END 
+
+  SET @XMLData = CAST('<root>'+@vcXML+'</root>' AS XML)
+  BEGIN TRY
+  
+  SELECT @dtFromDate = ISNULL(x.value('(FromDt)[1]', 'VARCHAR(8)'),''),
+  @strProduct = ISNULL(x.value('(Product)[1]', 'VARCHAR(50)'),''),
+  @dtToDt = ISNULL(x.value('(ToDt)[1]', 'VARCHAR(8)'),''),
+  @strUserId = ISNULL(x.value('(UserId)[1]', 'VARCHAR(500)'),''),
+  @ExchSeg = ISNULL(x.value('(ExchSeg)[1]', 'VARCHAR(500)'),''),
+  @strSelectTag = ISNULL(x.value('(SelectTag)[1]', 'VARCHAR(1)'),''),
+  @strSelectUsers = ISNULL(x.value('(SelectUsers)[1]', 'VARCHAR(500)'),''),
+  @strOutputType = ISNULL(x.value('(OutputType)[1]', 'VARCHAR(1)'),''),
+  @strSplFilter = ISNULL(x.value('(SplFilter)[1]', 'VARCHAR(MAX)'),''),
+  @strReportType = ISNULL(x.value('(RepType)[1]', 'VARCHAR(100)'),''),
+  @strRateType = ISNULL(x.value('(RepSubType)[1]', 'VARCHAR(100)'),''),
+  @strConsiderOptionBF = ISNULL(x.value('(OptionBF)[1]', 'VARCHAR(100)'),''),
+  @strClientCode = ISNULL(x.value('(ClientCode)[1]', 'VARCHAR(100)'),''),
+  @strScripCode = ISNULL(x.value('(ScripCode)[1]', 'VARCHAR(100)'),''),
+  @strDetailReportCode = ISNULL(x.value('(DetailReportCode)[1]', 'VARCHAR(100)'),''),
+  @strDetailReportCategroy = ISNULL(x.value('(DetailReportCategroy)[1]', 'VARCHAR(100)'),''),
+  @strRequestFrom = ISNULL(x.value('(RequestFrom)[1]', 'VARCHAR(1)'),''),
+  @strSummary = ISNULL(x.value('(RequestSummary)[1]', 'VARCHAR(1)'),'')
+  FROM @XMLData.nodes('/root') AS XTbl(x) 
+
+
+  IF ISNULL(@strRequestFrom,'') = '' 
+  begin
+    SET @strRequestFrom = 'W'
+  END
+  IF @strRateType = ''
+  BEGIN
+    SET @strRateType = 'Market Rate'
+  END
+  
+  IF ISNULL(@strSummary,'') =''
+  BEGIN
+    SET @strSummary  = 'N'
+  END
+  
+  IF ISNULL(@strClientCode,'') <> ''
+  BEGIN
+    SET @strUserId = @strClientCode
+  END
+  
+  IF @strDetailReportCategroy <> ''
+  BEGIN
+    SET @strReportType = @strDetailReportCategroy
+  END
+  
+  IF @strReportType = 'Cash_Settlementwise Summary'
+  BEGIN
+    SET @strReportType = 'Settlementwise Summary'
+  END
+  ELSE IF @strReportType = 'Cash_ScripWise Summary'
+  BEGIN
+    SET @strReportType = 'ScripWise Summary'
+  END
+  ELSE IF @strReportType = 'Cash_Stock Position Only'
+  BEGIN
+    SET @strReportType = 'Stock Position Only'
+  END
+  
+  DECLARE @SehmentCH_ClgHs VARCHAR(1)='', @ch_EffDt VARCHAR(8)=''
+  
+  SELECT @SehmentCH_ClgHs = (CASE WHEN CH_ClgHs = 'I' THEN 'B' ELSE CH_ClgHs END) FROM ClearingHouse(NOLOCK)
+  WHERE CH_CompanyCode = 'A' AND CH_Segment = 'C' 
+  AND CH_EffDt = (SELECT Min(CH_EffDt) FROM ClearingHouse
+  WHERE CH_CompanyCode = 'A' AND CH_Segment = 'C' AND CH_EffDt <= @dtToDt)
+  
+  DECLARE @tbl_ClientPL TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),  ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+  Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), BF_QTY MONEY, BF_CloseRate MONEY, BF_VALUE MONEY, BOT_QTY MONEY, BOT_VALUE MONEY, 
+  SOLD_QTY MONEY,SOLD_VALUE MONEY, EX_QTY MONEY, EX_VALUE MONEY, AS_QTY MONEY, AS_VALUE MONEY, MTM MONEY,
+  NET_QTY MONEY, CMP MONEY, NET_VALUE MONEY)
+
+  DECLARE @tbl_BSClient TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10), ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+  Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), BOT_QTY MONEY, BOT_VALUE MONEY, 
+  SOLD_QTY MONEY, SOLD_VALUE MONEY)
+
+  DECLARE @tbl_CLClient TABLE(CompanyCode VARCHAR(10), Exchange VARCHAR(10), Segment VARCHAR(10),  ClientCode VARCHAR(50), ClientName VARCHAR(100), 
+  Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), EX_QTY MONEY, EX_VALUE MONEY, AS_QTY MONEY, AS_VALUE MONEY)
+
+  IF @strSplFilter = ''
+  BEGIN
+	SET @strStringMin  = 'DECLARE @tbl_UserList TABLE(Client_Code VARCHAR(50)) '
+    +' INSERT INTO @tbl_UserList(Client_Code) '
+    +' SELECT * FROM DBO.[fn_GetClients]('''+@strUserId+''','''+@strSelectTag+''','''+@strSelectUsers+''') '
+  END  
+  ELSE
+  IF @strSplFilter <> ''
+  BEGIN
+    SET @strStringMin  = ' DECLARE @tbl_UserList TABLE (Client_Code VARCHAR(10)) '
+	                     +' INSERT INTO @tbl_UserList(Client_Code) SELECT distinct CM_CD FROM Client_master(NOLOCK) WHERE 1 = 1  AND '+@strSplFilter
+  END	
+  
+	
+  IF @strProduct = 'CASH'
+  BEGIN 
+    IF OBJECT_ID('tempdb..#tbl_TradeSqrup') IS NOT NULL
+      DROP TABLE #tbl_TradeSqrup
+    IF OBJECT_ID('tempdb..#TrxSummaryDLV') IS NOT NULL
+      DROP TABLE #TrxSummaryDLV
+    IF OBJECT_ID('tempdb..#TrxDLV') IS NOT NULL
+      DROP TABLE #TrxDLV
+
+
+    CREATE TABLE #tbl_TradeSqrup (SerialNo INT identity(1, 1), td_companycode VARCHAR(1) ,td_stlmnt VARCHAR(15)
+	,td_clientcd VARCHAR(10) ,td_scripcd VARCHAR(10) ,td_dt VARCHAR(8) ,td_bsflag VARCHAR(1) ,td_bqty MONEY ,td_sqty MONEY
+	,td_rate MONEY ,td_marketrate MONEY ,td_BrokerageType VARCHAR(5))
+
+    CREATE INDEX indx_TradeSqrup ON #tbl_TradeSqrup (td_dt,td_stlmnt)
+
+    CREATE INDEX indx_TradeSqrup1 ON #tbl_TradeSqrup (SerialNo)
+
+    
+	SET @string = @strStringMin+' SELECT td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, sum(td_bqty), sum(td_sqty), '
+    +' SUM(td_rate * (td_bqty + td_sqty)), sum(td_marketrate * (td_bqty + td_sqty)), '
+    +' ''SD1'' AS td_BrokerageType  FROM( ' 
+    +' SELECT td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_tradeid, td_subtradeid, td_dt, td_srno, '
+    +' td_ssrno, td_bsflag, td_bqty, td_sqty, td_rate = CAST(td_rate AS MONEY), td_time, td_orderid, td_brokerage = '
+    +' CAST(td_brokerage AS MONEY), td_brokeragetype = ''SD1'', td_servicetax, td_turnoverTax, td_marginyn, td_marketrate = '
+    +' CAST(td_marketrate AS MONEY), td_terminalcd, td_ParticipantCode, td_cfflag, td_CtclId, td_SttWaived, '
+    +' trx.mkrdt, td_ordertime, td_acckey, td_filler1, td_filler2  '
+    +' FROM TRx(NOLOCK) , @tbl_UserList X, Settlements(NOLOCK) SETT  '
+    +' WHERE td_clientcd = X.Client_Code  AND td_stlmnt = se_stlmnt  AND td_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDt+''' '
+    +' and NOT EXISTS(SELECT 1 FROM Settlement_type(NOLOCK) WHERE sy_maptype IN(''S'', ''W'', ''V'',''C'',''A'') and sy_exchange = SETT.se_exchange '
+    +' and sy_type = SETT.se_type)  /*AND td_scripcd = ''534392'' */ '
+
+	
+    IF ISNULL(@ExchSeg,'') <> ''
+    BEGIN
+      SET @string =   @string+'  AND se_exchange IN(SELECT SUBSTRING(VALUE,2,1) FROM  ReturnTable('''+@ExchSeg+''','','')) '
+    END	
+	
+	IF ISNULL(@strScripCode,'') <> ''
+	BEGIN
+	  SET @string =   @string+'  AND  td_scripcd = '''+@strScripCode+''''
+	END
+	
+	SET @string =   @string+' ) X12 '
+    +' GROUP BY td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag '
+    +' order by td_clientcd, td_scripcd, td_dt, td_stlmnt '
+	
+   
+    BEGIN TRY
+      INSERT INTO #tbl_TradeSqrup(td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, td_bqty, td_sqty, td_rate,
+      td_marketrate, td_BrokerageType)
+	  EXEC(@string)
+    END TRY
+    BEGIN CATCH
+      SET @o_vcErrorMessage = error_message()
+	  SET @o_vcErrorFlag = 'E'
+	  RETURN 1  
+    END CATCH  
+    
+	UPDATE #tbl_TradeSqrup
+    SET td_rate = CASE WHEN (td_bqty + td_sqty) > 0 THEN td_rate / (td_bqty + td_sqty) ELSE 0 END, td_marketrate = 
+    CASE WHEN (td_bqty + td_sqty) > 0 THEN td_marketrate / (td_bqty + td_sqty) ELSE 0 END
+	
+       
+    CREATE TABLE #TrxSummaryDLV (clientcd VARCHAR(8) NOT NULL, SettlementNo VARCHAR(9), scripcd VARCHAR(6) NOT NULL, 
+    Buys MONEY, Sells MONEY)
+
+    INSERT INTO #TrxSummaryDLV
+    SELECT td_clientcd, td_stlmnt, td_scripcd, Buys, Sells
+    FROM (SELECT MAX(td_companycode + left(td_stlmnt, 2)) td_companycode, td_clientcd, cm_name, td_scripcd, ss_name, 
+    ss_nsymbol, ss_nseries, td_stlmnt, sum(td_bqty) AS 'Buys', sum(td_sqty) 'Sells', sum(td_bqty - td_sqty) 'Delivery', 
+    count(*) Totalrec, ss_group, cm_type
+    FROM #tbl_TradeSqrup, Client_master, Securities
+    WHERE cm_cd = td_clientcd AND td_scripcd = ss_cd
+    GROUP BY td_clientcd, cm_name, td_scripcd, ss_cd, ss_name, ss_nsymbol, ss_nseries, ss_group, cm_type, td_stlmnt
+    HAVING sum(td_bqty - td_sqty) <> 0) a
+
+    CREATE TABLE #TrxDLV (SrNo NUMERIC, td_SettlementNo varchar(9), Qty NUMERIC, FinalQty NUMERIC)
+
+    INSERT INTO #TrxDLV
+    SELECT SerialNo, td_stlmnt,  Qty, CASE WHEN NetQty >= Running THEN Qty ELSE NetQty - isNull(PrevRunning, 0) END FinalQty
+    FROM (SELECT SerialNo, td_clientcd, td_scripcd,td_stlmnt, td_marketrate,  NetQty, Qty, Running, LAG(
+    Running) OVER (
+    PARTITION BY td_clientcd, td_scripcd, td_stlmnt ORDER BY td_stlmnt DESC, SerialNo DESC) PrevRunning
+    FROM (
+    SELECT SerialNo, td_stlmnt, td_clientcd, td_scripcd, td_bqty + td_sqty Qty, td_marketrate,  
+    abs(Buys - Sells) NetQty, Sum(td_bqty + td_sqty) OVER (
+    PARTITION BY td_clientcd, td_scripcd, td_stlmnt ORDER BY td_stlmnt DESC, SerialNo DESC) Running
+    FROM #tbl_TradeSqrup, Client_master, Securities, #TrxSummaryDLV
+    WHERE cm_cd = td_clientcd AND td_scripcd = ss_cd
+    AND td_clientcd = clientcd AND td_scripcd = scripcd  and td_stlmnt = SettlementNo
+    AND td_bsflag = CASE WHEN Buys > Sells THEN 'B' ELSE 'S' END) a) b
+    WHERE CASE WHEN NetQty >= Running THEN Qty ELSE NetQty - isNull(PrevRunning,0) END > 0
+
+
+    INSERT INTO #tbl_TradeSqrup(td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, td_bqty, td_sqty, td_rate,
+    td_marketrate, td_BrokerageType)
+    SELECT td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt,
+    td_bsflag, CASE td_bsflag WHEN 'B' THEN Qty - FinalQty ELSE 0 END, CASE td_bsflag WHEN 'S' THEN Qty - FinalQty ELSE 0 END, 
+	TD_RATE, td_marketrate, td_brokeragetype ='SD1'
+    FROM #tbl_TradeSqrup , #TrxDLV
+    WHERE SerialNo = srno and td_stlmnt = td_SettlementNo 
+	AND (Qty - FinalQty) > 0
+
+
+    UPDATE #tbl_TradeSqrup
+    SET td_bqty = FinalQty, td_brokeragetype = 'DLV' 
+    FROM #TrxDLV
+    WHERE SerialNo = srno and td_stlmnt = td_SettlementNo  AND td_bsflag = 'B'
+
+    UPDATE #tbl_TradeSqrup
+    SET td_sqty = FinalQty, td_brokeragetype = 'DLV'
+    FROM #TrxDLV
+    WHERE SerialNo = srno and td_stlmnt = td_SettlementNo and td_bsflag = 'S'
+
+    DELETE #tbl_TradeSqrup
+    WHERE td_bqty + td_sqty = 0
+   
+
+ 	
+
+    SET @string = @strStringMin+' SELECT td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, sum(td_bqty), sum(td_sqty), '
+    +' round((CASE WHEN sum(td_bqty + td_sqty) <> 0 THEN SUM(td_rate * (td_bqty + td_sqty))/sum(td_bqty + td_sqty) ELSE 0 END),4), '
+	+' round((CASE WHEN sum(td_bqty + td_sqty) <> 0 THEN SUM(td_marketrate * (td_bqty + td_sqty))/sum(td_bqty + td_sqty) ELSE 0 END),4), '
+    +' ''DLV'' AS td_BrokerageType  FROM( ' 
+    +' SELECT td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_tradeid, td_subtradeid, td_dt, td_srno, '
+    +' td_ssrno, td_bsflag, td_bqty, td_sqty, td_rate, td_time, td_orderid, td_brokerage = '
+    +' CAST(td_brokerage AS MONEY), td_brokeragetype = ''DLV'', td_servicetax, td_turnoverTax, td_marginyn, td_marketrate, '
+	+' td_terminalcd, td_ParticipantCode, td_cfflag, td_CtclId, td_SttWaived, '
+    +' trx.mkrdt, td_ordertime, td_acckey, td_filler1, td_filler2  '
+    +' FROM TRx(NOLOCK) , @tbl_UserList X, Settlements(NOLOCK) SETT '
+    +' WHERE td_clientcd = X.Client_Code  AND td_stlmnt = se_stlmnt  AND td_dt BETWEEN '''+@dtFromDate+''' AND '''+@dtToDt+''' '
+    +' and EXISTS(SELECT 1 FROM Settlement_type(NOLOCK) WHERE ISNULL(sy_maptype,'''') IN(''C'',''A'') and sy_exchange = SETT.se_exchange '
+    +' and sy_type = SETT.se_type) /*AND td_scripcd = ''534392'' */'
+	
+
+    IF ISNULL(@ExchSeg,'') <> ''
+    BEGIN
+      SET @string =   @string+'  AND se_exchange IN(SELECT SUBSTRING(VALUE,2,1) FROM  ReturnTable('''+@ExchSeg+''','','')) '
+    END	
+	
+	IF ISNULL(@strScripCode,'') <> ''
+	BEGIN
+	  SET @string =   @string+'  AND  td_scripcd = '''+@strScripCode+''''
+	END
+	
+	
+	SET @string =   @string+' ) X12 '
+    +' GROUP BY td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag '
+    +' order by td_clientcd, td_scripcd, td_dt, td_stlmnt '
+	
+   
+    BEGIN TRY
+      INSERT INTO #tbl_TradeSqrup(td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, td_bqty, td_sqty, td_rate,
+      td_marketrate, td_BrokerageType)
+	  EXEC(@string)
+    END TRY
+    BEGIN CATCH
+      SET @o_vcErrorMessage = error_message()
+	  SET @o_vcErrorFlag = 'E'
+	  RETURN 1  
+    END CATCH  
+
+
+	DECLARE @tbl_ProfileLOss TABLE(ClientCode VARCHAR(50), SettEndDate VARCHAR(8), 
+	SettlementNo VARCHAR(50),
+	ScripCode VARCHAR(20), ScripTag VARCHAR(1), TradingFlag VARCHAR(1), BuyQty MONEY, BuyRate MONEY, 
+	BuyValue MONEY, SaleQty MONEY,  SaleRate MONEY, SaleValue MONEY,
+    NetQty MONEY, NetValue MONEY, AvgRate MONEY, CMP MONEY, NotionalPL MONEY, RelPl MONEY)
+	
+	
+	IF @strReportType <> 'Settlementwise Summary'
+	BEGIN
+	  INSERT INTO @tbl_ProfileLOss(ClientCode, ScripCode, ScripTag, BuyQty, BuyRate, BuyValue, SaleQty,SaleRate, SaleValue, NetQty, NetValue, AvgRate)
+	  SELECT td_clientcd, td_scripcd, CASE WHEN td_brokeragetype = 'DLV' THEN 'N' ELSE 'Y' END AS td_flag,  
+	  td_bqty = SUM(td_bqty), BuyRate = CASE WHEN SUM(td_bqty)>0 THEN round(SUM(td_bqty*td_rate)/SUM(td_bqty),2) ELSE 0 END,
+      BuyValue = SUM(td_bqty*td_rate), td_sqty = SUM(td_sqty), SaleRate = CASE WHEN SUM(td_sqty)>0 THEN round(SUM(td_sqty*td_rate)/SUM(td_sqty),2) ELSE 0 END,
+      saleValue = SUM(td_sqty*td_rate),  NetQty = SUM(td_bqty)-SUM(td_sqty), NetValue = round(SUM(td_sqty*td_rate) - SUM(td_bqty*td_rate),2),
+      AvgRate = abs(CASE WHEN SUM(td_bqty)-SUM(td_sqty)<>0 THEN round(SUM(td_sqty*td_rate) - SUM(td_bqty*td_rate),2)/(SUM(td_bqty)-SUM(td_sqty)) ELSE 0 END)
+      FROM #tbl_TradeSqrup
+      Group by td_clientcd, td_scripcd, CASE WHEN td_brokeragetype = 'DLV' THEN 'N' ELSE 'Y' END
+	END
+    ELSE
+    IF @strReportType = 'Settlementwise Summary' 	
+	BEGIN
+	  INSERT INTO @tbl_ProfileLOss(ClientCode, SettEndDate, SettlementNo, ScripCode, ScripTag,  BuyQty, 
+	  BuyRate, BuyValue, SaleQty,SaleRate, SaleValue, NetQty, NetValue, AvgRate)
+	  SELECT td_clientcd, se_endt, td_stlmnt, td_scripcd, CASE WHEN td_brokeragetype = 'DLV' THEN 'N' ELSE 'Y' END AS td_flag,  
+	  td_bqty = SUM(td_bqty), BuyRate = CASE WHEN SUM(td_bqty)>0 THEN round(SUM(td_bqty*td_rate)/SUM(td_bqty),2) ELSE 0 END,
+      BuyValue = SUM(td_bqty*td_rate), td_sqty = SUM(td_sqty), 
+	  SaleRate = CASE WHEN SUM(td_sqty)>0 THEN ROUND(SUM(td_sqty*td_rate)/SUM(td_sqty),2) ELSE 0 END,
+      saleValue = SUM(td_sqty*td_rate),  NetQty = SUM(td_bqty)-SUM(td_sqty), NetValue = round(SUM(td_sqty*td_rate) - SUM(td_bqty*td_rate),2),
+      AvgRate = abs(CASE WHEN SUM(td_bqty)-SUM(td_sqty)<>0 THEN round(SUM(td_sqty*td_rate) - SUM(td_bqty*td_rate),2)/(SUM(td_bqty)-SUM(td_sqty)) ELSE 0 END)
+	  FROM #tbl_TradeSqrup X, Settlements(NOLOCK) SETT
+	  WHERE X.td_stlmnt = SETT.se_stlmnt
+      Group by td_clientcd, td_scripcd,  se_endt, td_stlmnt, 
+	  CASE WHEN td_brokeragetype = 'DLV' THEN 'N' ELSE 'Y' END
+	END
+	
+	IF OBJECT_ID('tempdb..#TrxDLV1') IS NOT NULL
+	  DROP TABLE #TrxDLV1
+    IF OBJECT_ID('tempdb..#TrxSummaryDLV1') IS NOT NULL
+	  DROP TABLE #TrxSummaryDLV1
+    IF OBJECT_ID('tempdb..#tbl_TradeSqrup1') IS NOT NULL
+	  DROP TABLE #tbl_TradeSqrup1
+	
+    CREATE TABLE  #tbl_TradeSqrup1(SerialNo int identity(1,1), td_companycode VARCHAR(1), td_stlmnt VARCHAR(15), 
+	td_clientcd VARCHAR(10), td_scripcd VARCHAR(10), 
+    td_dt VARCHAR(8), td_bsflag VARCHAR(1), td_bqty MONEY, td_sqty MONEY, td_rate MONEY, td_marketrate MONEY, td_BrokerageType VARCHAR(5))
+	
+	CREATE INDEX indx_TradeSqrup1 ON #tbl_TradeSqrup1 (td_dt, td_stlmnt)
+    CREATE INDEX indx_TradeSqrup11 ON #tbl_TradeSqrup1 (SerialNo)
+	
+    INSERT INTO #tbl_TradeSqrup1(td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, td_bqty, td_sqty, td_rate,
+    td_marketrate, td_BrokerageType)
+	SELECT td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, td_bqty, td_sqty, td_rate,
+    td_marketrate, td_BrokerageType ='SD1'
+	FROM #tbl_TradeSqrup
+	WHERE td_brokeragetype = 'DLV'
+      
+	
+    
+    CREATE TABLE #TrxSummaryDLV1 (clientcd VARCHAR(8) NOT NULL, scripcd VARCHAR(6) NOT NULL, Buys MONEY, Sells MONEY)
+
+    INSERT INTO #TrxSummaryDLV1
+	SELECT td_clientcd, td_scripcd, Buys, Sells
+    FROM (SELECT MAX(td_companycode + left(td_stlmnt, 2)) td_companycode, td_clientcd, cm_name, td_scripcd, ss_name, 
+    ss_nsymbol, ss_nseries, sum(td_bqty) AS 'Buys', sum(td_sqty) 'Sells', sum(td_bqty - td_sqty) 'Delivery', 
+    count(*) Totalrec, ss_group, cm_type
+    FROM #tbl_TradeSqrup1, Client_master, Securities
+    WHERE cm_cd = td_clientcd AND td_scripcd = ss_cd
+    GROUP BY td_clientcd, cm_name, td_scripcd, ss_cd, ss_name, ss_nsymbol, ss_nseries, ss_group, cm_type
+    HAVING sum(td_bqty - td_sqty) <> 0) a
+
+    CREATE TABLE #TrxDLV1 (SrNo NUMERIC, Qty NUMERIC, FinalQty NUMERIC)
+
+    INSERT INTO #TrxDLV1
+	SELECT SerialNo, Qty, CASE WHEN NetQty >= Running THEN Qty ELSE NetQty - isNull(PrevRunning, 0) END FinalQty
+    FROM (
+	SELECT SerialNo, td_clientcd, td_scripcd, td_marketrate,  NetQty, Qty, Running, LAG(
+			Running) OVER (
+			PARTITION BY td_clientcd, td_scripcd ORDER BY td_dt DESC,  SerialNo DESC
+			) PrevRunning
+	FROM (
+		SELECT SerialNo, td_dt, td_clientcd, td_scripcd, td_bqty + td_sqty Qty, td_marketrate,  abs(Buys - Sells) NetQty, Sum(td_bqty + td_sqty) OVER (
+				PARTITION BY td_clientcd, td_scripcd ORDER BY td_dt DESC,  SerialNo DESC
+				) Running
+	FROM #tbl_TradeSqrup1, Client_master, Securities, #TrxSummaryDLV1
+		WHERE cm_cd = td_clientcd AND td_scripcd = ss_cd
+			AND td_clientcd = clientcd AND td_scripcd = scripcd AND td_bsflag = CASE WHEN Buys > Sells THEN 'B' ELSE 'S' END
+		) a
+	  ) b
+    WHERE CASE WHEN NetQty >= Running THEN Qty ELSE NetQty - isNull(PrevRunning, 0) END > 0
+
+	INSERT INTO #tbl_TradeSqrup1(td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt, td_bsflag, td_bqty, td_sqty, td_rate,
+    td_marketrate, td_BrokerageType)
+    SELECT td_companycode, td_stlmnt, td_clientcd, td_scripcd, td_dt,
+    td_bsflag, CASE td_bsflag WHEN 'B' THEN Qty - FinalQty ELSE 0 END, CASE td_bsflag WHEN 'S' THEN Qty - FinalQty ELSE 0 END
+    ,TD_RATE , td_marketrate, td_brokeragetype ='SD1'
+    FROM #tbl_TradeSqrup1, #TrxDLV1
+    WHERE SerialNo = srno 
+	AND (Qty - FinalQty) > 0
+
+ 
+    UPDATE #tbl_TradeSqrup1
+    SET td_bqty = FinalQty, td_brokeragetype = 'DLV' 
+    FROM #TrxDLV1
+    WHERE SerialNo = srno  AND td_bsflag = 'B'
+
+    UPDATE #tbl_TradeSqrup1
+    SET td_sqty = FinalQty, td_brokeragetype = 'DLV' 
+    FROM #TrxDLV1
+    WHERE SerialNo = srno and td_bsflag = 'S'
+
+    DELETE #tbl_TradeSqrup1
+    WHERE td_bqty + td_sqty = 0
+	
+	
+    DECLARE @CH_ClgHs VARCHAR(1)=@SehmentCH_ClgHs
+    
+    DECLARE @tbl_CloseRate TABLE(Scrip VARCHAR(20), CloseRate MONEY)
+	
+	IF @strRateType IN('Market Rate' ,'Average Rate')
+    BEGIN 
+	
+	  INSERT INTO @tbl_CloseRate(Scrip, CloseRate)
+	  SELECT DISTINCT ScripCode, '' AS CloseRate FROM @tbl_ProfileLOss
+	
+	  IF @CH_ClgHs = 'N'
+	  BEGIN
+	    UPDATE A SET A.CloseRate = B.mk_closerate
+	    FROM @tbl_CloseRate A, Market_rates(NOLOCK) B 
+        WHERE A.Scrip = B.mk_scripcd AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	    WHERE mk_exchange = 'B' and mk_dt<=@dtToDt) AND  mk_exchange = 'B'
+	  	  
+	    UPDATE A SET A.CloseRate = B.mk_closerate
+	    FROM @tbl_CloseRate A, Market_rates(NOLOCK) B 
+        WHERE A.Scrip = B.mk_scripcd 
+	    AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	    WHERE mk_exchange = 'N'
+	    and mk_dt<=@dtToDt) AND  mk_exchange = 'N'
+	  END  
+	  ELSE
+	  IF @CH_ClgHs = 'B'
+	  BEGIN
+	    UPDATE A SET A.CloseRate = B.mk_closerate
+	    FROM @tbl_CloseRate A, Market_rates(NOLOCK) B 
+        WHERE A.Scrip = B.mk_scripcd AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	    WHERE mk_exchange = 'N' and mk_dt<=@dtToDt) AND  mk_exchange = 'N'
+	  	  
+	    UPDATE A SET A.CloseRate = B.mk_closerate
+	    FROM @tbl_CloseRate A, Market_rates(NOLOCK) B 
+        WHERE A.Scrip = B.mk_scripcd 
+	    AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	    WHERE mk_exchange = 'B'
+	    and mk_dt<=@dtToDt) AND  mk_exchange = 'B'
+	  END  
+	
+	  UPDATE A SET A.CloseRate = B.mk_closerate
+	  FROM @tbl_CloseRate A, Market_rates B
+	  WHERE @CH_ClgHs = B.mk_exchange
+	  AND mk_dt = (select  max(mk_dt) from Market_rates(NOLOCK)  
+	  WHERE mk_scripcd = B.mk_scripcd and mk_dt<=@dtToDt)
+      AND A.Scrip = B.mk_scripcd	
+	  AND A.CloseRate = 0
+	
+
+		
+ 	  UPDATE A SET A.CMP = CloseRate, A.NotionalPL = (A.NetQty * CloseRate)+ISNULL(NetValue,0)
+      FROM @tbl_ProfileLOss A, @tbl_CloseRate B  
+	  WHERE A.ScripCode = B.Scrip
+      AND NetQty <> 0
+	
+      UPDATE A SET A.NotionalPL = ISNULL(NetValue,0)
+      FROM @tbl_ProfileLOss A  
+      WHERE NetQty = 0
+			
+	  UPDATE A SET A.NetValue = case when @strRateType IN('Market Rate','Average Rate') 
+	  then abs(isnull(A.NetQty,0)*isnull(A.CMP,0)) else A.NetValue end 
+      FROM @tbl_ProfileLOss A
+	  
+	  UPDATE A SET A.RelPl =  (SaleValue-BuyValue)+(ROUND(B.NetQty*B.AugRate,2))
+	  FROM @tbl_ProfileLOss A,(
+	  select td_clientcd, td_scripcd, SUM(td_bqty-td_sqty) As NetQty, 
+	  Sum((td_sqty*td_rate)-(td_Bqty*td_rate)) As NetValue,
+	  AugRate = ABS(CASE WHEN SUM(td_bqty-td_sqty)<>0 THEN Sum((td_sqty*td_rate)-(td_Bqty*td_rate))/SUM(td_bqty-td_sqty) ELSE 0 END)
+	  FROM #tbl_TradeSqrup1
+	  WHERE td_brokeragetype = 'DLV'
+	  GROUP BY td_clientcd, td_scripcd) B
+	  WHERE  A.ClientCode = B.td_clientcd
+	  AND A.ScripCode = B.td_scripcd
+	  AND ScripTag = 'N' and buyqty <> saleQty and buyqty > 0 and saleQty > 0
+	  
+	  UPDATE A SET A.RelPl =  (SaleValue-BuyValue)
+	  FROM @tbl_ProfileLOss A
+	  WHERE buyqty = saleQty
+	  
+	  UPDATE A SET RelPl = 0
+	  FROM @tbl_ProfileLOss A
+	  WHERE buyqty <> saleQty and (buyqty = 0 or saleQty = 0)
+	  
+	END
+	
+	ELSE IF @strRateType IN('COST')
+	BEGIN  
+	  
+	  UPDATE A SET A.CMP = B.AugRate, A.AvgRate = B.AugRate, A.NetValue = ABS(B.NetValue), A.NetQty = B.NetQty
+	  FROM @tbl_ProfileLOss A, (select td_clientcd, td_scripcd, SUM(td_bqty-td_sqty) As NetQty, 
+	  Sum((td_sqty*td_rate)-(td_Bqty*td_rate)) As NetValue,
+	  AugRate = ABS(CASE WHEN SUM(td_bqty-td_sqty)<>0 THEN Sum((td_sqty*td_rate)-(td_Bqty*td_rate))/SUM(td_bqty-td_sqty) ELSE 0 END)
+	  FROM #tbl_TradeSqrup1
+	  WHERE td_brokeragetype = 'DLV'
+	  GROUP BY td_clientcd, td_scripcd) B
+	  where A.ClientCode = B.td_clientcd
+	  AND A.ScripCode = B.td_scripcd
+	  AND ScripTag = 'N'
+	
+	  UPDATE A SET NotionalPL = SaleValue-BuyValue
+	  FROM @tbl_ProfileLOss A
+	  WHERE buyqty = saleQty
+	
+	  UPDATE A SET NotionalPL = (SaleValue-BuyValue)+(ROUND(NetQty*AvgRate,2))
+	  FROM @tbl_ProfileLOss A
+	  WHERE buyqty <> saleQty and buyqty > 0 and saleQty > 0
+	  
+	  UPDATE A SET NotionalPL = 0
+	  FROM @tbl_ProfileLOss A
+	  WHERE buyqty <> saleQty and (buyqty = 0 or saleQty = 0)
+	  
+	END
+  
+ 	DECLARE @tbl_CashBill TABLE (Tag INT identity(1,1), ClientCode VARCHAR(50), ClientName VARCHAR(50),  SettEndDate varchar(8),
+	SettlementNo VARCHAR(50),
+	ScripCode VARCHAR(20), 
+	ScripName VARCHAR(100), ScripTag VARCHAR(1), TradingFlag VARCHAR(1),
+	BuyQty MONEY, BuyRate Money, BuyValue MONEY, SaleQty MONEY,  SaleRate MONEY, SaleValue MONEY, NetQty MONEY, NetValue MONEY, 
+	AvgRate MONEY, Cmp MONEY, NotPL MONEY, RelPl MONEY)
+	
+	IF @strReportType <> 'Settlementwise Summary'
+	BEGIN
+	  INSERT INTO @tbl_CashBill(ClientCode, ClientName,  ScripCode, ScripName, ScripTag, TradingFlag,
+	  BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL, RelPl)
+      SELECT ClientCode, ClientName = CM.cm_name,  ScripCode, ScripName = ss_lname, ScripTag, TradingFlag, BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, 
+	  NetQty, NetValue, AvgRate = ABS(AvgRate), 
+	  CMP =ISNULL(cmp,0) , 
+      NotPL  = ISNULL(NotionalPL ,0), RelPl = ISNULL(RelPl,0)
+      FROM @tbl_ProfileLOss A, Securities(NOLOCK) S, Client_Master(NOLOCK) cm
+      WHERE A.ScripCode = S.ss_cd
+	  and a.ClientCode = CM.CM_CD
+      ORDER BY  ClientCode, ss_lname, ScripTag desc
+	END
+    ELSE	
+	IF @strReportType = 'Settlementwise Summary'
+	BEGIN
+      INSERT INTO @tbl_CashBill(ClientCode, ClientName, SettEndDate, SettlementNo, ScripCode, ScripName,ScripTag, TradingFlag, 
+	  BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL)
+      SELECT ClientCode, ClientName = CM.cm_name, SettEndDate,SettlementNo,  
+	  ScripCode, ScripName = ss_lname, ScripTag, TradingFlag, BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate = ABS(AvgRate), 
+	  CMP =ISNULL(cmp,0) , 
+      NotPL  = ISNULL(NotionalPL ,0)
+      FROM @tbl_ProfileLOss A, Securities(NOLOCK) S, Client_Master(NOLOCK) cm
+      WHERE A.ScripCode = S.ss_cd
+	  and a.ClientCode = CM.CM_CD
+      ORDER BY  ClientCode, ss_lname, ScripTag desc
+	END
+	IF ISNULL(@strScripCode,'') = ''
+	BEGIN
+	  INSERT INTO @tbl_CashBill(ClientCode, ClientName,  ScripCode, ScripName, ScripTag,
+	  BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL, RelPl)
+    
+	  SELECT ClientCode = sh_clientcd, ClientName = '',  ScripCode = '', ScripName = sh_desc, ScripTag = '',
+	  BuyQty = 0, BuyRate = 0, BuyValue = 0, SaleQty = 0, SaleRate = 0, SaleValue = 0, NetQty = 0, NetValue = 0, AvgRate = 0, 
+	  Cmp = 0, isnull(round(sum(sh_amount),2),0)*-1, isnull(round(sum(sh_amount),2),0)*-1
+	  FROM Specialcharges(NOLOCK) X, Settlements(NOLOCK)  SC, 
+	  (SELECT DISTINCT Client_Code = ClientCode  FROM @tbl_ProfileLOss) X1
+      WHERE SH_clientcd = x1.Client_code and sh_stlmnt = se_stlmnt
+      AND ((se_exchange IN(SELECT SUBSTRING(VALUE,2,1) FROM ReturnTable(@ExchSeg,',')) and @ExchSeg <> '') OR @ExchSeg = '')
+      AND se_stdt >= @dtFromDate AND se_stdt<= @dtToDt
+      group by sh_companycode, sh_clientcd, sh_desc
+      UNION ALL
+      SELECT ClientCode = sh_clientcd, ClientName = '',  ScripCode = '', ScripName = 'SERVICE TAX', ScripTag = '',
+	  BuyQty = 0, BuyRate = 0, BuyValue = 0, SaleQty = 0, SaleRate = 0, SaleValue = 0, NetQty = 0, NetValue = 0, AvgRate = 0, Cmp = 0, isnull(round(sum(sh_servicetax),2),0)*-1,
+	  isnull(round(sum(sh_servicetax),2),0)*-1
+	  FROM Specialcharges(NOLOCK) X, Settlements(NOLOCK)  SC, (SELECT DISTINCT Client_Code = ClientCode  FROM @tbl_ProfileLOss)  X1
+      WHERE sh_clientcd = x1.Client_code
+      AND sh_stlmnt = se_stlmnt
+      AND ((se_exchange IN(SELECT SUBSTRING(VALUE,2,1) FROM ReturnTable(@ExchSeg,',')) and @ExchSeg <> '') OR @ExchSeg = '')
+      AND se_stdt >= @dtFromDate AND se_stdt<= @dtToDt
+      GROUP BY sh_companycode, se_Exchange, sh_clientcd, sh_desc
+      HAVING ROUND(SUM(sh_servicetax),2) <> 0
+	  ORDER BY sh_clientcd, sh_desc
+	END   
+	DECLARE @XMLDATA1 VARCHAR(MAX)=''
+	IF @strReportType not in( 'Settlementwise Summary','Stock Position Only')
+	BEGIN
+	  IF @strOutputType = 'X'
+	  BEGIN
+	    IF ISNULL(@strSummary,'N') = 'N'
+		BEGIN
+	      SET @XMLDATA1 = (SELECT ClientCode, ClientName,  ScripCode, ScripName, 
+		  ScripTag = CASE WHEN ScripTag = 'N' THEN 'Delivery' WHEN ScripTag = 'Y' THEN 'Square off' else ScripTag END, 
+	      TradingFlag, BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue = isnull(NetValue,0)*-1, 
+		  AvgRate, Cmp, NotPL, RelPl = round(isnull(RelPl,0),2), 
+		  UnRel = CASE WHEN ScripCode <> '' THEN round(NotPL,2) - round(isnull(RelPl,0),2) ELSE 0 END,
+		  Charges =  CASE WHEN ISNULL(ScripCode,'') = '' THEN round(NotPL,2)  else 0 end
+	      FROM @tbl_CashBill --WHERE ((@strRequestFrom = 'M' AND ISNULL(ScripCode,'') <> '') OR  @strRequestFrom <> 'M') 
+		  ORDER BY ClientCode, Tag FOR XML PATH('ProfitLoss'))
+	      SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		  RETURN 1
+		END
+		ELSE
+	    IF ISNULL(@strSummary,'N') = 'Y'
+		BEGIN
+		  SET @XMLDATA1 = (SELECT TotalCharges = SUM(CASE WHEN ISNULL(ScripCode,'') = '' THEN round(isnull(NotPL,0),2) ELSE 0 END),
+		  RelPl = SUM(CASE WHEN ISNULL(ScripCode,'') <> '' THEN round(isnull(RelPl,0),2) ELSE 0 END), 
+		  UnRel = SUM(CASE WHEN ScripCode <> '' THEN round(NotPL,2) - round(isnull(RelPl,0),2) ELSE 0 END)
+	      FROM @tbl_CashBill FOR XML PATH('ProfitLoss'))
+	      SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		  RETURN 1
+		END
+	  END
+      ELSE
+      BEGIN	  
+	    SELECT ClientCode, ClientName,  ScripCode, ScripName, ScripTag = CASE WHEN ScripTag = 'N' THEN 'Delivery' 
+	    WHEN ScripTag = 'Y' THEN 'Square off' else ScripTag END, 
+	    TradingFlag, 
+	    BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL, RelPl = round(isnull(RelPl,0),2),
+	    UnRel = CASE WHEN ScripCode <> '' THEN round(NotPL,2) - round(isnull(RelPl,0),2) ELSE 0 END
+	    FROM @tbl_CashBill order by ClientCode, Tag
+	  END	
+	END  
+	ELSE IF @strReportType = 'Settlementwise Summary'
+	BEGIN
+	  IF @strOutputType = 'X'
+	  BEGIN
+	    SET @XMLDATA1 = (SELECT ClientCode, ClientName, SettEndDate = isnull(SettEndDate,''), 
+		SettlementNo = isnull(SettlementNo,''), ScripCode, ScripName, ScripTag, TradingFlag, 
+	    BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL 
+	    FROM  @tbl_CashBill order by ClientCode, Tag FOR XML PATH('ProfitLoss'))
+	    SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		RETURN 1
+	  END
+	  ELSE
+	  BEGIN
+	    SELECT ClientCode, ClientName, SettEndDate = isnull(SettEndDate,''), SettlementNo = isnull(SettlementNo,''), ScripCode, ScripName, ScripTag, TradingFlag, 
+	    BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL 
+	    from  @tbl_CashBill order by ClientCode, Tag
+	  END	
+    end	  
+	IF @strReportType = 'Stock Position Only'
+	BEGIN
+	  IF @strOutputType = 'X'
+	  BEGIN
+	    SET @XMLDATA1 = (SELECT ClientCode, ClientName,  ScripCode, ScripName, 
+		ScripTag = CASE WHEN ScripTag = 'N' THEN 'Delivery' 
+	    WHEN ScripTag = 'Y' THEN 'Square off' else ScripTag END, TradingFlag, 
+	    BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL 
+	    from  @tbl_CashBill where ISNULL(NetQty,0) <> 0
+	    order by ClientCode, Tag FOR XML PATH('ProfitLoss'))
+	    SET @o_vcErrorMessage = CAST(@XMLDATA1 AS VARCHAR(MAX))
+		RETURN 1
+	  END
+	  ELSE
+	  BEGIN 
+	    select ClientCode, ClientName,  ScripCode, ScripName, ScripTag = CASE WHEN ScripTag = 'N' THEN 'Delivery' 
+	    WHEN ScripTag = 'Y' THEN 'Square off' else ScripTag END, TradingFlag, 
+	    BuyQty, BuyRate, BuyValue, SaleQty, SaleRate, SaleValue, NetQty, NetValue, AvgRate, Cmp, NotPL 
+	    from  @tbl_CashBill where ISNULL(NetQty,0) <> 0
+	    order by ClientCode, Tag
+	  END	
+	END
+  END
+  END TRY
+  BEGIN CATCH
+    SET @o_vcErrorFlag  = 'E'
+    SET @o_vcErrorMessage = ERROR_MESSAGE()
+    RETURN 1
+  END CATCH
+  SET @o_vcErrorFlag  = 'S'
+  SET @o_vcErrorMessage = 'Process Completed'
+  RETURN 1
+END  
+GO
+
+CREATE PROCEDURE [dbo].[stpr_InsertUpdateXMLDropDown] @dsXml XML 
+WITH ENCRYPTION
+AS
+BEGIN
+  DECLARE @tbl_InputJSONTable DBO.tb_ParamList ;
+  DECLARE @o_ParameterList varchar(max)='', @o_ParameterListxml XML; 
+  DECLARE @tbl_UserList dbo.UserAccessList;
+  
+  EXEC SP_ParameterXMLRep @dsXml, @o_ParameterList OUTPUT
+  
+  IF ISNULL(@o_ParameterList,'') <> ''
+  BEGIN
+    SET @o_ParameterListxml = CAST(@o_ParameterList AS XML)
+   
+    INSERT INTO @tbl_InputJSONTable (ParameterName,  ParameterValue, HeaderName, Jsontag) 
+    SELECT Parameter.value('(ColumnName)[1]', 'VARCHAR(MAX)') AS Client_Code ,
+    Parameter.value('(ColumnValue)[1]', 'VARCHAR(MAX)') AS ColumnValue,
+	Parameter.value('(MasterTag)[1]', 'VARCHAR(MAX)') AS MasterTag,
+	Parameter.value('(JsonLevel)[1]', 'VARCHAR(MAX)') AS JsonLevel
+    FROM @o_ParameterListxml.nodes('/Parameter') AS XTbl(Parameter)
+  END 
+  
+     --- USER ACCESS RIGHTS
+	 
+  DECLARE @strUserid VARCHAR(500)='', @StrClientCode VARCHAR(50)='', @strString NVARCHAR(MAX)='',
+  @strHeaderString VARCHAR(MAX)='', @strxml VARCHAR(MAX)= CAST(@dsXml AS VARCHAR(MAX))
+  SELECT @strUserid = ParameterValue From @tbl_InputJSONTable where ParameterName = 'UserId'
+   
+  IF @StrClientCode <> ''
+  BEGIN
+    SET @strUserid = @StrClientCode
+  END
+  
+  SET @strHeaderString = 'DECLARE @tbl_UserList dbo.UserAccessList; '
+  +' INSERT INTO @tbl_UserList '
+  +' EXEC dbo.stpr_GetClientAccessList '''+@strUserid+''''
+  
+  DECLARE @strModuleName VARCHAR(100)='', @strOption VARCHAR(50)='', @strQuery NVARCHAR(MAX), @strQueryType VARCHAR(1)='Q',
+  @o_vcFlag VARCHAR(1)='S', @o_vcMessage VARCHAR(MAX)=''
+  SELECT @strModuleName = ParameterValue FROM @tbl_InputJSONTable where ParameterName = 'ActionName'
+  SELECT @strOption = ParameterValue FROM @tbl_InputJSONTable where ParameterName = 'Option'
+  IF ISNULL(@strModuleName,'') <> ''
+  BEGIN
+    
+    SELECT @strQuery = DBQuery, @strQueryType = DBQueryType 
+	FROM tbl_InsertUpdateXMLDropDownQuery(NOLOCK) 
+	WHERE ModuleName = @strModuleName AND ColumnName = @strOption
+	
+	IF ISNULL(@strQuery,'') <> '' AND ISNULL(@strQueryType,'Q') = 'Q'
+	BEGIN
+	  IF @strUserid <> '' AND UPPER(@strQuery) LIKE '%CLIENT_MASTER%'
+	  BEGIN
+	    SET @strString = @strHeaderString+' '+@strQuery 
+	    SET @strString = @strString+' '+ ' AND EXISTS(SELECT 1 FROM @tbl_UserList WHERE ClientCode = CM_CD) '
+	  END
+	  ELSE
+	  BEGIN
+	    SET @strString = @strQuery 
+	  END
+
+	  --REPLACE CHANGES
+	  
+	  DECLARE @curParameterValue VARCHAR(MAX)='', @curParameterName VARCHAR(50)=''
+	  IF CHARINDEX('<<FILTER>>', @strString) > 0
+	  BEGIN
+		SET @strString = REPLACE(@strString, '<<FILTER>>', (SELECT TOP 1 ParameterValue FROM @tbl_InputJSONTable where ParameterName = 'X_Filter' and HeaderName = 'X_Filter'))
+	  END
+	  
+	  IF EXISTS(SELECT 1 FROM @tbl_InputJSONTable 
+	  WHERE HeaderName = 'X_Filter_Multiple' AND ISNULL(ParameterValue,'') <> '')
+	  BEGIN
+	    DECLARE Cur12 CURSOR FOR 
+        SELECT ParameterValue, ParameterName FROM @tbl_InputJSONTable 
+	    WHERE HeaderName = 'X_Filter_Multiple' AND ISNULL(ParameterValue,'') <> ''
+        OPEN Cur12 
+        FETCH NEXT FROM Cur12 INTO @curParameterValue, @curParameterName
+        WHILE @@FETCH_STATUS = 0
+        BEGIN 
+		  SET @strString = REPLACE(@strString,'<<'+@curParameterName+'>>',@curParameterValue)
+		  FETCH NEXT FROM Cur12 INTO @curParameterValue, @curParameterName
+        END 
+        CLOSE Cur12 
+        DEALLOCATE Cur12 
+	  END
+	  --select @strString
+	  --END REPLACE CHANGES
+
+	  EXEC(@strString)
+	END
+	ELSE IF ISNULL(@strQuery,'') <> '' AND ISNULL(@strQueryType,'Q') = 'P'
+	BEGIN
+	   SET @strString = 'EXEC DBO.' + @strQuery + ' ''' + @strxml + ''', @o_vcFlag OUTPUT, @o_vcMessage OUTPUT';
+	   BEGIN TRY
+	     EXEC sp_executesql @strString, N'@o_vcFlag VARCHAR(1) OUTPUT, @o_vcMessage VARCHAR(500) OUTPUT', @o_vcFlag OUTPUT, @o_vcMessage OUTPUT;
+	   END TRY
+       BEGIN CATCH
+	      SELECT '<Flag>E</Flag><Message>'+ERROR_MESSAGE()+'</Message>'
+		  RETURN 1
+       END CATCH	   
+	   SELECT '<Flag>'+@o_vcFlag+'</Flag>'+@o_vcMessage
+	   RETURN 1
+	END
+  END
+END
+GO
+
+CREATE PROCEDURE [dbo].[stpr_TradeWebMenu] @dsXml AS XML = NULL AS
+BEGIN
+
+   DECLARE @tbl_Variable dbo.tb_ParamList;
+   DECLARE @tbl_UserList dbo.UserAccessList;
+   DECLARE @o_ParameterList varchar(max)='', @o_ParameterListxml XML;
+   DECLARE @tb_ParamListDetail DBO.tb_ParamList ;
+   
+   --- PARAMETER LIST
+   
+   EXEC SP_ParameterXMLRep @dsXml, @o_ParameterList output
+   IF ISNULL(@o_ParameterList,'') <> ''
+   BEGIN
+     SET @o_ParameterListxml = CAST(@o_ParameterList AS XML)
+   
+     INSERT INTO @tb_ParamListDetail (ParameterName,  ParameterValue, HeaderName)
+     SELECT Parameter.value('(ColumnName)[1]', 'VARCHAR(MAX)') AS Client_Code ,
+     Parameter.value('(ColumnValue)[1]', 'VARCHAR(MAX)') AS ColumnValue,
+	 Parameter.value('(MasterTag)[1]', 'VARCHAR(MAX)') AS MasterTag
+     FROM @o_ParameterListxml.nodes('/Parameter') AS XTbl(Parameter)
+   END 
+
+   DECLARE @strUserid VARCHAR(500)='', @strLevel INT = 0, @dtFromDate DATE, @dtToDate DATE,
+   @StrClientCode VARCHAR(50)='', @strOption VARCHAR(50) = '', @strRequestFrom varchar(10)=''
+   SELECT @strUserid = ParameterValue From @tb_ParamListDetail where ParameterName = 'UserId'
+   SELECT @strOption = ParameterValue From @tb_ParamListDetail where ParameterName = 'Option'
+   SELECT @strRequestFrom = ParameterValue From @tb_ParamListDetail where ParameterName = 'RequestFrom'
+
+   IF @strOption = 'AccessRights'
+   BEGIN
+   
+     Select ModuleId = ModuleCode, MenuName = MenuName, MenuCode = MenuCode, MenuTag = MenuTag, DenyRights = DenyRights, 
+     TargetForm = TargetForm, [Path] = [Path],
+     [Enable] = CASE [Enable] WHEN 'Y' then 'true' else 'false' end, 
+     [Add] = CASE SUBSTRING(Rights, 1, 1) WHEN 'Y' then 'true' else 'false' end, 
+     [Edit] = CASE SUBSTRING(Rights, 2, 1) WHEN 'Y' then 'true' else 'false' end, 
+     [Delete] = CASE SUBSTRING(Rights, 3, 1) WHEN 'Y' then 'true' else 'false' end, 
+     [View] = CASE SUBSTRING(Rights, 4, 1) WHEN 'Y' then 'true' else 'false' end
+     FROM tbl_TradeWebMenu(NOLOCK) WHERE MenuType = 'C'
+	 AND isnull(Enable,'N') = 'Y'
+     AND ((Productid in('','T') AND @strRequestFrom = 'W') OR (Productid in('','M') AND @strRequestFrom = 'M'))
+     ORDER BY MenuType, CAST(SrNo AS INT)
+   RETURN
+   END
+   ELSE IF @strOption = 'Routes'
+   BEGIN
+     Select [name] = MenuName, [path] = [Path], element = MenuTag from tbl_TradeWebMenu(NOLOCK)
+     WHERE ((Productid in('','T') AND @strRequestFrom = 'W') OR (Productid in('','M') AND @strRequestFrom = 'M'))
+	 AND isnull(Enable,'N') = 'Y'
+     ORDER BY  CAST(SrNo AS INT)
+     return
+   END
+   ELSE IF @strOption = 'List'
+   BEGIN
+     SELECT ModuleCode as 'id', MenuName as 'title', '' as 'path', '' as 'icon',
+     submenu=(Select REPLACE((select ModuleCode as 'id', MenuName as 'title', [Path] as 'path', '' as 'icon' 
+     FROM tbl_TradeWebMenu(NOLOCK) b WHERE b.ParentMenu=a.MenuName 
+     AND ((Productid in('','T') AND @strRequestFrom = 'W') OR (Productid in('','M') AND @strRequestFrom = 'M'))
+	 AND isnull(Enable,'N') = 'Y'
+     ORDER BY  CAST(SrNo AS INT)
+     FOR JSON PATH),'\\',''))
+     FROM tbl_TradeWebMenu(NOLOCK) a 
+     WHERE a.MenuType = 'P' 
+     AND ((Productid in('','T') AND @strRequestFrom = 'W') OR (Productid in('','M') AND @strRequestFrom = 'M'))
+	  AND isnull(Enable,'N') = 'Y'
+     ORDER BY CAST(SrNo AS INT)
+   END
+END 
+GO
+
+CREATE OR ALTER PROCEDURE stpr_APIFundsPayout @dsXml VARCHAR(MAX)
+AS
+BEGIN
+  DECLARE @o_vcErrorFlag VARCHAR(1)='', @o_vcErrorMessage VARCHAR(MAX)='',
+  @strActionName VARCHAR(50), @strOption VARCHAR(50),@strUserid VARCHAR(50)='', 
+  @strRequestFrom VARCHAR(1), @strCompanyCode VARCHAR(1), @strLevel VARCHAR(1)='1',
+  @StrRMSAmount MONEY = 0, @strBranchPayout MONEY = 0
+  
+  DECLARE @tbl_InputJSONTable DBO.tb_ParamList ;
+  DECLARE @o_ParameterList varchar(max)='', @o_ParameterListxml XML; 
+  DECLARE @tbl_UserList dbo.UserAccessList;
+  
+  EXEC SP_ParameterXMLRep @dsXml, @o_ParameterList OUTPUT
+  
+  IF ISNULL(@o_ParameterList,'') <> ''
+  BEGIN
+	 SET @o_ParameterListxml = CAST(@o_ParameterList AS XML)
+     INSERT INTO @tbl_InputJSONTable (ParameterName,  ParameterValue, HeaderName, Jsontag) 
+     SELECT Parameter.value('(ColumnName)[1]', 'VARCHAR(MAX)') AS Client_Code ,
+     Parameter.value('(ColumnValue)[1]', 'VARCHAR(MAX)') AS ColumnValue,
+	 Parameter.value('(MasterTag)[1]', 'VARCHAR(MAX)') AS MasterTag,
+	 Parameter.value('(JsonLevel)[1]', 'VARCHAR(MAX)') AS JsonLevel
+     FROM @o_ParameterListxml.nodes('/Parameter') AS XTbl(Parameter)
+  END
+  
+  SELECT @strActionName = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'ActionName'
+  SELECT @strOption = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Option'
+  SELECT TOP 1 @strUserid = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Userid'
+  SELECT @strRequestFrom = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'RequestFrom'
+  SELECT @strLevel = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Level'
+  
+  IF @strActionName = 'FundRequest' AND @strOption = 'FIND'
+  BEGIN
+  
+    SELECT (ltrim(rtrim(ces_exchange)) + '/' + ltrim(rtrim(ces_segment))) Exch, cm_cd, cm_name, ld_dpid,  
+	CAST((-1*sum(ld_amount)) AS DECIMAL(15,2)) AMT,
+    ISNULL((SELECT CAST(SUM(Rq_Amount) AS DECIMAL(15,2)) 
+	FROM FundsRequest(NOLOCK) 
+	WHERE rq_clientcd = ld_clientcd and Rq_Note = ld_dpid and Rq_Satus1 = 'P'),0) rq_amt 
+    FROM Client_Master(NOLOCK), companyexchangesegments(NOLOCK), Ledger(NOLOCK)
+    WHERE ld_clientcd = cm_cd and CES_Cd = ld_dpid  
+	AND ld_clientcd = @strUserid
+    GROUP BY ld_clientcd, cm_brkggroup, cm_cd, cm_name, ld_dpid, 
+	LTRIM(RTRIM(ces_exchange)) + '/' + LTRIM(RTRIM(ces_segment)), 
+	ld_dpid, ld_clientcd
+    HAVING abs(sum(ld_amount)) > 0
+
+    IF EXISTS(SELECT 1 FROM Sysparameter(NOLOCK) WHERE sp_parmcd Like 'RMSHEAD%' AND sp_sysvalue = 'FUNDPAYOUT')
+    BEGIN
+      SELECT @StrRMSAmount = isnull(CAST((-1 * sum(rs_fundpayout)) as decimal(15,2)),0)
+      FROM Rms_summary(NOLOCK)
+      WHERE rs_Dt = (select MAX(rs_Dt) From RMS_Summary(NOLOCK))  
+      AND rs_clientcd = @strUserid
+    END
+	  
+	SELECT @strBranchPayout = ISNULL(CAST(sum(rq_amt) as decimal(15,2)),0)
+    FROM PayOut_release(NOLOCK) WHERE rq_relflag = 'N' 
+	AND rq_clientcd = @strUserid
+	
+	SELECT [RMSAmount] = isnull(@StrRMSAmount,0), [BranchPayout] = isnull(@strBranchPayout,0)
+  END
+END	 
+GO
+
+CREATE OR ALTER   PROCEDURE [dbo].[stpr_GenericInsertUpdateTable] @xmlInput VARCHAR(MAX), @strTableName VARCHAR(100), @i_vcmode VARCHAR(10),
+@i_vcUserCode VARCHAR(50), @strPrimaryKeyName VARCHAR(200), @o_iReturnMainSlNo INT OUTPUT,   
+  @o_vcFlag VARCHAR(1) OUTPUT,   
+  @o_vcMessage VARCHAR(1000) OUTPUT AS
+BEGIN
+
+  DECLARE @XMLDATA1 XML = CAST(@xmlInput AS XML)
+  DECLARE @tbl_InputJSONTable DBO.tb_ParamList ;
+  
+  DELETE FROM  @tbl_InputJSONTable 
+  
+  INSERT INTO @tbl_InputJSONTable (ParameterName,  ParameterValue, HeaderName) 
+  SELECT DATA1.value('(ParameterName)[1]', 'VARCHAR(MAX)') AS Client_Code ,
+  LTRIM(RTRIM(ISNULL(DATA1.value('(ParameterValue)[1]', 'VARCHAR(MAX)'),''))) AS ColumnValue,
+  ISNULL(DATA1.value('(HeaderName)[1]', 'VARCHAR(MAX)'),'') AS MasterTag
+  FROM @XMLDATA1.nodes('/DATA1') AS XTbl(DATA1)
+  
+  IF EXISTS(SELECT 1 FROM @tbl_InputJSONTable WHERE ParameterName = 'IsInserted' AND ParameterValue = 'true')
+  BEGIN
+    SET @i_vcmode = 'add'
+  END
+
+  DECLARE @iPrimaryTableColumnExists INT = 0,    
+   @iColumnID INT = 0, 
+   @strColumnDataType VARCHAR(20), @iColumnDataLength INT = 0, @strMainColumnvalue NVARCHAR(MAX),    
+   @strInsertStringValue NVARCHAR(MAX) = '', @strInsertStringHeader NVARCHAR(MAX) = '',     
+   @strUpdateStringValue NVARCHAR(MAX)='', @strMainString NVARCHAR(MAX) ='',    
+   @iReturnSerialNo INT = 0, @strIdentityColumnName VARCHAR(50)='',  
+   @i_vcColumnList NVARCHAR(MAX) = '',   
+   @i_vcColumnValueList NVARCHAR(MAX) = '', @strColumnName NVARCHAR(MAX) = '', 
+   @strColumnValue NVARCHAR(MAX) = '',  @strTempColumnName NVARCHAR(MAX) = '', @strTempColumnValue NVARCHAR(MAX) = ''
+  
+  IF @strTableName <> ''
+  BEGIN
+    DECLARE @tbl_PrimaryKey TABLE(KeyName VARCHAR(100), KeyValue VARCHAR(100))
+	
+	    
+	IF @i_vcmode <> 'add' and @i_vcmode <> ''
+	BEGIN
+	  --SELECT @strPrimaryKeyName
+      INSERT INTO @tbl_PrimaryKey(KeyName)
+	  SELECT VALUE FROM DBO.RETURNTABLE(@strPrimaryKeyName,'|')
+	  	 
+      UPDATE A SET A.KeyValue = B.ParameterValue
+      FROM @tbl_PrimaryKey A, @tbl_InputJSONTable B
+      WHERE A.KeyName = B.ParameterName	
+      
+	  DECLARE @strwhere VARCHAR(MAX)=''
+      SELECT @strwhere = @strwhere+' '+ ' AND '+KeyName+' = '''+CAST(KeyValue AS VARCHAR)+''''
+      FROM  @tbl_PrimaryKey		 
+
+	  DELETE FROM @tbl_InputJSONTable WHERE ParameterName in(select KeyName from @tbl_PrimaryKey)
+	  
+	  IF ISNULL(@strPrimaryKeyName,'') = '' OR ISNULL(@strwhere,'') = ''
+	  BEGIN
+	    SET @o_vcFlag = 'F'  
+        SET @o_vcMessage = '<Message>'+'Unique Key not Define in Master Table'
+		RETURN 1
+	  END
+
+    END
+ 
+    DECLARE CURSOR_BIND CURSOR FOR  
+    SELECT ParameterName, ParameterValue = LTRIM(RTRIM(IIF(ParameterValue='',' ',ParameterValue)))   
+    FROM @tbl_InputJSONTable
+	
+  
+    OPEN CURSOR_BIND   
+    FETCH NEXT FROM CURSOR_BIND INTO @strTempColumnName, @strTempColumnValue  
+    WHILE @@FETCH_STATUS = 0   
+    BEGIN  
+      IF @strColumnName <> ''  
+      BEGIN  
+        SET @strColumnName = @strColumnName+'|'+@strTempColumnName  
+        SET @strColumnValue = @strColumnValue+'|'+@strTempColumnValue  
+      END  
+      ELSE IF @strColumnName = ''  
+      BEGIN  
+        SET @strColumnName = @strTempColumnName  
+        SET @strColumnValue = @strTempColumnValue  
+      END  
+      FETCH NEXT FROM CURSOR_BIND INTO @strTempColumnName, @strTempColumnValue  
+    END   
+    CLOSE CURSOR_BIND   
+    DEALLOCATE CURSOR_BIND   
+
+    DECLARE @sColumn_Name VARCHAR(100)='', @sdata_type VARCHAR(20)=''
+	DECLARE Cur31Main
+    CURSOR FOR SELECT Column_Name, data_type FROM INFORMATION_SCHEMA.COLUMNS 
+	WHERE TABLE_NAME = @strTableName
+	AND column_name NOT IN(SELECT ParameterName FROM @tbl_InputJSONTable)
+	AND column_name NOT IN(SELECT KeyName FROM @tbl_PrimaryKey)
+	AND column_name NOT IN (select COLUMN_NAME from( SELECT COLUMN_NAME, 
+    COLUMNPROPERTY(OBJECT_ID(TABLE_SCHEMA + '.' + TABLE_NAME), COLUMN_NAME, 'IsIdentity') AS IsIdentity
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = @strTableName) x1 where IsIdentity =  1)
+
+    OPEN Cur31Main 
+    FETCH NEXT FROM Cur31Main INTO @sColumn_Name, @sdata_type  
+    WHILE @@FETCH_STATUS = 0
+    BEGIN 
+      IF EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @strTableName 
+	  and COLUMN_NAME = @sColumn_Name) 
+      BEGIN
+        SET @strColumnName = @strColumnName +'|'+@sColumn_Name
+        SET @strColumnValue = @strColumnValue +'|'+CAST((CASE WHEN @sdata_type IN('int','money','numeric') THEN '0' ELSE '' END) AS VARCHAR)
+      END
+      FETCH NEXT FROM Cur31Main INTO @sColumn_Name, @sdata_type  
+    END
+    CLOSE Cur31Main
+    DEALLOCATE Cur31Main
+	
+    IF @strColumnValue = ''  
+    BEGIN  
+      SET @o_vcFlag ='F'    
+      SET @o_vcMessage = '<Message>'+@o_vcMessage+'</Message>'
+      RETURN 1    
+    END  
+    
+	SET @i_vcColumnList = @strColumnName   
+    SET @i_vcColumnValueList = @strColumnValue    
+	
+	SET @o_vcFlag =''    
+    SET @o_vcMessage =''    
+    SET @strMainString = ''   
+	
+	DECLARE @strCompCode VARCHAR(1)='A', @strUsercode VARCHAR(10)=''
+	SELECT @strCompCode = em_cd from Entity_Master with (nolock) 
+	WHERE em_cd =(select min(em_cd) from Entity_master)
+	
+	SELECT TOP 1 @strUsercode = ParameterValue FROM @tbl_InputJSONTable WHERE ParameterName = 'Userid' 
+	
+	SET @i_vcColumnValueList = REPLACE(@i_vcColumnValueList,'##COMP##',@strCompCode)
+	SET @i_vcColumnValueList = REPLACE(@i_vcColumnValueList,'##USERID##',@strUsercode)
+	
+	-------- VAIBHAV
+	
+	
+	DECLARE CURSOR_TABLE_COLUMNS CURSOR FOR           
+    SELECT  Position, ColumnName = Value FROM dbo.fn_SplitString(@i_vcColumnList,'|')     
+    WHERE VALUE NOT IN ('UpdateTimeStamp', 'UserCode','mkrid','mkrdt')  
+    ORDER BY Position    
+  
+    OPEN CURSOR_TABLE_COLUMNS     
+    FETCH NEXT FROM CURSOR_TABLE_COLUMNS INTO @iColumnID, @strColumnName    
+    WHILE @@FETCH_STATUS = 0   
+    BEGIN     
+      SET @strColumnDataType = ''    
+      SET @iColumnDataLength = ''    
+      SET @strMainColumnvalue = ''    
+      SET @iPrimaryTableColumnExists= 0    
+         
+      SELECT @strMainColumnValue = VALUE FROM dbo.fn_SplitString(@i_vcColumnValueList,'|')   
+      WHERE Position = @iColumnID   
+    
+      IF @iColumnID > 0    
+      BEGIN    
+        SELECT @iPrimaryTableColumnExists = 1, @strColumnDataType = DATA_TYPE,   
+        @iColumnDataLength = CHARACTER_MAXIMUM_LENGTH  
+        FROM INFORMATION_SCHEMA.COLUMNS   
+        WHERE TABLE_NAME = @strTableName    
+        AND COLUMN_NAME = @strColumnName    
+    
+        IF @strColumnDataType <> 'VARBINARY'  
+        BEGIN  
+          IF @iPrimaryTableColumnExists > 0  
+          BEGIN  
+            SET @strInsertStringHeader = @strInsertStringHeader + @strColumnName+','  
+          END  
+        END  
+        
+		--Checking the Column Data Type For VARCHAR/NVARCHAR/CHAR,   
+      
+        IF @strColumnDataType IN ('VARCHAR', 'CHAR')   
+        BEGIN   
+          IF LEN(@strMainColumnvalue) > @iColumnDataLength AND @iColumnDataLength <> -1   
+          BEGIN  
+            SET @o_vcFlag = 'F'  
+            SET @o_vcMessage = '<Message>'+'Column: '+@strColumnName+' Data Length is more than the Table Column Length'+'</Message>'  
+            CLOSE CURSOR_TABLE_COLUMNS      
+            DEALLOCATE CURSOR_TABLE_COLUMNS     
+            RETURN 1    
+          END    
+          IF @iPrimaryTableColumnExists > 0    
+          BEGIN    
+            SET @strInsertStringValue = @strInsertStringValue     
+            + ''''+@strMainColumnvalue+''''+','    
+            SET @strUpdateStringValue = @strUpdateStringValue      
+            + @strColumnName+' = '+''''+@strMainColumnvalue+''''+','    
+          END    
+        END       
+        ELSE    
+        --Checking the Column Data Type For DATETIME/DATE,   
+        -- then Preparing the Insert/Update String accordingly  
+        IF @strColumnDataType IN ('DATETIME', 'DATE')    
+        BEGIN    
+          IF @strMainColumnvalue IN ('','0')    
+          BEGIN    
+            SET @strMainColumnvalue = '01-JAN-1900' 
+		  END    
+          IF ISDATE(@strMainColumnvalue) = 0 --If it Returns 1- Valid Date , 0 - invalid date    
+          BEGIN    
+            SET @o_vcFlag ='F'    
+            SET @o_vcMessage = '<Message>'+'Column: '+ @strColumnName+' Value ' +      
+           @strMainColumnvalue+ ' Is Not a Valid Date.'+'</Message>'  
+            CLOSE CURSOR_TABLE_COLUMNS      
+            DEALLOCATE CURSOR_TABLE_COLUMNS     
+            RETURN 1    
+          END    
+          IF @iPrimaryTableColumnExists > 0    
+          BEGIN   
+         SET @strInsertStringValue =  @strInsertStringValue     
+              + ''''+@strMainColumnvalue+''''+','    
+            SET @strUpdateStringValue = @strUpdateStringValue      
+            + @strColumnName+' = '+''''+@strMainColumnvalue+''''+','    
+          END    
+        END     
+        ELSE  
+        --Checking the Column Data Type Other than   
+        -- VARBINARY/VARCHAR/CHAR/DATETIME/DATE   
+        -- then Preparing the Insert/Update String accordingly  
+        IF @strColumnDataType NOT IN ('VARBINARY', 'VARCHAR', 'CHAR', 'DATETIME', 'DATE')   
+        BEGIN    
+          IF ISNULL(@strMainColumnvalue,'0') = ''     
+          BEGIN    
+            SET @strMainColumnvalue = '0'    
+          END    
+          IF @iPrimaryTableColumnExists > 0    
+          BEGIN    
+            SET @strInsertStringValue =  @strInsertStringValue + @strMainColumnvalue+','    
+            SET @strUpdateStringValue = @strUpdateStringValue      
+            + @strColumnName+' = '+ @strMainColumnvalue+','    
+          END    
+        END     
+      END    
+      FETCH NEXT FROM CURSOR_TABLE_COLUMNS INTO @iColumnID, @strColumnName    
+    END      
+    CLOSE CURSOR_TABLE_COLUMNS      
+    DEALLOCATE CURSOR_TABLE_COLUMNS     
+    SET @strInsertStringHeader = @strInsertStringHeader + ' mkrid, mkrdt '    
+    SET @strInsertStringValue = @strInsertStringValue   
+    +  ''''+@i_vcUserCode+''''+' , '+''''+CONVERT(VARCHAR,GETDATE(),112)+''''+' '    
+    
+    IF @i_vcmode = 'add'
+	BEGIN
+	  SET @strMainString = ''  
+  
+      SET @strMainString = 'INSERT INTO ' +@strTableName+'('  
+      +@strInsertStringHeader +') VALUES ( '+@strInsertStringValue+' )'    
+      BEGIN TRY  
+	   -- select @strMainString
+        EXEC(@strMainString)     
+        SELECT @iReturnSerialNo =  IDENT_CURRENT(@strTableName)    
+		SET @o_iReturnMainSlNo = ISNULL(@iReturnSerialNo,0)
+      END TRY    
+      BEGIN CATCH    
+        SET @o_vcFlag ='F'    
+        SET @o_vcMessage ='<Message>'+'Insertion Failed: '+ERROR_MESSAGE()+'</Message>'
+        RETURN 1    
+      END CATCH    
+	END
+	ELSE IF @i_vcmode <> 'add' AND @i_vcmode <> ''
+	BEGIN
+	   IF @strPrimaryKeyName <> ''
+	   BEGIN
+	     IF EXISTS(SELECT 1 FROM @tbl_InputJSONTable WHERE ParameterName = 'IsDeleted' AND ParameterValue = 'true')
+		 BEGIN
+		   SET @strMainString = 'DELETE FROM '+@strTableName  + ' WHERE 1 = 1 '+@strwhere  
+		   --SELECT @strMainString
+		 END
+		 ELSE
+		 BEGIN
+	       SET @strMainString = 'UPDATE '+@strTableName   
+           +' SET '+@strUpdateStringValue+ ' mkrid= '''  
+           + @i_vcUserCode+''', mkrdt = '''+CONVERT(VARCHAR,GETDATE(),112)+''' '    
+           + ' WHERE 1 = 1 '+@strwhere    
+		 END   
+         BEGIN TRY  
+		  --SELECT @strMainString, @strTableName, @strUpdateStringValue, @i_vcUserCode, @strwhere
+           EXEC(@strMainString)     
+           SELECT @iReturnSerialNo = 0    
+         END TRY    
+         BEGIN CATCH    
+           SET @o_vcFlag ='F'    
+           SET @o_vcMessage ='<Message>'+'UPDATE '+ERROR_MESSAGE()+'</Message>'    
+           RETURN 1    
+         END CATCH    
+	   END   
+       ELSE
+       BEGIN
+	     SET @o_vcFlag ='F'    
+         SET @o_vcMessage ='<Message>'+'Primary key not define'+'</Message>'    
+         RETURN 1    
+       END	   
+	END
+	
+	IF ISNULL(@o_iReturnMainSlNo,0)  = 0
+	BEGIN
+	
+	  DECLARE @strMasterAutoGenColumnName VARCHAR(100)='' 
+      SELECT top 1 @strMasterAutoGenColumnName = MasterAutoGenColumnName 
+      FROM tbl_InsertUpdateConfig(NOLOCK)
+      WHERE MasterTableName = @strTableName 
+	  
+	  IF ISNULL(@strMasterAutoGenColumnName,'') = ''
+	  BEGIN
+	    SELECT top 1 @strMasterAutoGenColumnName = DetailAutoGenColumnName
+        FROM tbl_InsertUpdateConfig(NOLOCK)
+        WHERE detailTableName = @strTableName
+	  END	
+	  
+	  IF ISNULL(@strMasterAutoGenColumnName,'') = ''
+	  BEGIN
+	    SELECT top 1 @strMasterAutoGenColumnName = MasterAutoGenColumnName
+        FROM tbl_InsertUpdateConfig(NOLOCK)
+        WHERE detailTableName = @strTableName
+	  END
+	  
+	  --SELECT @strMasterAutoGenColumnName, @strTableName
+ 	  SELECT @o_iReturnMainSlNo = ParameterValue 
+	  FROM @tbl_InputJSONTable WHERE ParameterName = @strMasterAutoGenColumnName
+	  
+	END
+	
+	SET @o_vcFlag ='S'    
+	IF @i_vcmode = 'add'
+	BEGIN
+      SET @o_vcMessage ='<Message>'+'Inserted into '+@strTableName+'</Message>'
+	END
+    ELSE
+    BEGIN
+	  SET @o_vcMessage ='<Message>'+'Update Data into '+@strTableName+'</Message>'
+    END  	
+    RETURN 1    
+  END
+  ELSE 
+  BEGIN
+   SET @o_vcFlag ='F'    
+   SET @o_vcMessage ='<Message>'+'Table Name not found'+'</Message>'
+   RETURN 1   
+  END
+END
+GO
+
+CREATE OR ALTER 
+ PROCEDURE [dbo].[stpr_InsertUpdateXMLData] @dsXml XML, @o_iReturnMainSlNo INT OUTPUT, @o_vcFlag VARCHAR
+	(1) OUTPUT, @o_vcMessage VARCHAR(MAX) OUTPUT
+AS
+BEGIN
+	/*      
+///////////////////////////////////////////////////////////////////////////////////////////      
+// Create By     : VAIBHAV GARG      
+// Created Date  :       
+// CCT NO        :     
+// Version No    :       
+// Description   :     
+// Reviewed By   :      
+// Review Date   :     
+//////////////////////////////////////////////////////////////////////////////////////////      
+*/
+	DECLARE @tbl_InputJSONTable DBO.tb_ParamList;
+	DECLARE @o_ParameterList VARCHAR(max) = '', @o_ParameterListxml XML;
+	DECLARE @strXMl VARCHAR(MAX) = CAST(@dsXml AS VARCHAR(MAX))
+	DECLARE @strSecondLevelData VARCHAR(50) = 'SecondLevelData'
+    set @o_iReturnMainSlNo = 0
+	SET @o_vcFlag = 'S'
+	SET @o_vcMessage = ''
+
+	DECLARE @tbl_PrimaryKey TABLE (KeyName VARCHAR(100), KeyValue VARCHAR(100))
+	DECLARE @DeleteMasterPrimaryKey VARCHAR(MAX) = '', @DeleteDetailPrimaryKey VARCHAR(MAX) = '' 
+		--- PARAMETER LIST   
+
+	EXEC SP_ParameterXMLRep @dsXml, @o_ParameterList OUTPUT
+
+	IF ISNULL(@o_ParameterList, '') <> ''
+	BEGIN
+		SET @o_ParameterListxml = CAST(@o_ParameterList AS XML)
+
+		INSERT INTO @tbl_InputJSONTable (ParameterName, ParameterValue, HeaderName, Jsontag)
+		SELECT Parameter.value('(ColumnName)[1]', 'VARCHAR(MAX)') AS Client_Code, REPLACE(Parameter.value(
+					'(ColumnValue)[1]', 'VARCHAR(MAX)'), 'null', '') AS ColumnValue, Parameter.value(
+				'(MasterTag)[1]', 'VARCHAR(MAX)') AS MasterTag, Parameter.value('(JsonLevel)[1]', 'VARCHAR(MAX)') 
+			AS JsonLevel
+		FROM @o_ParameterListxml.nodes('/Parameter') AS XTbl(Parameter)
+	END
+
+	DECLARE @strModuleName VARCHAR(100) = '', @strString NVARCHAR(MAX)
+
+	SELECT @strModuleName = ParameterValue
+	FROM @tbl_InputJSONTable
+	WHERE ParameterName = 'ActionName'
+
+	IF ISNULL(@strModuleName, '') = ''
+	BEGIN
+		SET @o_vcFlag = 'F'
+		SET @o_vcMessage = '<Message>Module Name can not be blank</Message>'
+
+		RETURN 1
+	END
+	
+    DECLARE @i_vcUserCode VARCHAR(50) = '', @i_vcmode VARCHAR(20) = ''
+
+	SELECT top 1 @i_vcUserCode = ParameterValue
+	FROM @tbl_InputJSONTable
+	WHERE HeaderName = 'MasterLevelData' AND ParameterName = 'UserId'
+
+	SELECT @i_vcmode = ParameterValue
+	FROM @tbl_InputJSONTable
+	WHERE ParameterName = 'Option'
+
+	DECLARE @StrRMSAmount MONEY = 0, @strBranchPayout MONEY = 0
+
+	IF @strModuleName = 'FundRequest' AND @i_vcmode = 'add'
+	BEGIN
+		DECLARE @strAmount MONEY = 0, @strFund MONEY = 0, @strLeastAmount MONEY = 0
+		
+		
+		DECLARE @tbl_fundpayout TABLE (SrNo INT IDENTITY(1, 1), ld_dpid VARCHAR(10), rq_amt MONEY)
+
+		DELETE FROM FundsRequest
+		WHERE rq_clientcd = @i_vcUserCode AND Rq_Satus1 = 'P'
+		
+		INSERT INTO @tbl_fundpayout (ld_dpid, rq_amt)
+		SELECT MAX(CASE WHEN ParameterName = 'ld_dpid' THEN ParameterValue END) AS ld_dpid, MAX(CASE WHEN 
+						ParameterName = 'rq_amt' THEN ParameterValue END) AS rq_amt
+		FROM @tbl_InputJSONTable
+		WHERE HeaderName = 'SecondLevelData'
+		GROUP BY JsonTag;
+
+		IF NOT EXISTS (
+				SELECT 1
+				FROM @tbl_fundpayout
+				WHERE ISNULL(rq_amt, 0) > 0
+				)
+		BEGIN
+			SET @o_vcFlag = 'F'
+			SET @o_vcMessage = 'Payout Amount should not be zero'
+			SET @o_vcMessage = '<Message>' + @o_vcMessage + '</Message>'
+
+			RETURN 1
+		END
+
+		SELECT @strAmount = CAST((- 1 * sum(ld_amount)) AS DECIMAL(15, 2)), @strFund = ISNULL((
+					SELECT CAST(SUM(Rq_Amount) AS DECIMAL(15, 2))
+					FROM FundsRequest(NOLOCK)
+					WHERE rq_clientcd = @i_vcUserCode AND Rq_Satus1 = 'P'), 0)
+		FROM Client_Master(NOLOCK), companyexchangesegments(NOLOCK), Ledger(NOLOCK)
+		WHERE ld_clientcd = cm_cd AND CES_Cd = ld_dpid AND ld_clientcd = @i_vcUserCode
+
+		SELECT @strFund = @strFund + ISNULL(rq_amt, 0)
+		FROM @tbl_fundpayout
+
+		IF (ISNULL(@strAmount, 0) - ISNULL(@strFund, 0)) < 0
+		BEGIN
+			SET @o_vcFlag = 'F'
+			SET @o_vcMessage = 'Payout Amount should not be greater then Fund Amount'
+			SET @o_vcMessage = '<Message>' + @o_vcMessage + '</Message>'
+			RETURN 1
+		END
+
+		IF EXISTS (SELECT 1 FROM Sysparameter(NOLOCK) WHERE sp_parmcd LIKE 'RMSHEAD%' AND sp_sysvalue = 'FUNDPAYOUT')
+		BEGIN
+			SET @StrRMSAmount = 0
+			SELECT @StrRMSAmount = isnull(CAST((- 1 * sum(rs_fundpayout)) AS DECIMAL(15, 2)), 0)
+			FROM Rms_summary(NOLOCK)
+			WHERE rs_Dt = (
+					SELECT MAX(rs_Dt)
+					FROM RMS_Summary(NOLOCK)
+					) AND rs_clientcd = @i_vcUserCode
+
+			IF ISNULL(@StrRMSAmount, 0) < ISNULL(@strFund, 0)
+			BEGIN
+				SET @o_vcFlag = 'F'
+				SET @o_vcMessage = 'Payout Amount should not be greater then RMS Amount'
+				SET @o_vcMessage = '<Message>' + @o_vcMessage + '</Message>'
+
+				RETURN 1
+			END
+		END
+
+		DECLARE @srno INT = 0, @strIP VARCHAR(20) = ''
+
+		SELECT @srno = MAX(Rq_SrNo)
+		FROM FundsRequest
+
+		SELECT @strIP = ParameterValue
+		FROM @tbl_InputJSONTable
+		WHERE ParameterName = 'IPAddress'
+
+		INSERT INTO FundsRequest (
+			Rq_SrNo, Rq_Clientcd, Rq_Type, Rq_Amount, Rq_IpAddress, Rq_Date, Rq_Time, Rq_Satus1, Rq_Satus2, 
+			Rq_Satus3, Rq_Satus4, Rq_Note
+			)
+		SELECT @srno + SrNo, @i_vcUserCode, 'A', rq_amt, @strIP, convert(VARCHAR, GETDATE(), 112), CONVERT(VARCHAR, 
+				GETDATE(), 108), 'P', '', '', '', ld_dpid
+		FROM @tbl_fundpayout
+
+		SET @o_vcFlag = 'S'
+		SET @o_vcMessage = 'Insert Sucessfully'
+		SET @o_vcMessage = '<Message>' + @o_vcMessage + '</Message>'
+
+		RETURN 1
+	END
+	ELSE IF @strModuleName <> 'FundRequest'
+	BEGIN
+		DECLARE @strMasterTableName VARCHAR(100), @strMasterAutoGenColumnName VARCHAR(500), 
+			@strMasterPrimaryKeyName VARCHAR(500), @strDetailTableName VARCHAR(500), 
+			@strDetailAutoGenColumnName VARCHAR(500), @strDetailPrimaryKeyName VARCHAR(500), 
+			@strValidationSPName VARCHAR(100), @strDefaultMasterXML VARCHAR(MAX) = '', @strDefaultDetailXML 
+			VARCHAR(MAX) = ''
+
+		SELECT @strMasterTableName = MasterTableName, @strMasterAutoGenColumnName = MasterAutoGenColumnName, 
+			@strMasterPrimaryKeyName = MasterPrimaryKeyName, @strDetailTableName = DetailTableName, 
+			@strDetailAutoGenColumnName = DetailAutoGenColumnName, @strDetailPrimaryKeyName = 
+			DetailPrimaryKeyName, @strValidationSPName = ValidationSPName, @strDefaultMasterXML = 
+			DefaultMasterXML, @strDefaultDetailXML = DefaultDetailXML, @DeleteMasterPrimaryKey = 
+			DeleteMasterPrimaryKey, @DeleteDetailPrimaryKey = DeleteDetailPrimaryKey
+		FROM tbl_InsertUpdateConfig(NOLOCK)
+		WHERE ModuleName = @strModuleName
+
+		UPDATE A
+		SET A.ParameterName = B.FieldName
+		FROM @tbl_InputJSONTable A, tbl_GenericTemplateDefinition(NOLOCK) B
+		WHERE B.TemplateName = @strModuleName AND A.ParameterName = B.TagName
+
+		IF ISNULL(@strValidationSPName, '') <> ''
+		BEGIN
+			SET @strString = 'EXEC DBO.' + @strValidationSPName + ' ''' + @strXMl + 
+				''', @o_vcFlag OUTPUT, @o_vcMessage OUTPUT';
+
+			BEGIN TRY
+				EXEC sp_executesql @strString, N'@o_vcFlag VARCHAR(1) OUTPUT, @o_vcMessage VARCHAR(500) OUTPUT'
+					, @o_vcFlag OUTPUT, @o_vcMessage OUTPUT;
+			END TRY
+
+			BEGIN CATCH
+				SELECT @strString
+
+				SET @o_vcFlag = 'F'
+				SET @o_vcMessage = '<Message>' + @o_vcMessage + '</Message>'
+
+				RETURN 1
+			END CATCH
+		END
+
+		IF @o_vcFlag <> 'S'
+		BEGIN
+			RETURN 1
+		END
+
+		DECLARE @tbl_DataValidate TABLE (
+			ColumnName VARCHAR(100), ColumnValue VARCHAR(MAX), MasterTag VARCHAR(100), JsonLevel VARCHAR(10), 
+			ColumnDescp VARCHAR(100), ValidationValue VARCHAR(MAX), ValidationMessage VARCHAR(MAX), 
+			ValidationQuery VARCHAR(MAX)
+			)
+
+		INSERT INTO @tbl_DataValidate (ColumnName, ColumnValue, MasterTag, JsonLevel)
+		SELECT ParameterName, ParameterValue, HeaderName, Jsontag
+		FROM @tbl_InputJSONTable
+
+		UPDATE A
+		SET A.ColumnDescp = B.TagName, A.ValidationValue = B.ValidationValue, A.ValidationMessage = B.
+			ValidationMessage, A.ValidationQuery = B.ValidationQuery
+		FROM @tbl_DataValidate A, tbl_GenericTemplateDefinition(NOLOCK) B
+		WHERE B.TemplateName = @strModuleName AND A.ColumnName = B.FieldName
+
+		DECLARE @TBL_OutputJSON TABLE (ErrorTag VARCHAR(100), ErrorMessage VARCHAR(MAX))
+		DECLARE @strColumnValue VARCHAR(MAX) = '', @strColumnName VARCHAR(100) = '', @strValidationValue VARCHAR(
+				500), @strValidationmessage VARCHAR(MAX) = ''
+
+		DECLARE CurValidation CURSOR
+		FOR
+		SELECT ColumnValue = (CASE WHEN ColumnValue = 'True' THEN 'Y' WHEN ColumnValue = 'False' THEN 'N' ELSE ColumnValue END
+				), ColumnName = ColumnDescp, ValidationValue, ValidationMessage
+		FROM @tbl_DataValidate m
+		WHERE ValidationValue <> '' AND ColumnValue <> '' AND ValidationValue NOT IN ('GETDATE', 'GETDATE,FUTUREDATE', 'GETDATE,PASTDATE'
+				)
+
+		OPEN CurValidation;
+
+		FETCH NEXT
+		FROM CurValidation
+		INTO @strColumnValue, @strColumnName, @strValidationValue, @strValidationmessage
+
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+			IF NOT EXISTS (
+					SELECT 1
+					FROM (
+						SELECT VALUE AS ColumnValue
+						FROM dbo.ReturnTable(@strValidationValue, '|')
+						) x1
+					WHERE x1.ColumnValue = @strColumnValue
+					)
+			BEGIN
+				INSERT INTO @TBL_OutputJSON (ErrorTag, ErrorMessage)
+				VALUES (
+					'E', ISNULL(@strColumnName, '') + ' Value Should be ' + iif(@strValidationmessage = '', 
+						@strValidationValue, @strValidationmessage)
+					)
+			END
+
+			FETCH NEXT
+			FROM CurValidation
+			INTO @strColumnValue, @strColumnName, @strValidationValue, @strValidationmessage
+		END;
+
+		CLOSE CurValidation;
+
+		DEALLOCATE CurValidation;
+
+		DECLARE CurDateValidation CURSOR
+		FOR
+		SELECT ColumnValue = (CASE WHEN ColumnValue = 'True' THEN 'Y' WHEN ColumnValue = 'False' THEN 'N' ELSE ColumnValue END
+				), ColumnName = ColumnDescp, ValidationValue, ValidationMessage
+		FROM @tbl_DataValidate m
+		WHERE ValidationValue <> '' AND ColumnValue <> '' AND ValidationValue IN ('GETDATE', 'GETDATE,FUTUREDATE', 'GETDATE,PASTDATE'
+				)
+
+		OPEN CurDateValidation;
+
+		FETCH NEXT
+		FROM CurDateValidation
+		INTO @strColumnValue, @strColumnName, @strValidationValue, @strValidationmessage
+
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+			IF ISDATE(@strColumnValue) = 0
+			BEGIN
+				INSERT INTO @TBL_OutputJSON (ErrorTag, ErrorMessage)
+				VALUES ('E', ISNULL(@strColumnName, '') + ' Value Should be in Date Format')
+			END
+
+			IF @strValidationValue = 'GETDATE' AND ISDATE(@strColumnValue) > 0
+			BEGIN
+				IF CONVERT(VARCHAR, CAST(@strColumnValue AS DATE), 112) <> CONVERT(VARCHAR, GETDATE(), 112)
+				BEGIN
+					INSERT INTO @TBL_OutputJSON (ErrorTag, ErrorMessage)
+					VALUES ('E', ISNULL(@strColumnName, '') + ' Value Should be in Todays Date')
+				END
+			END
+
+			IF @strValidationValue = 'GETDATE,FUTUREDATE' AND ISDATE(@strColumnValue) > 0
+			BEGIN
+				IF CONVERT(VARCHAR, CAST(@strColumnValue AS DATE), 112) < CONVERT(VARCHAR, GETDATE(), 112)
+				BEGIN
+					INSERT INTO @TBL_OutputJSON (ErrorTag, ErrorMessage)
+					VALUES ('E', ISNULL(@strColumnName, '') + ' Value Should be in Todays Date or Future Date'
+						)
+				END
+			END
+
+			IF @strValidationValue = 'GETDATE,PASTDATE' AND ISDATE(@strColumnValue) > 0
+			BEGIN
+				IF CONVERT(VARCHAR, CAST(@strColumnValue AS DATE), 112) > CONVERT(VARCHAR, GETDATE(), 112)
+				BEGIN
+					INSERT INTO @TBL_OutputJSON (ErrorTag, ErrorMessage)
+					VALUES ('E', ISNULL(@strColumnName, '') + ' Value Should be in Todays Date or Previous Date'
+						)
+				END
+			END
+
+			FETCH NEXT
+			FROM CurDateValidation
+			INTO @strColumnValue, @strColumnName, @strValidationValue, @strValidationmessage
+		END;
+
+		CLOSE CurDateValidation;
+
+		DEALLOCATE CurDateValidation;
+
+		DECLARE @tbl_Resultoutput TABLE (Scount INT)
+		DECLARE @SQueryFieldName VARCHAR(100) = '', @SQueryColumnValue VARCHAR(MAX) = '', @SQueryValidationQuery 
+			VARCHAR(MAX), @SQueryJsonLevel INT, @SQueryMasterJsonTag VARCHAR(50)
+		DECLARE @SQuerydtlFieldName VARCHAR(100) = '', @SQuerydtlcolumnvalue VARCHAR(MAX) = '', @Qcount INT = 0
+
+		DECLARE CurqueryValidation CURSOR
+		FOR
+		SELECT ColumnName = ColumnDescp, ColumnValue = (CASE WHEN ColumnValue = 'True' THEN 'Y' WHEN ColumnValue = 'False' THEN 'N' ELSE ColumnValue END
+				), ValidationQuery, JsonLevel, MasterTag
+		FROM @tbl_DataValidate m
+		WHERE ValidationQuery <> '' AND ColumnValue <> ''
+
+		OPEN CurqueryValidation
+
+		FETCH NEXT
+		FROM CurqueryValidation
+		INTO @SQueryFieldName, @SQueryColumnValue, @SQueryValidationQuery, @SQueryJsonLevel, 
+			@SQueryMasterJsonTag
+
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+			SET @SQuerydtlFieldName = ''
+			SET @SQuerydtlcolumnvalue = ''
+
+			DECLARE CurqueryValidationdtl CURSOR
+			FOR
+			SELECT ColumnName, columnvalue
+			FROM @tbl_DataValidate
+			WHERE MasterTag = @SQueryMasterJsonTag AND JsonLevel = @SQueryJsonLevel
+
+			OPEN CurqueryValidationdtl;
+
+			FETCH NEXT
+			FROM CurqueryValidationdtl
+			INTO @SQuerydtlFieldName, @SQuerydtlcolumnvalue
+
+			WHILE @@FETCH_STATUS = 0
+			BEGIN
+				SET @SQueryValidationQuery = REPLACE(@SQueryValidationQuery, LTRIM(RTRIM('<<' + LTRIM(RTRIM(
+										@SQuerydtlFieldName)) + '>>')), '' + @SQuerydtlcolumnvalue + '')
+
+				FETCH NEXT
+				FROM CurqueryValidationdtl
+				INTO @SQuerydtlFieldName, @SQuerydtlcolumnvalue
+			END
+
+			CLOSE CurqueryValidationdtl;
+
+			DEALLOCATE CurqueryValidationdtl
+
+			SET @Qcount = 0
+
+			DELETE
+			FROM @tbl_Resultoutput
+
+			BEGIN TRY
+				INSERT INTO @tbl_Resultoutput (SCOUNT)
+				EXEC (@SQueryValidationQuery)
+			END TRY
+
+			BEGIN CATCH
+				INSERT INTO @TBL_OutputJSON (ErrorTag, ErrorMessage)
+				VALUES ('E', 'Issue in Query ' + @SQueryFieldName + ' ' + @SQueryValidationQuery)
+			END CATCH
+
+			SELECT @Qcount = SCOUNT
+			FROM @tbl_Resultoutput
+
+			IF @Qcount = 0
+			BEGIN
+				INSERT INTO @TBL_OutputJSON (ErrorTag, ErrorMessage)
+				VALUES ('E', ISNULL(@SQueryFieldName, '') + '( ' + ISNULL(@SQueryColumnValue, '') + ' ) Value Not Found'
+					)
+			END
+
+			FETCH NEXT
+			FROM CurqueryValidation
+			INTO @SQueryFieldName, @SQueryColumnValue, @SQueryValidationQuery, @SQueryJsonLevel, 
+				@SQueryMasterJsonTag
+		END;
+
+		CLOSE CurqueryValidation;
+
+		DEALLOCATE CurqueryValidation;
+
+		IF EXISTS (
+				SELECT 1
+				FROM @TBL_OutputJSON
+				)
+		BEGIN
+			SET @o_vcMessage = (
+					SELECT *
+					FROM @TBL_OutputJSON
+					ORDER BY ErrorTag
+					FOR XML PATH('Response')
+					)
+			--SET @o_vcErrorMessage = 'Error Message'  
+			SET @o_vcFlag = 'E'
+
+			RETURN 1
+		END
+
+	
+
+		DECLARE @StrAutoKeyName VARCHAR(100) = '', @strAutoKeyValue VARCHAR(10) = ''
+		DECLARE @tbl_AutoIncrement TABLE (ColumnValue VARCHAR(100))
+
+		IF ISNULL(@strMasterAutoGenColumnName, '') <> '' AND @i_vcmode = 'add'
+		BEGIN
+			DECLARE CURSOR_MasterAuto CURSOR
+			FOR
+			SELECT VALUE AS KeyName
+			FROM DBO.RETURNTABLE(@strMasterAutoGenColumnName, '|');
+
+			OPEN CURSOR_MasterAuto
+
+			FETCH NEXT
+			FROM CURSOR_MasterAuto
+			INTO @strAutoKeyName
+
+			WHILE @@FETCH_STATUS = 0
+			BEGIN
+				DELETE
+				FROM @tbl_AutoIncrement
+
+				SET @strString = 'SELECT MAX(' + @StrAutoKeyName + ')+1 FROM ' + @strMasterTableName + ' '
+
+				INSERT INTO @tbl_AutoIncrement (ColumnValue)
+				EXEC (@strString)
+
+				SELECT @strAutoKeyValue = ColumnValue
+				FROM @tbl_AutoIncrement
+
+				INSERT INTO @tbl_InputJSONTable (ParameterName, ParameterValue, HeaderName, Jsontag)
+				SELECT @strAutoKeyName, @strAutoKeyValue, 'MasterLevelData', '1'
+
+				FETCH NEXT
+				FROM CURSOR_MasterAuto
+				INTO @StrAutoKeyName
+			END
+
+			CLOSE CURSOR_MasterAuto
+
+			DEALLOCATE CURSOR_MasterAuto
+		END
+
+		DECLARE @strTempColumnName NVARCHAR(MAX) = '', @strTempColumnValue NVARCHAR(MAX) = ''
+
+		SET @strColumnValue = ''
+		SET @strColumnName = ''
+
+		IF CURSOR_STATUS('global', 'CURSOR_BIND') >= - 1
+		BEGIN
+			CLOSE CURSOR_BIND
+
+			DEALLOCATE CURSOR_BIND
+		END
+
+		--- MASTER DATA INSERT / UPDATE   
+		DECLARE @strUsercode VARCHAR(10) = ''
+
+		SELECT TOP 1 @strUsercode = ParameterValue
+		FROM @tbl_InputJSONTable
+		WHERE ParameterName = 'Userid'
+
+		DECLARE @DefaultXML XML
+
+		IF ISNULL(@strDefaultMasterXML, '') <> ''
+		BEGIN
+			SET @DefaultXML = CAST(@strDefaultMasterXML AS XML)
+
+			INSERT INTO @tbl_InputJSONTable (HeaderName, ParameterName, ParameterValue, Jsontag)
+			SELECT *
+			FROM (
+				SELECT 'MasterLevelData' AS MasterTag, c.value('local-name(.)', 'NVARCHAR(MAX)') AS ColumnName, 
+					REPLACE(c.value('(./text())[1]', 'NVARCHAR(MAX)'), '##USERID##', @strUsercode) AS ColumnValue, 
+					JsonLevel = '1'
+				FROM @DefaultXML.nodes('/DefaultXml/*') AS t(c)
+				) X1
+			WHERE X1.ColumnName NOT IN (
+					SELECT ParameterName
+					FROM @tbl_InputJSONTable
+					)
+		END
+
+		DECLARE @o_iReturnMasterSlNo INT = 0
+		DECLARE @strwhere VARCHAR(MAX) = '', @strSQLString VARCHAR(MAX) = ''
+		DECLARE @xmlOutput1 XML, @o_vcDataOutput1 VARCHAR(MAX) = ''
+		DECLARE @MasterDeleteQuery VARCHAR(MAX) = '', @PreDetailDeleteQuery VARCHAR(MAX) = '', 
+			@PostDetailDeleteQuery VARCHAR(MAX) = '', @DeleteUserid VARCHAR(50) = ''
+
+		IF @strMasterTableName <> ''
+		BEGIN
+			UPDATE A
+			SET A.ParameterName = B.FieldName
+			FROM @tbl_InputJSONTable A, tbl_GenericTemplateDefinition(NOLOCK) B
+			WHERE B.TemplateName = @strModuleName AND A.ParameterName = B.TagName
+
+			IF @i_vcmode = 'Delete'
+			BEGIN
+				DELETE
+				FROM @tbl_PrimaryKey
+
+				INSERT INTO @tbl_PrimaryKey (KeyName)
+				SELECT VALUE
+				FROM DBO.RETURNTABLE(@DeleteMasterPrimaryKey, '|')
+
+				UPDATE A
+				SET A.KeyValue = B.ParameterValue
+				FROM @tbl_PrimaryKey A, @tbl_InputJSONTable B
+				WHERE A.KeyName = B.ParameterName
+
+				SET @strwhere = ''
+
+				SELECT @strwhere = @strwhere + ' ' + ' AND ' + KeyName + ' = ''' + CAST(KeyValue AS VARCHAR) + ''''
+				FROM @tbl_PrimaryKey
+				WHERE isnull(KeyValue, '') <> ''
+
+				IF EXISTS (
+						SELECT 1
+						FROM @tbl_PrimaryKey
+						WHERE isnull(KeyValue, '') = ''
+						)
+				BEGIN
+					SET @o_vcFlag = 'F'
+					SET @o_vcMessage = '<Message>Primary Key Value Not Avaiable in XML</Message>'
+
+					RETURN 1
+				END
+
+				IF EXISTS (
+						SELECT 1
+						FROM tbl_InsertUpdateXMLDropDownQuery(NOLOCK)
+						WHERE ModuleName = @strModuleName AND ColumnName = 'MasterDeleteEvent'
+						)
+				BEGIN
+					SELECT @MasterDeleteQuery = DBQUERY
+					FROM tbl_InsertUpdateXMLDropDownQuery
+					WHERE ModuleName = @strModuleName AND ColumnName = 'MasterDeleteEvent'
+
+					SELECT @DeleteUserid = ParameterValue
+					FROM @tbl_InputJSONTable
+					WHERE ParameterName = 'UserId' AND HeaderName = ''
+
+					SET @MasterDeleteQuery = REPLACE(@MasterDeleteQuery, '<<Userid>>', @DeleteUserid)
+					SET @MasterDeleteQuery = REPLACE(@MasterDeleteQuery, '<<XWHERE>>', @strwhere)
+				END
+
+				SET @strSQLString = 'Delete from ' + @strMasterTableName + ' WHERE 1 = 1 ' + @strwhere
+
+				BEGIN TRANSACTION
+
+				BEGIN TRY
+					EXEC (@MasterDeleteQuery)
+
+					EXEC (@strSQLString)
+
+					COMMIT;
+				END TRY
+
+				BEGIN CATCH
+					ROLLBACK;
+
+					SET @o_vcFlag = 'F'
+					SET @o_vcMessage = '<Message>' + error_message() + '</Message>'
+
+					RETURN 1
+				END CATCH
+
+				SET @o_vcFlag = 'S'
+				SET @o_vcMessage = '<Message>Record Deleted</Message>'
+
+				RETURN 1
+			END
+
+			IF @strModuleName IN ('TradeListing') AND UPPER(@i_vcmode) in('edit','add')
+			BEGIN
+				
+				/*DECLARE @StrBuySell VARCHAR(1) = '', @StrQty VARCHAR(10) = ''
+
+				SELECT @StrBuySell = ParameterValue
+				FROM @tbl_InputJSONTable X1
+				WHERE HeaderName = 'MasterLevelData' AND ParameterName = 'td_bsflag'
+
+				SELECT @StrQty = ParameterValue
+				FROM @tbl_InputJSONTable X1
+				WHERE HeaderName = 'MasterLevelData' AND ParameterName = 'Qty'
+
+				IF @StrBuySell = 'S'
+				BEGIN
+					INSERT INTO @tbl_InputJSONTable (ParameterName, ParameterValue, HeaderName, Jsontag
+						)
+					VALUES ('td_Sqty', @StrQty, 'MasterLevelData', '1')
+				END
+				ELSE IF @StrBuySell = 'B'
+				BEGIN
+					INSERT INTO @tbl_InputJSONTable (ParameterName, ParameterValue, HeaderName, Jsontag
+						)
+					VALUES ('td_bqty', @StrQty, 'MasterLevelData', '1')
+				END
+               */
+				
+				DECLARE @td_marketrate MONEY = (
+						SELECT ParameterValue
+						FROM @tbl_InputJSONTable X1
+						WHERE HeaderName = 'MasterLevelData' AND ParameterName = 'td_marketrate'
+						)
+				DECLARE @td_brokerage MONEY = (
+						SELECT ParameterValue
+						FROM @tbl_InputJSONTable X1
+						WHERE HeaderName = 'MasterLevelData' AND ParameterName = 'td_brokerage'
+						)
+						
+				DECLARE @td_Bqty MONEY = (
+						SELECT ParameterValue
+						FROM @tbl_InputJSONTable X1
+						WHERE HeaderName = 'MasterLevelData' AND ParameterName = 'td_Bqty'
+						)	
+	          DECLARE @td_Sqty MONEY = (
+						SELECT ParameterValue
+						FROM @tbl_InputJSONTable X1
+						WHERE HeaderName = 'MasterLevelData' AND ParameterName = 'td_Sqty'
+						)							
+
+				INSERT INTO @tbl_InputJSONTable (ParameterName, ParameterValue, HeaderName, Jsontag)
+				VALUES (
+					'td_Rate', (ISNULL(@td_marketrate, 0) + (ISNULL(@td_brokerage, 0)/(ISNULL(@td_Bqty,0)+ISNULL(@td_Sqty,0)))), 'MasterLevelData'
+					, '1'
+					)
+					--SELECT * FROM @tbl_InputJSONTable WHERE HeaderName = 'MasterLevelData'
+					--RETURN 1
+			END
+
+			SET @xmlOutput1 = (
+					SELECT ParameterName, ParameterValue, HeaderName
+					FROM @tbl_InputJSONTable X1
+					WHERE HeaderName = 'MasterLevelData'
+					FOR XML PATH('DATA1')
+					)
+			SET @o_vcDataOutput1 = CAST(@xmlOutput1 AS VARCHAR(MAX))
+			SET @o_vcMessage = ''
+
+			EXEC stpr_GenericInsertUpdateTable @o_vcDataOutput1, @strMasterTableName, @i_vcmode, @i_vcUserCode, 
+				@strMasterPrimaryKeyName, @o_iReturnMasterSlNo OUTPUT, @o_vcFlag OUTPUT, @o_vcMessage OUTPUT
+		END
+
+		IF @strDetailTableName <> ''
+		BEGIN
+			UPDATE A
+			SET A.ParameterName = B.FieldName
+			FROM @tbl_InputJSONTable A, tbl_GenericTemplateDefinition(NOLOCK) B
+			WHERE B.TemplateName = @strModuleName AND A.ParameterName = B.TagName
+
+			IF @i_vcmode = 'Delete'
+			BEGIN
+				DELETE
+				FROM @tbl_PrimaryKey
+
+				INSERT INTO @tbl_PrimaryKey (KeyName)
+				SELECT VALUE
+				FROM DBO.RETURNTABLE(@DeleteDetailPrimaryKey, '|')
+
+				UPDATE A
+				SET A.KeyValue = ISNULL(B.ParameterValue, '')
+				FROM @tbl_PrimaryKey A, @tbl_InputJSONTable B
+				WHERE A.KeyName = B.ParameterName
+
+				SET @strwhere = ''
+
+				SELECT @strwhere = @strwhere + ' ' + ' AND ' + KeyName + ' = ''' + CAST(KeyValue AS VARCHAR) + ''''
+				FROM @tbl_PrimaryKey
+				WHERE isnull(KeyValue, '') <> ''
+
+				IF EXISTS (
+						SELECT 1
+						FROM @tbl_PrimaryKey
+						WHERE isnull(KeyValue, '') = ''
+						)
+				BEGIN
+					SET @o_vcFlag = 'F'
+					SET @o_vcMessage = '<Message>Primary Key Value Not Avaiable in XML</Message>'
+
+					RETURN 1
+				END
+
+				DECLARE @tb_instcd VARCHAR(20) = '', @tb_internal_refno VARCHAR(50) = ''
+
+				IF EXISTS (
+						SELECT 1
+						FROM tbl_InsertUpdateXMLDropDownQuery(NOLOCK)
+						WHERE ModuleName = @strModuleName AND ColumnName LIKE '%DetailDeleteEvent'
+						)
+				BEGIN
+					SELECT @PreDetailDeleteQuery = DBQUERY
+					FROM tbl_InsertUpdateXMLDropDownQuery
+					WHERE ModuleName = @strModuleName AND ColumnName = 'PREDetailDeleteEvent'
+
+					SELECT @PostDetailDeleteQuery = DBQUERY
+					FROM tbl_InsertUpdateXMLDropDownQuery
+					WHERE ModuleName = @strModuleName AND ColumnName = 'PostDetailDeleteEvent'
+
+					SET @PreDetailDeleteQuery = REPLACE(@PreDetailDeleteQuery, '<<XWHERE>>', @strwhere)
+					SET @PostDetailDeleteQuery = REPLACE(@PostDetailDeleteQuery, '<<XWHERE>>', @strwhere)
+
+					SELECT @tb_instcd = ParameterValue
+					FROM @tbl_InputJSONTable
+					WHERE ParameterName = 'tb_instcd'
+
+					SELECT @tb_internal_refno = ParameterValue
+					FROM @tbl_InputJSONTable
+					WHERE ParameterName = 'tb_internal_refno'
+
+					SELECT @DeleteUserid = ParameterValue
+					FROM @tbl_InputJSONTable
+					WHERE ParameterName = 'UserId' AND HeaderName = ''
+
+					SET @PreDetailDeleteQuery = REPLACE(@PreDetailDeleteQuery, '<<XInstructionType>>', @tb_instcd)
+					SET @PreDetailDeleteQuery = REPLACE(@PreDetailDeleteQuery, '<<XIntRefNo>>', @tb_internal_refno)
+					SET @PreDetailDeleteQuery = REPLACE(@PreDetailDeleteQuery, '<<Userid>>', @DeleteUserid)
+					SET @PostDetailDeleteQuery = REPLACE(@PostDetailDeleteQuery, '<<XInstructionType>>', @tb_instcd
+						)
+					SET @PostDetailDeleteQuery = REPLACE(@PostDetailDeleteQuery, '<<XIntRefNo>>', 
+							@tb_internal_refno)
+					SET @PostDetailDeleteQuery = REPLACE(@PostDetailDeleteQuery, '<<Userid>>', @DeleteUserid)
+				END
+
+				SET @strSQLString = 'Delete from ' + @strDetailTableName + ' WHERE 1 = 1 ' + @strwhere
+
+				BEGIN TRANSACTION
+
+				BEGIN TRY
+					EXEC (@PreDetailDeleteQuery)
+
+					EXEC (@strSQLString)
+
+					EXEC (@PostDetailDeleteQuery)
+
+					COMMIT;
+				END TRY
+
+				BEGIN CATCH
+					ROLLBACK;
+
+					SET @o_vcFlag = 'F'
+					SET @o_vcMessage = '<Message>' + error_message() + '</Message>'
+
+					RETURN 1
+				END CATCH
+
+				SET @o_vcFlag = 'S'
+				SET @o_vcMessage = '<Message>Record Deleted</Message>'
+
+				RETURN 1
+			END
+
+			DECLARE @icurJsonTag VARCHAR(10) = ''
+
+			DECLARE CURSOR_DetailInsert CURSOR
+			FOR
+			SELECT DISTINCT JsonTag
+			FROM @tbl_InputJSONTable
+			WHERE HeaderName = @strSecondLevelData
+
+			OPEN CURSOR_DetailInsert
+
+			FETCH NEXT
+			FROM CURSOR_DetailInsert
+			INTO @icurJsonTag
+
+			WHILE @@FETCH_STATUS = 0
+			BEGIN
+				IF ISNULL(@strDefaultDetailXML, '') <> ''
+				BEGIN
+					SET @DefaultXML = CAST(@strDefaultDetailXML AS XML)
+
+					INSERT INTO @tbl_InputJSONTable (HeaderName, ParameterName, ParameterValue, Jsontag
+						)
+					SELECT *
+					FROM (
+						SELECT @strSecondLevelData AS MasterTag, c.value('local-name(.)', 'NVARCHAR(MAX)') AS 
+							ColumnName, c.value('(./text())[1]', 'NVARCHAR(MAX)') AS ColumnValue, JsonLevel = 
+							@icurJsonTag
+						FROM @DefaultXML.nodes('/DefaultXml/*') AS t(c)
+						) X1
+					WHERE X1.ColumnName NOT IN (
+							SELECT ParameterName
+							FROM @tbl_InputJSONTable
+							WHERE Jsontag = @icurJsonTag
+							)
+				END
+
+				UPDATE A
+				SET A.ParameterName = B.FieldName
+				FROM @tbl_InputJSONTable A, tbl_GenericTemplateDefinition(NOLOCK) B
+				WHERE B.TemplateName = @strModuleName AND A.ParameterName = B.TagName
+
+				DECLARE @Jsontag VARCHAR(10) = ''
+
+				IF ISNULL(@strDetailAutoGenColumnName, '') <> '' AND (
+						@i_vcmode = 'add' OR EXISTS (
+							SELECT 1
+							FROM @tbl_InputJSONTable
+							WHERE ParameterName = 'IsInserted' AND ParameterValue = 'true' AND Jsontag = @icurJsonTag
+							)
+						)
+				BEGIN
+					DECLARE CURSOR_DetailAuto CURSOR
+					FOR
+					SELECT Jsontag, KeyName
+					FROM (
+						SELECT DISTINCT Jsontag
+						FROM @tbl_InputJSONTable
+						WHERE HeaderName = @strSecondLevelData AND Jsontag = @icurJsonTag
+						) A, (
+							SELECT VALUE AS KeyName
+							FROM DBO.RETURNTABLE(@strDetailAutoGenColumnName, '|')
+							) B;
+
+					OPEN CURSOR_DetailAuto
+
+					FETCH NEXT
+					FROM CURSOR_DetailAuto
+					INTO @Jsontag, @strAutoKeyName
+
+					WHILE @@FETCH_STATUS = 0
+					BEGIN
+						DELETE
+						FROM @tbl_AutoIncrement
+
+						SET @strString = 'SELECT MAX(' + @StrAutoKeyName + ')+' + @Jsontag + ' FROM ' + @strDetailTableName + 
+							' '
+
+						INSERT INTO @tbl_AutoIncrement (ColumnValue)
+						EXEC (@strString)
+
+						SELECT @strAutoKeyValue = ColumnValue
+						FROM @tbl_AutoIncrement
+
+						INSERT INTO @tbl_InputJSONTable (ParameterName, ParameterValue, HeaderName, Jsontag
+							)
+						SELECT @strAutoKeyName, @strAutoKeyValue, @strSecondLevelData, @Jsontag
+
+						FETCH NEXT
+						FROM CURSOR_DetailAuto
+						INTO @Jsontag, @StrAutoKeyName
+					END
+
+					CLOSE CURSOR_DetailAuto
+
+					DEALLOCATE CURSOR_DetailAuto
+				END
+
+				SET @xmlOutput1 = (
+						SELECT DISTINCT ParameterName, ParameterValue = ltrim(rtrim(ParameterValue)), HeaderName
+						FROM (
+							SELECT ParameterName, ParameterValue, HeaderName
+							FROM @tbl_InputJSONTable X
+							WHERE HeaderName = @strSecondLevelData AND JSONTAG = @icurJsonTag
+							
+							UNION ALL
+							
+							SELECT ParameterName, ParameterValue, HeaderName = @strSecondLevelData
+							FROM @tbl_InputJSONTable
+							WHERE HeaderName = 'MasterLevelData' AND ISNULL(@strMasterTableName, '') = ''
+							) X1
+						FOR XML PATH('DATA1')
+						)
+				SET @o_vcDataOutput1 = CAST(@xmlOutput1 AS VARCHAR(MAX))
+
+				BEGIN TRANSACTION;
+
+				BEGIN TRY
+					EXEC stpr_GenericInsertUpdateTable @o_vcDataOutput1, @strDetailTableName, @i_vcmode, 
+						@i_vcUserCode, @strDetailPrimaryKeyName, @o_iReturnMasterSlNo OUTPUT, @o_vcFlag OUTPUT, 
+						@o_vcMessage OUTPUT
+
+					COMMIT TRANSACTION;
+				END TRY
+
+				BEGIN CATCH
+					ROLLBACK TRANSACTION;
+
+					SET @o_vcMessage = ERROR_MESSAGE();
+
+					RETURN
+				END CATCH
+
+				FETCH NEXT
+				FROM CURSOR_DetailInsert
+				INTO @icurJsonTag
+			END
+
+			CLOSE CURSOR_DetailInsert
+
+			DEALLOCATE CURSOR_DetailInsert
+		END
+
+		RETURN 1
+	END
+END
+GO
+
+CREATE OR ALTER PROCEDURE [dbo].[stpr_FetchEntryData] @dsXml XML
+AS
+BEGIN
+	DECLARE @tbl_InputJSONTable DBO.tb_ParamList;
+	DECLARE @o_ParameterList VARCHAR(max) = '', @o_ParameterListxml XML;
+	DECLARE @strXMl VARCHAR(MAX) = CAST(@dsXml AS VARCHAR(MAX))
+	EXEC SP_ParameterXMLRep @dsXml, @o_ParameterList OUTPUT
+	IF ISNULL(@o_ParameterList, '') <> ''
+	BEGIN
+		SET @o_ParameterListxml = CAST(@o_ParameterList AS XML)
+		INSERT INTO @tbl_InputJSONTable (ParameterName, ParameterValue, HeaderName, Jsontag)
+		SELECT Parameter.value('(ColumnName)[1]', 'VARCHAR(MAX)') AS Client_Code, Parameter.value(
+				'(ColumnValue)[1]', 'VARCHAR(MAX)') AS ColumnValue, Parameter.value('(MasterTag)[1]', 
+				'VARCHAR(MAX)') AS MasterTag, Parameter.value('(JsonLevel)[1]', 'VARCHAR(MAX)') AS JsonLevel
+		FROM @o_ParameterListxml.nodes('/Parameter') AS XTbl(Parameter)
+	END
+	DECLARE @strModuleName VARCHAR(100) = '', @strString NVARCHAR(MAX), @strOption VARCHAR(100) = '',
+	@strUserid VARCHAR(20)='', @strCompCode VARCHAR(1)=''
+	SELECT @strModuleName = ParameterValue
+	FROM @tbl_InputJSONTable
+	WHERE ParameterName = 'ActionName'
+	SELECT @strOption = ParameterValue
+	FROM @tbl_InputJSONTable
+	WHERE ParameterName = 'Option'
+	
+	SELECT @strUserid = ParameterValue
+	FROM @tbl_InputJSONTable
+	WHERE ParameterName = 'Userid'
+	
+	SELECT @strCompCode = em_cd from Entity_Master with (nolock) 
+	WHERE em_cd =(select min(em_cd) from Entity_master)
+	
+	IF @strOption = 'Find'
+	BEGIN
+		DECLARE @TargetTableName VARCHAR(100) = (
+				SELECT TOP 1 TableName
+				FROM tbl_GenericTemplateDefinition
+				WHERE TemplateName = @strModuleName
+				)
+		DECLARE @Sql NVARCHAR(MAX) = N'SELECT ';
+		DECLARE @Delimiter NVARCHAR(2) = ', ';
+		DECLARE @DefaultXml XML = (
+				SELECT DefaultMasterXML
+				FROM tbl_InsertUpdateConfig
+				WHERE ModuleName = @strModuleName
+				);
+		DECLARE @ColumnDefinitions TABLE (ColumnName NVARCHAR(128), TagName NVARCHAR(128));
+		INSERT INTO @ColumnDefinitions (ColumnName, TagName)
+		SELECT FieldName, TagName
+		FROM tbl_GenericTemplateDefinition
+		WHERE TableName = @TargetTableName AND TemplateName = @strModuleName
+		ORDER BY OrderBy;
+		DECLARE @ColumnName NVARCHAR(128);
+		DECLARE @TagName NVARCHAR(128);
+		DECLARE ColumnCursor CURSOR
+		FOR
+		SELECT ColumnName, TagName
+		FROM @ColumnDefinitions;
+		OPEN ColumnCursor;
+		FETCH NEXT
+		FROM ColumnCursor
+		INTO @ColumnName, @TagName;
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+			SET @Sql = @Sql + QUOTENAME(@ColumnName) + ' AS ' + QUOTENAME(@TagName) + @Delimiter;
+			FETCH NEXT
+			FROM ColumnCursor
+			INTO @ColumnName, @TagName;
+		END;
+		CLOSE ColumnCursor;
+		DEALLOCATE ColumnCursor;
+		SET @Sql = LEFT(@Sql, LEN(@Sql) - LEN(@Delimiter));
+		SET @Sql = @Sql + ' FROM ' + QUOTENAME(@TargetTableName) + 'WHERE 1=1';
+		DECLARE @SQL1 NVARCHAR(MAX) = '';
+		DECLARE @param NVARCHAR(100), @value NVARCHAR(100);
+		DECLARE @Cursor CURSOR;SET @Cursor = CURSOR
+		FOR
+		SELECT (
+				SELECT FieldName
+				FROM tbl_GenericTemplateDefinition
+				WHERE TableName = @TargetTableName AND TemplateName = @strModuleName AND TagName = x.value(
+						'local-name(.)', 'NVARCHAR(100)')
+				) AS ParamName, x.value('(text())[1]', 'NVARCHAR(100)') AS ParamValue
+		FROM @dsXml.nodes('/dsXml/X_Filter/*') AS T(x)
+		
+		UNION ALL
+		
+		SELECT y.value('local-name(.)', 'NVARCHAR(100)') AS ParamName, REPLACE(REPLACE(y.value('(text())[1]', 'NVARCHAR(100)'),'##USERID##',
+		@strUserid),'##COMP##', @strCompCode)
+			AS ParamValue
+		FROM @DefaultXml.nodes('/DefaultXml/*') AS U(y);
+		PRINT @param
+		OPEN @Cursor;
+		FETCH NEXT
+		FROM @Cursor
+		INTO @param, @value;
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+			IF @param IS NOT NULL AND @value IS NOT NULL
+			BEGIN
+				SET @SQL1 = @SQL1 + ' AND ' + QUOTENAME(@param) + ' = ' + QUOTENAME(@value, '''');
+			END
+			FETCH NEXT
+			FROM @Cursor
+			INTO @param, @value;
+		END
+		CLOSE @Cursor;
+		DEALLOCATE @Cursor;
+		SET @Sql = @Sql + @SQL1
+		--SELECT @Sql
+		EXEC sp_executesql @Sql;
+		IF UPPER(@strModuleName) = 'TradeListing'
+		BEGIN
+		  SELECT '<XmlData>
+						<MobileColumns>TradeDate,Settlement,ScripCode,Client,BuySell,BuyQty,SellQty</MobileColumns>
+						<TabletColumns>TradeDate,Settlement,ScripCode,Client,BuySell,BuyQty,SellQty,MarketRate,Brokerage,GST,Charges1</TabletColumns>
+                        <WebColumns>ScripCode,TradeDate,Settlement,Client,BuySell,BuyQty,SellQty,MarketRate,Brokerage,GST,Charges1,Charges2,STT,SerialNo</WebColumns>
+				        </XmlData>' as [Settings]	
+		END
+		RETURN 1;
+	END
+	ELSE IF @strOption = 'Delete'
+	BEGIN
+		DECLARE @TargetTableName1 VARCHAR(100) = (
+				SELECT TOP 1 TableName
+				FROM tbl_GenericTemplateDefinition
+				WHERE TemplateName = @strModuleName
+				)
+		DECLARE @strAutoGenColumnName VARCHAR(100) = (
+				SELECT DetailAutoGenColumnName
+				FROM tbl_InsertUpdateConfig
+				WHERE ModuleName = @strModuleName
+				)
+		DECLARE @Sql2 NVARCHAR(MAX) = N'Delete from ' + @TargetTableName1;
+		DECLARE @SQLWhere NVARCHAR(MAX) = '';
+		DECLARE @strPriKeyValue INT;
+		DECLARE @param1 NVARCHAR(100), @value1 NVARCHAR(100);
+		DECLARE @Cursor1 CURSOR;DECLARE @tb_pri_key_found BIT = 0;SET @Cursor1 = CURSOR
+		FOR
+		SELECT (
+				SELECT FieldName
+				FROM tbl_GenericTemplateDefinition
+				WHERE TableName = @TargetTableName1 AND TagName = x.value('local-name(.)', 'NVARCHAR(100)') AND 
+					TemplateName = @strModuleName
+				) AS ParamName, x.value('(text())[1]', 'NVARCHAR(100)') AS ParamValue
+		FROM @dsXml.nodes('/dsXml/X_Filter/*') AS T(x)
+		PRINT @param1
+		OPEN @Cursor1;
+		FETCH NEXT
+		FROM @Cursor1
+		INTO @param1, @value1;
+		-- Loop through each element and build the WHERE clause
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+			IF @param1 IS NOT NULL AND @value1 IS NOT NULL
+			BEGIN
+				IF @param1 = @strAutoGenColumnName
+				BEGIN
+					SET @tb_pri_key_found = 1;
+					SET @strPriKeyValue = @value1;
+				END
+				SET @SQLWhere = @SQLWhere + ' AND ' + QUOTENAME(@param1) + ' = ' + QUOTENAME(@value1, '''');
+			END
+			FETCH NEXT
+			FROM @Cursor1
+			INTO @param1, @value1;
+		END
+		IF @tb_pri_key_found = 0
+		BEGIN
+			PRINT 'tb_pri_key was NOT found in the parameters.';
+			RETURN 1;
+		END
+		CLOSE @Cursor1;
+		DEALLOCATE @Cursor1;
+		SET @SQLWhere = SUBSTRING(@SQLWhere, 5, LEN(@SQLWhere) - 4)
+		PRINT (@SQL2 + ' WHERE ' + @SQLWhere)
+		RETURN 1;
+	END
+	ELSE IF @strOption = 'display'
+	BEGIN
+		DECLARE @td_srno VARCHAR(50) = @dsXml.value('(/dsXml/X_Filter/SerialNo)[1]', 'VARCHAR(50)')
+		IF UPPER(@strModuleName) = 'TradeListing'
+		BEGIN
+		  SELECT [TradeDate] = td_dt, [Settlement] = td_stlmnt, td_clientcd, [ScripCode] = td_scripcd, 
+		  [BuySell] = td_bsflag, [BuyQty] = td_bqty, [SellQty] = td_Sqty, [MarketRate] = td_marketrate, [Brokerage] = td_brokerage, 
+          [GST] = td_ServiceTax, [STT] = td_STT, [Charges1] = td_OtherChrgs1, [Charges2] = td_OtherChrgs2, [SerialNo] = td_srno
+          FROM TRX_INVPL(NOLOCK) 
+          WHERE td_TRDType = 'DL' AND td_TRXFlag ='M' 
+		  and td_srno = @td_srno
+		  --AND TD_DT >='20240401'
+          ORDER BY td_scripcd, td_dt, td_bsflag 	
+		END
+		RETURN
+	END
+END
+GO
+
+
+

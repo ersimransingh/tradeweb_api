@@ -1,0 +1,495 @@
+{
+	"document": {
+		"DocumentName": "ClientFundLedger",
+		"PageSize": "A4",
+		"Orientation": "LANDSCAPE",
+		"MarginTop": 20,
+		"MarginBottom": 20,
+		"MarginLeft": 20,
+		"MarginRight": 20,
+		"DefaultFont": "Helvetica",
+		"DefaultFontSize": 8,
+		"IsActive": true
+	},
+	"globalHeader": [
+		{
+			"Label": "Image",
+			"DataField": "E:/My Work/16022026/TradeWebAPI/Typst/Assets/CompanyLogo.png",
+			"Position": 1,
+			"RowNo": 1,
+			"Width": 50,
+			"Align": "L",
+			"FontSize": 14,
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "CompanyName",
+			"Position": 4,
+			"RowNo": 1,
+			"Width": 50,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "Address1",
+			"Position": 4,
+			"RowNo": 2,
+			"Width": 50,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Address3",
+			"Position": 4,
+			"RowNo": 3,
+			"Width": 50,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "SEBIRefno123",
+			"Position": 4,
+			"RowNo": 4,
+			"Width": 50,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "CINNo",
+			"Position": 4,
+			"RowNo": 5,
+			"Width": 50,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "ReportName",
+			"Position": 4,
+			"RowNo": 6,
+			"Width": 50,
+			"Align": "C",
+			"FontSize": 12,
+			"IsBold": false
+		}
+	],
+	"globalFooter": [
+		{
+			"Label": "Text",
+			"DataField": "PrintDate",
+			"Position": 1,
+			"RowNo": 1,
+			"Width": 50,
+			"Align": "L",
+			"FontSize": 10
+		},
+		{
+			"Label": "Text",
+			"DataField": "PageNumber",
+			"Position": 4,
+			"RowNo": 1,
+			"Width": 50,
+			"Align": "R",
+			"FontSize": 10
+		}
+	],
+	"sections": [
+		{
+			"Label": "Text",
+			"DataField": "ClientName",
+			"Position": 1,
+			"RowNo": 1,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": true
+		},
+		{
+			"Label": "Text",
+			"DataField": "ClientAddress1",
+			"Position": 1,
+			"RowNo": 2,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "ClientAddress2",
+			"Position": 1,
+			"RowNo": 3,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "ClientAddress2",
+			"Position": 1,
+			"RowNo": 4,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "ClientCity",
+			"Position": 1,
+			"RowNo": 5,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "ClientAddPIN",
+			"Position": 1,
+			"RowNo": 6,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "ClientState",
+			"Position": 1,
+			"RowNo": 7,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "ClientTel",
+			"Position": 1,
+			"RowNo": 8,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "ClientEmailId",
+			"Position": 1,
+			"RowNo": 9,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "PANNo",
+			"Position": 1,
+			"RowNo": 10,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "spacer",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 11,
+			"Width": 10,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "Grid1",
+			"Position": 1,
+			"RowNo": 12,
+			"Width": 100,
+			"Align": "C",
+			"IsBold": false
+		},
+		{
+			"Label": "spacer",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 13,
+			"Width": 10,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "BranchName",
+			"Position": 1,
+			"RowNo": 14,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "GroupName",
+			"Position": 1,
+			"RowNo": 15,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "FamilyName",
+			"Position": 1,
+			"RowNo": 16,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "ClientStatus",
+			"Position": 1,
+			"RowNo": 17,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "spacer",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 18,
+			"Width": 10,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "table",
+			"DataField": "table2",
+			"Position": 1,
+			"RowNo": 20,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "spacer",
+			"DataField": "",
+			"Position": 1,
+			"RowNo": 21,
+			"Width": 10,
+			"Align": "L",
+			"IsBold": false
+		},
+		{
+			"Label": "Text",
+			"DataField": "1) You shall bring any dispute arising from the statement of account to the notice of BP Equities Pvt. Ltd. preferably within 7 working days from the date of receipt of statement.\n 2) Your running account authorization would continue until it is revoked by you. \n 3) You need to refer to the daily margin statement for any pending / outstanding margin obligation of the trades executed by you.",
+			"Position": 1,
+			"RowNo": 22,
+			"Width": 100,
+			"Align": "L",
+			"IsBold": false
+		}
+	],
+	"tableSections": [
+		{
+			"TableName": "MasterTable",
+			"TableMappingId": "table1",
+			"DataSource": "tbl_ProcessClientFundLedgerMaster",
+			"ShowHeader": true
+		},
+		{
+			"TableName": "TransactionTable",
+			"TableMappingId": "table1",
+			"DataSource": "SP_CFLTransactionData",
+			"ShowHeader": true
+		}
+	],
+	"tableColumns": {
+		"table1": {
+			"headerRows": [
+				[
+					{
+						"label": " Date",
+						"colspan": 2,
+						"rowspan": 2
+					},
+					{
+						"label": "Clearing Member",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Segment Type",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Bill Chq No",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Transaction Type",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Particulars",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Voucher No",
+						"colspan": 1,
+						"rowspan": 2
+					},
+					{
+						"label": "Amount Details",
+						"colspan": 3,
+						"rowspan": 1
+					}
+				],
+				[
+					{
+						"label": "Settlement",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "Transaction",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "Debit",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "Credit",
+						"colspan": 1,
+						"rowspan": 1
+					},
+					{
+						"label": "Balance",
+						"colspan": 1,
+						"rowspan": 1
+					}
+				]
+			],
+			"columns": [
+				{
+					"ColumnName": "Settlement Date",
+					"DataField": "SettlementDate",
+					"Width": 8,
+					"Alignment": "L",
+					"DisplayOrder": 1
+				},
+				{
+					"ColumnName": "Transaction Date",
+					"DataField": "TransactionDate",
+					"Width": 8,
+					"Alignment": "L",
+					"DisplayOrder": 2
+				},
+				{
+					"ColumnName": "Clearing Member",
+					"DataField": "ClearingMember",
+					"Width": 7,
+					"Alignment": "L",
+					"DisplayOrder": 3
+				},
+				{
+					"ColumnName": "Segment Type",
+					"DataField": "SegmentType",
+					"Width": 7,
+					"Alignment": "L",
+					"DisplayOrder": 4
+				},
+				{
+					"ColumnName": "Bill Chq No",
+					"DataField": "BillChqNo",
+					"Width": 7,
+					"Alignment": "L",
+					"DisplayOrder": 5
+				},
+				{
+					"ColumnName": "Transaction Type",
+					"DataField": "TransactionType",
+					"Width": 7,
+					"Alignment": "L",
+					"DisplayOrder": 6
+				},
+				{
+					"ColumnName": "Particulars",
+					"DataField": "ParticularsNarration",
+					"Width": 20,
+					"Alignment": "L",
+					"DisplayOrder": 7
+				},
+				{
+					"ColumnName": "Voucher No",
+					"DataField": "VoucherNo",
+					"Width": 7,
+					"Alignment": "L",
+					"DisplayOrder": 8
+				},
+				{
+					"ColumnName": "Debit",
+					"DataField": "Debit",
+					"Width": 6,
+					"Alignment": "R",
+					"DisplayOrder": 9
+				},
+				{
+					"ColumnName": "Credit",
+					"DataField": "Credit",
+					"Width": 6,
+					"Alignment": "R",
+					"DisplayOrder": 10
+				},
+				{
+					"ColumnName": "Balance",
+					"DataField": "Balance",
+					"Width": 7,
+					"Alignment": "R",
+					"DisplayOrder": 11
+				}
+			]
+		}
+	}
+}

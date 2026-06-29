@@ -1,0 +1,59 @@
+<!doctype Html>
+<html>
+<head>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"> </script>
+<script>
+$(document).ready(function(){
+	$("#download").click(function(){
+		
+		$.ajax({
+            type: "Get",
+			async: false,
+            url:"https://localhost:5001/api/TradeWeb_Miscellanious/GetDigitalDocumentDownload?productType=T&documentType=Contract&exchangeType=BSE%20Cash&fromDate=20210101",
+            <!-- contentType : "application/json; charset=utf-8", -->
+			dataType: "json",
+            success: function (result) {
+			alert("success");
+				<!-- var obj = JSON.parse(result); -->
+				var bytes = Base64ToBytes(obj.fileData);
+				var blob = new Blob([bytes], { type: "application/octetstream" });
+				
+				var isIE = false || !!document.documentMode;
+				if(isIE){
+					window.navigator.msSaveBlob(blob, obj.fileName);
+				}
+				else{
+					var url = window.URL || window.webkitURL;
+					link = url.createObjectURL(blob);
+					var a = $("<a/>");
+					a.attr("download", obj.fileName);
+					a.attr("href", link),
+					$("body").append(a);
+					a[0].click();
+					$("body").remove(a);
+				}
+				
+            },
+            error: function (result) {
+            }
+		});
+	});
+	
+	function Base64ToBytes(base64){
+		var s = window.atob(base64);
+		var bytes = new Uint8Array(s.length);
+		for(var i = 0; i < s.length; i++){
+			bytes[i] = s.charCodeAt(i);
+		}
+		return bytes;
+	}
+	
+});
+</script>
+</head>
+<body>
+<h1>The button Element</h1>
+
+<button id="download" type="button">Download</button>
+</body>
+</html>

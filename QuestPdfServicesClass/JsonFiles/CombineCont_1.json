@@ -1,0 +1,735 @@
+
+{
+	"document": {
+		"pageSize": "A4-Landscape",
+		"margins": {
+			"top": 12,
+			"right": 12,
+			"bottom": 30,
+			"left": 12,
+			"unit": "pt"
+		},
+		"defaultFont": "Helvetica",
+		"defaultFontSize": 8
+	},
+	"pageNumbering": {
+		"enabled": false,
+		"position": "bottom-right",
+		"datetime": true,
+		"datetimePosition": "bottom-left"
+	},
+	"globalHeader": {
+		"enabled": true,
+		"content": [
+			{
+				"type": "table",
+				"columnWidths": [
+					"100%"
+				],
+				"style": {
+					"borderWidth": 0.5
+				},
+				"columnWidths": [
+					"3",
+					"7",
+					"2"
+				],
+				"rows": [
+					{
+						"cells": [
+							{
+								"type": "image",
+								"width": "4",
+								"src": "",
+								"filepath": "E:/My Work/16022026/TradeWebAPI/Typst/Assets/CompanyLogo.png",
+								"align": "left",
+								"imgwidth": "100",
+								"imgheight": "100"
+							},
+							{
+								"width": "1",
+								"value": "BP EQUITIES PVT LTD",
+								"style": {
+									"bold": true,
+									"size": 9,
+									"align": "center"
+								}
+							},
+							{
+								"width": "2",
+								"value": "REGD. OFF: 24/26 CAMA BLDG DALAL STREET FORT",
+								"style": {
+									"size": 8,
+									"align": "center"
+								}
+							},
+							{
+								"width": "2",
+								"value": "MUMBAI-400001",
+								"style": {
+									"size": 8,
+									"align": "center"
+								}
+							},
+							{
+								"width": "2",
+								"value": "SEBI REGN.NO.- INZ000176539",
+								"style": {
+									"size": 8,
+									"align": "center"
+								}
+							},
+							{
+								"width": "2",
+								"value": "CIN No. : U67120MH1997PTC107392",
+								"style": {
+									"size": 8,
+									"align": "center"
+								}
+							},
+							{
+								"width": "2",
+								"value": "Statement of Accounts of Funds",
+								"style": {
+									"size": 8,
+									"align": "center"
+								}
+							}
+						]
+					},
+					{
+						"cells": [
+							{
+								"type": "text",
+								"width": "1",
+								"value": "BP EQUITIES PVT LTD",
+								"style": {
+									"bold": true,
+									"size": 9,
+									"align": "center"
+								}
+							},
+							{
+								"type": "text",
+								"width": "2",
+								"value": "REGD. OFF: 24/26 CAMA BLDG DALAL STREET FORT",
+								"style": {
+									"size": 8,
+									"align": "center"
+								}
+							},
+							{
+								"type": "text",
+								"width": "2",
+								"value": "MUMBAI-400001",
+								"style": {
+									"size": 8,
+									"align": "center"
+								}
+							},
+							{
+								"type": "text",
+								"width": "2",
+								"value": "SEBI REGN.NO.- INZ000176539",
+								"style": {
+									"size": 8,
+									"align": "center"
+								}
+							},
+							{
+								"type": "text",
+								"width": "2",
+								"value": "CIN No. : U67120MH1997PTC107392",
+								"style": {
+									"size": 8,
+									"align": "center"
+								}
+							},
+							{
+								"type": "text",
+								"width": "2",
+								"value": "Statement of Accounts of Funds",
+								"style": {
+									"size": 8,
+									"align": "center"
+								}
+							}
+						]
+					}
+				]
+			}
+		]
+	},
+	"globalFooter": {
+		"enabled": true,
+		"content": [
+			{
+				"type": "spacer",
+				"height": 4
+			},
+			{
+				"type": "divider",
+				"thickness": 0.5
+			},
+			{
+				"type": "spacer",
+				"height": 3
+			},
+			{
+				"type": "columns",
+				"columns": [
+					{
+						"width": "6",
+						"content": [
+							{
+								"type": "text",
+								"value": "Print Date : 13-03-2026 03:23:23",
+								"style": {
+									"size": 7,
+									"align": "left"
+								}
+							}
+						]
+					},
+					{
+						"width": "6",
+						"content": [
+							{
+								"type": "text",
+								"value": "TradeplusX[Page: 1]",
+								"style": {
+									"size": 7,
+									"align": "right"
+								}
+							}
+						]
+					}
+				]
+			}
+		]
+	},
+	"sections": [
+		{
+			"type": "columns",
+			"columns": [
+				{
+					"width": "5",
+					"content": [
+						{
+							"type": "text",
+							"value": "Account: BHARAT HEMRAJ GAJRA [11118]",
+							"style": {
+								"bold": true,
+								"size": 8
+							}
+						},
+						{
+							"type": "spacer",
+							"height": 2
+						},
+						{
+							"type": "text",
+							"value": "B-2/1106, 11TH FLOOR,",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "LOK EVEREST, J.N.ROAD,",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "MULUND(W),",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "MUMBAI",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "400080",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "Maharashtra",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "Mobile : 98xxxx9015",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "Email : bhxxxxxxxxxxx@gmxxx.cox",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "PAN : xxDPxx57xx",
+							"style": {
+								"size": 8
+							}
+						}
+					]
+				},
+				{
+					"width": "7",
+					"content": [
+						{
+							"type": "spacer",
+							"height": 10
+						},
+						{
+							"type": "text",
+							"value": "Statement of Accounts of Funds for the period from 04/03/2026 to 13/03/2026",
+							"style": {
+								"size": 8,
+								"align": "center"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"type": "spacer",
+			"height": 8
+		},
+		{
+			"type": "columns",
+			"columns": [
+				{
+					"width": "12",
+					"content": [
+						{
+							"type": "text",
+							"value": "BP Equities Pvt. Ltd.",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "Regd. Office : 24/26 Cama Bldg, Dalal Street, Fort Mumbai - 400 001",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "SEBI Regin No. : - INZ000176539",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "Tel No. : 022-61596161 Fax No. : 022-61596160",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "Email ID for Investor Complaint : investor@bpwealth.com",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "Website : www.bpwealth.com",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "CIN No. : U67120MH1997PTC107392",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "Compliance Officeer : - Inderpal Ranbir Bedi, Tel No. 022-61596161",
+							"style": {
+								"size": 8
+							}
+						},
+						{
+							"type": "text",
+							"value": "Email : compliance@bpwealth.com",
+							"style": {
+								"size": 8
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"type": "spacer",
+			"height": 8
+		},
+		{
+			"id": "funds-table",
+			"type": "table",
+			"columnWidths": [
+				"7%",
+				"7%",
+				"6%",
+				"10%",
+				"5%",
+				"8%",
+				"18%",
+				"6%",
+				"8%",
+				"8%",
+				"13%"
+			],
+			"rows": [
+				{
+					"type": "header",
+					"_comment": "Row 1 — Date spans 2 cols; all other columns span 2 rows",
+					"cells": [
+						{
+							"value": "Date",
+							"colspan": 2,
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						},
+						{
+							"value": "Clearing Corporation/\nClearing Member",
+							"rowspan": 2,
+							"key": "Clearing Member",
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						},
+						{
+							"value": "Segment Type/Number",
+							"rowspan": 2,
+							"key": "Segment Type",
+							"columnStyle": {
+								"align": "center"
+							},
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						},
+						{
+							"value": "Bill/Chg No.",
+							"rowspan": 2,
+							"key": "Bill/Chg No.",
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						},
+						{
+							"value": "Transaction Type",
+							"rowspan": 2,
+							"key": "Transaction Type",
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						},
+						{
+							"value": "Particulars/Narration",
+							"rowspan": 2,
+							"key": "Particulars",
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						},
+						{
+							"value": "Voucher No.",
+							"rowspan": 2,
+							"key": "Voucher No.",
+							"columnStyle": {
+								"align": "center"
+							},
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						},
+						{
+							"value": "Debit (Rs.)",
+							"rowspan": 2,
+							"key": "Debit",
+							"columnStyle": {
+								"align": "right"
+							},
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						},
+						{
+							"value": "Credit (Rs.)",
+							"rowspan": 1,
+							"key": "Credit",
+							"columnStyle": {
+								"align": "right"
+							},
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						},
+						{
+							"value": "Balance (Rs.)",
+							"rowspan": 1,
+							"key": "Balance",
+							"columnStyle": {
+								"align": "right"
+							},
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						}
+					]
+				},
+				{
+					"type": "header",
+					"_comment": "Row 2 — leaf headers define the keys used by object-based value rows",
+					"cells": [
+						{
+							"value": "Settlement",
+							"key": "Settlement Date",
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						},
+						{
+							"value": "Transaction",
+							"key": "Transaction Date",
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						},
+						{
+							"value": "ABCD",
+							"colspan": 2,
+							"key": "ABCD",
+							"style": {
+								"align": "center",
+								"bold": true
+							}
+						}
+					]
+				},
+				{
+					"_comment": "Opening Balance row",
+					"cells": [
+						{
+							"value": "",
+							"colspan": 6
+						},
+						{
+							"value": "Opening Balance",
+							"style": {
+								"bold": false
+							}
+						},
+						{
+							"value": ""
+						},
+						{
+							"value": "243667.00",
+							"style": {
+								"align": "right"
+							}
+						},
+						{
+							"value": "0.00",
+							"style": {
+								"align": "right"
+							}
+						},
+						{
+							"value": "243667.00 Dr",
+							"style": {
+								"align": "right"
+							}
+						}
+					]
+				},
+				{
+					"_comment": "Object-based row — values are mapped from header keys",
+					"Settlement Date": "04-03-2026",
+					"Transaction Date": "02-03-2026",
+					"Clearing Member": "NSE",
+					"Segment Type": "2",
+					"Bill/Chg No.": "CM/NQ2026042",
+					"Transaction Type": "Bill",
+					"Particulars": "To To Bill For NQ2026042",
+					"Voucher No.": "B/2",
+					"Debit": "244792.00",
+					"Credit": "0.00",
+					"Balance": "488459.00 Dr"
+				},
+				{
+					"Settlement Date": "05-03-2026",
+					"Transaction Date": "04-03-2026",
+					"Clearing Member": "NSE",
+					"Segment Type": "2",
+					"Bill/Chg No.": "CM/NQ2026043",
+					"Transaction Type": "Bill",
+					"Particulars": "To To Bill For NQ2026043",
+					"Voucher No.": "B/2",
+					"Debit": "244792.00",
+					"Credit": "0.00",
+					"Balance": "733251.00 Dr"
+				},
+				{
+					"Settlement Date": "06-03-2026",
+					"Transaction Date": "05-03-2026",
+					"Clearing Member": "NSE",
+					"Segment Type": "2",
+					"Bill/Chg No.": "CM/NQ2026044",
+					"Transaction Type": "Bill",
+					"Particulars": "To To Bill For NQ2026044",
+					"Voucher No.": "B/2",
+					"Debit": "244792.00",
+					"Credit": "0.00",
+					"Balance": "978043.00 Dr"
+				},
+				{
+					"_comment": "Closing Balance row",
+					"cells": [
+						{
+							"value": "",
+							"colspan": 6
+						},
+						{
+							"value": "Closing Balance",
+							"style": {
+								"bold": false
+							}
+						},
+						{
+							"value": ""
+						},
+						{
+							"value": "",
+							"style": {
+								"align": "right"
+							}
+						},
+						{
+							"value": "",
+							"style": {
+								"align": "right"
+							}
+						},
+						{
+							"value": "978043.00 Dr",
+							"style": {
+								"align": "right"
+							}
+						}
+					]
+				},
+				{
+					"type": "total-row",
+					"_comment": "Total row — label spans first 8 columns, then debit and credit",
+					"cells": [
+						{
+							"value": "Total :",
+							"colspan": 8,
+							"style": {
+								"bold": true,
+								"align": "right"
+							}
+						},
+						{
+							"value": "978043.00",
+							"style": {
+								"bold": true,
+								"align": "right",
+								"background": "#ffffff"
+							}
+						},
+						{
+							"value": "0.00",
+							"style": {
+								"bold": true,
+								"align": "right",
+								"background": "#ffffff"
+							}
+						},
+						{
+							"value": "",
+							"style": {
+								"background": "#ffffff"
+							}
+						}
+					]
+				}
+			],
+			"style": {
+				"borderWidth": 0.5,
+				"borderColor": "#000000",
+				"headerBackground": "#e0e0e0",
+				"cellFontSize": 7.5
+			}
+		},
+		{
+			"type": "spacer",
+			"height": 10
+		},
+		{
+			"type": "text",
+			"value": "1) You shall bring any dispute arising from the statement of account to the notice of BP Equities Pvt. Ltd. preferably within 7 working days from the date of receipt of statement.",
+			"style": {
+				"size": 7.5
+			}
+		},
+		{
+			"type": "text",
+			"value": "2) Your running account authorization would continue until it is revoked by you.",
+			"style": {
+				"size": 7.5
+			}
+		},
+		{
+			"type": "text",
+			"value": "3) You need to refer to the daily margin statement for any pending / outstanding margin obligation of the trades executed by you.",
+			"style": {
+				"size": 7.5
+			}
+		}
+	]
+}

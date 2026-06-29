@@ -1,0 +1,119 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+	<PropertyGroup>
+		<TargetFramework>netcoreapp3.1</TargetFramework>
+		<UserSecretsId>aspnet-TradeWeb.API-31843B8F-1C85-4C19-931C-2ACB593D9DCA</UserSecretsId>
+		<WebProject_DirectoryAccessLevelKey>0</WebProject_DirectoryAccessLevelKey>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Compile Remove="Entity\**" />
+		<Content Remove="Entity\**" />
+		<EmbeddedResource Remove="Entity\**" />
+		<None Remove="Entity\**" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Remove="Controllers\DigilockerController.cs" />
+		<Compile Remove="Controllers\ModificationRequestController.cs" />
+		<Compile Remove="Controllers\ThirdPartyController.cs" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <None Remove="SQL\ChatBot.sql" />
+	  <None Remove="SQL\Commex.sql" />
+	  <None Remove="SQL\CrossWeb.sql" />
+	  <None Remove="SQL\CrossWebO.sql" />
+	  <None Remove="SQL\Estro.sql" />
+	  <None Remove="SQL\EstroWeb.sql" />
+	  <None Remove="SQL\json.sql" />
+	  <None Remove="SQL\Pledge.sql" />
+	  <None Remove="SQL\ReKYC.sql" />
+	  <None Remove="SQL\ReKYC2.sql" />
+	  <None Remove="SQL\TradeWeb.sql" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Content Include="SQL\ChatBot.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\Commex.sql">
+		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\CrossWeb.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\CrossWebO.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\Estro.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\EstroWeb.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\json.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\Pledge.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\ReKYC.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\ReKYC2.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\TradeWeb.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="Typst\**\*.*">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="wwwroot\AggreementFile\mg040.pdf" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="AspNetCoreRateLimit" Version="4.0.2" />
+		<PackageReference Include="Azure.Core" Version="1.24.0" />
+		<PackageReference Include="ClosedXML" Version="0.105.0" />
+		<PackageReference Include="Core.Renci.SshNet" Version="2021.10.2" />
+		<PackageReference Include="Fernet" Version="0.1.7" />
+		<PackageReference Include="Grpc.Core" Version="2.46.3" />
+		<!--<PackageReference Include="itext.bouncy-castle-adapter" Version="9.6.0" />
+		<PackageReference Include="itext7" Version="9.6.0" />-->
+		<PackageReference Include="iTextSharp" Version="5.5.13.3" />
+		<PackageReference Include="MailKit" Version="4.14.1" />
+		<PackageReference Include="Microsoft.AspNet.Identity.EntityFramework" Version="2.2.3" />
+		<PackageReference Include="Microsoft.AspNet.Mvc" Version="5.2.7" />
+		<PackageReference Include="Microsoft.AspNet.WebApi.Core" Version="5.2.9" />
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.AzureAD.UI" Version="3.1.17" />
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="3.1.22" />
+		<PackageReference Include="Microsoft.AspNetCore.Identity" Version="2.2.0" />
+		<PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="5.0.10" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore" Version="5.0.10" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="5.0.10" />
+		<PackageReference Include="Microsoft.Extensions.Configuration" Version="5.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Identity.Stores" Version="5.0.10" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+		<PackageReference Include="QuestPDF" Version="2025.12.4" />
+		<PackageReference Include="ReportViewerCore.NETCore" Version="15.1.19" />
+		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="6.2.1" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="6.2.1" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="6.2.1" />
+		<PackageReference Include="System.ServiceModel.Duplex" Version="4.7.*" />
+		<PackageReference Include="System.ServiceModel.Http" Version="4.7.*" />
+		<PackageReference Include="System.ServiceModel.NetTcp" Version="4.7.*" />
+		<PackageReference Include="System.ServiceModel.Security" Version="4.7.*" />
+		<PackageReference Include="System.Data.SqlClient" Version="4.8.6" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="Typst\Assets\" />
+	  <Folder Include="Typst\Inputs\" />
+	  <Folder Include="Typst\Outputs\" />
+	</ItemGroup>
+</Project>
