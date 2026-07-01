@@ -192,7 +192,7 @@ namespace TradeWeb.API.Controllers
 
                         string encryptedToken = E2EEncryptionHelper.Encrypt(e2eContext.AesKey, plainJson);
 
-                        context.HttpContext.Response.Headers[E2EEncryptionHelper.PublicKeyHeader] = Convert.ToBase64String(_e2eKeyService.PublicKey);
+                        context.HttpContext.Response.Headers[E2EEncryptionHelper.PublicKeyHeader] = Convert.ToBase64String(e2eContext.ServerPublicKey);
 
                         context.Result = new JsonResult(new { data = encryptedToken })
                         {
@@ -202,13 +202,17 @@ namespace TradeWeb.API.Controllers
                     return;
                 }
 
-                var blnSkip = context.HttpContext.Items["Option"]?.ToString() == "InitializeLogin";
-                var blnMobile = context.HttpContext.Items["TradeMobile"]?.ToString() == "Y";
-                if (blnSkip)
+                // E2E-enabled actions (InitializeLogin, TradeWeb) should never fall back to legacy Fernet/AES.
+                // They are either E2E-encrypted above or returned as plaintext.
+                bool isE2EAction = context.ActionDescriptor.FilterDescriptors
+                    .Any(fd => fd.Filter is ServiceFilterAttribute sfa && sfa.ServiceType == typeof(E2EDecryptFilter));
+                if (isE2EAction)
                 {
                     base.OnActionExecuted(context);
                     return;
                 }
+
+                var blnMobile = context.HttpContext.Items["TradeMobile"]?.ToString() == "Y";
 
                 if (_blnEncrypt && context.Result is ObjectResult objectResultLegacy)
                 {
