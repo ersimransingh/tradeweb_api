@@ -35,6 +35,8 @@ using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
 using TradeWeb.API.Data;
+using TradeWeb.API.Filters;
+using TradeWeb.API.Helpers;
 using TradeWeb.API.Models;
 using TradeWeb.API.QuestPdfServicesClass;
 using TradeWeb.API.Repository;
@@ -57,6 +59,7 @@ namespace TradeWeb.API.Controllers
         private readonly SignInManager<AppUser> _signInManager;
         private readonly IWebHostEnvironment _environment;
         private readonly TokenStore _tokenStore;
+        private readonly E2EKeyService _e2eKeyService;
 
         private string strsql = "";
         ConvertData returnJson = new ConvertData();
@@ -67,7 +70,7 @@ namespace TradeWeb.API.Controllers
         #endregion
 
         #region Constructor
-        public MainController(Microsoft.AspNetCore.Identity.UserManager<AppUser> userManager, IConfiguration configuration, UtilityCommon objUtility, IHttpContextAccessor httpContextAccessor, SignInManager<AppUser> signInManager, ITradeWebRepository tradeWebRepository, IWebHostEnvironment environment, TokenStore tokenStore)
+        public MainController(Microsoft.AspNetCore.Identity.UserManager<AppUser> userManager, IConfiguration configuration, UtilityCommon objUtility, IHttpContextAccessor httpContextAccessor, SignInManager<AppUser> signInManager, ITradeWebRepository tradeWebRepository, IWebHostEnvironment environment, TokenStore tokenStore, E2EKeyService e2eKeyService)
         {
             _userManager = userManager;
             _configuration = configuration;
@@ -75,6 +78,7 @@ namespace TradeWeb.API.Controllers
             _httpContextAccessor = httpContextAccessor;
             _signInManager = signInManager;
             _tradeWebRepository = tradeWebRepository;
+            _e2eKeyService = e2eKeyService;
             _environment = environment;
             _tokenStore = tokenStore;
         }
@@ -156,8 +160,9 @@ namespace TradeWeb.API.Controllers
             private readonly byte[] _key;
             private readonly bool _blnEncrypt;
             private readonly byte[] _cryptoKey;
+            private readonly E2EKeyService _e2eKeyService;
 
-            public EncryptResponseAttribute(IConfiguration config, UtilityCommon objutility)
+            public EncryptResponseAttribute(IConfiguration config, UtilityCommon objutility, E2EKeyService e2eKeyService)
             {
                 string encKey = objutility.Decrypt(config["fernetKey"]);
                 _key = Base64UrlDecode(encKey);
@@ -170,28 +175,55 @@ namespace TradeWeb.API.Controllers
                 {
                     _blnEncrypt = objutility.GetSysParmSt("APIENCDATA", "") == "Y";
                 }
+
+                _e2eKeyService = e2eKeyService;
             }
 
             public override void OnActionExecuted(ActionExecutedContext context)
             {
-                var blnSkip = context.HttpContext.Items["Option"]?.ToString() == "InitializeLogin";
-                var blnMobile = context.HttpContext.Items["TradeMobile"]?.ToString() == "Y";
-                if (blnSkip)
+                // E2E encryption takes precedence when the client sent an ECDH public key.
+                if (context.HttpContext.Items.TryGetValue(E2EDecryptFilter.E2EContextKey, out var e2eObj) && e2eObj is E2EContext e2eContext)
+                {
+                    if (context.Result is ObjectResult objectResult)
+                    {
+                        string plainJson = objectResult.Value is string s
+                            ? s
+                            : JsonConvert.SerializeObject(objectResult.Value, Formatting.None);
+
+                        string encryptedToken = E2EEncryptionHelper.Encrypt(e2eContext.AesKey, plainJson);
+
+                        context.HttpContext.Response.Headers[E2EEncryptionHelper.PublicKeyHeader] = Convert.ToBase64String(e2eContext.ServerPublicKey);
+
+                        context.Result = new JsonResult(new { data = encryptedToken })
+                        {
+                            StatusCode = objectResult.StatusCode ?? StatusCodes.Status200OK
+                        };
+                    }
+                    return;
+                }
+
+                // E2E-enabled actions (InitializeLogin, TradeWeb) should never fall back to legacy Fernet/AES.
+                // They are either E2E-encrypted above or returned as plaintext.
+                bool isE2EAction = context.ActionDescriptor.FilterDescriptors
+                    .Any(fd => fd.Filter is ServiceFilterAttribute sfa && sfa.ServiceType == typeof(E2EDecryptFilter));
+                if (isE2EAction)
                 {
                     base.OnActionExecuted(context);
                     return;
                 }
 
-                if (_blnEncrypt && context.Result is ObjectResult objectResult)
+                var blnMobile = context.HttpContext.Items["TradeMobile"]?.ToString() == "Y";
+
+                if (_blnEncrypt && context.Result is ObjectResult objectResultLegacy)
                 {
                     string plainJson;
-                    if (objectResult.Value is string s)
+                    if (objectResultLegacy.Value is string s)
                     {
                         plainJson = s;
                     }
                     else
                     {
-                        plainJson = JsonConvert.SerializeObject(objectResult.Value, Formatting.None);
+                        plainJson = JsonConvert.SerializeObject(objectResultLegacy.Value, Formatting.None);
                     }
 
                     string encryptedToken = "";
@@ -210,7 +242,7 @@ namespace TradeWeb.API.Controllers
                     // preserve the original status code
                     context.Result = new JsonResult(new { data = encryptedToken })
                     {
-                        StatusCode = objectResult.StatusCode ?? StatusCodes.Status200OK
+                        StatusCode = objectResultLegacy.StatusCode ?? StatusCodes.Status200OK
                     };
                 }
             }
@@ -249,6 +281,13 @@ namespace TradeWeb.API.Controllers
                 }
             }
             return BadRequest();
+        }
+
+        [AllowAnonymous]
+        [HttpGet("E2EPublicKey", Name = "E2EPublicKey")]
+        public IActionResult E2EPublicKey()
+        {
+            return Ok(new { publicKey = Convert.ToBase64String(_e2eKeyService.PublicKey) });
         }
 
         [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
@@ -2650,6 +2689,7 @@ namespace TradeWeb.API.Controllers
         [HttpPost, Route("TradeWeb")]
         [Consumes("application/xml")]
         [TypeFilter(typeof(ValidateUser), Arguments = new object[] { "TradeWeb" })]
+        [ServiceFilter(typeof(E2EDecryptFilter))]
         [ServiceFilter(typeof(EncryptResponseAttribute))]
         public async Task<IActionResult> TradeWeb()
         {
@@ -3487,6 +3527,7 @@ namespace TradeWeb.API.Controllers
 
         [HttpPost, Route("InitializeLogin")]
         [Consumes("application/xml")]
+        [ServiceFilter(typeof(E2EDecryptFilter))]
         [ServiceFilter(typeof(EncryptResponseAttribute))]
         public async Task<IActionResult> InitializeLogin()
         {
