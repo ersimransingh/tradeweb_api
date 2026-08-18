@@ -211,6 +211,7 @@ namespace TradeWeb.API.Repository
         public dynamic Get_Change_Relation();
         public dynamic GetExchSeg();
         public dynamic GetDPID();
+        public dynamic GetCompanyBranding();
         public dynamic GetIPOMainData(string userId);
 
         public dynamic GetIPORemark(string userId, string IPOName, string InvestorType);

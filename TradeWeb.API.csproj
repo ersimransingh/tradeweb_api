@@ -17,6 +17,10 @@
 		<Compile Remove="Controllers\DigilockerController.cs" />
 		<Compile Remove="Controllers\ModificationRequestController.cs" />
 		<Compile Remove="Controllers\ThirdPartyController.cs" />
+		<Compile Remove="Controllers\ThirdPartyServiceController.cs" />
+		<Compile Remove="Service\ThirdPartyServiceDAO.cs" />
+		<Compile Remove="Service\IblogUtility.cs" />
+		<Compile Remove="ExtentionMethod\InsertOrUpdate.cs" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -68,6 +72,9 @@
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </Content>
 	  <Content Include="Typst\**\*.*">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="Fonts\**\*.ttf">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </Content>
 	</ItemGroup>

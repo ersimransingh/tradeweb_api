@@ -17260,6 +17260,50 @@ namespace TradeWeb.API.Repository
             }
             return null;
         }
+
+        // Same company resolution + logo lookup as SP_InitializeLogin's CompanyCode/CompanyName/
+        // CompanyLogo output (see SQL/Decrypted/TradeWeb_*.sql), extracted standalone so PDF
+        // headers can fetch branding without invoking the full login procedure.
+        public dynamic GetCompanyBranding()
+        {
+            string strsql = @"
+DECLARE @DPID VARCHAR(500) = ''
+DECLARE @CompanyName VARCHAR(50) = '', @strBase64 NVARCHAR(MAX) = ''
+
+DECLARE @companyCount INT = 0
+SELECT @companyCount = ISNULL(SUM(ISNULL(cnt,0)),0)
+FROM ( SELECT COUNT(0) Cnt From Entity_master with (NoLock)
+WHERE em_bse <> 'N' and isNull(em_bclearingno,'') in ('189')
+UNION ALL
+SELECT COUNT(0) Cnt From Entity_master with (NoLock)
+WHERE em_nse <> 'N' and isNull(em_nclearingno,'') in ('07277') ) a
+
+IF @companyCount = 0
+BEGIN
+    SELECT @DPID = em_cd, @CompanyName = em_name
+    FROM Entity_Master with (nolock) where em_cd = (select min(em_cd) from Entity_master)
+END
+ELSE
+BEGIN
+    SELECT @DPID = em_cd, @CompanyName = em_name
+    FROM Entity_Master with (nolock) where em_cd = 'B'
+END
+
+SELECT @strBase64 =
+   (SELECT CAST(img_logo AS VARBINARY(MAX))
+    FOR XML PATH(''), BINARY BASE64)
+FROM Images(NOLOCK)
+WHERE img_desc = 'Company Logo'
+
+SELECT @DPID AS CompanyCode, @CompanyName AS CompanyName, CompanyLogo = @strBase64
+";
+            DataTable dt = objUtility.OpenDataTable(strsql);
+            if (dt != null && dt.Rows.Count > 0)
+            {
+                return dt;
+            }
+            return null;
+        }
         #endregion
 
         #region IPO Code
