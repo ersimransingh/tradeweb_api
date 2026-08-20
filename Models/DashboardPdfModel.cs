@@ -122,6 +122,8 @@ namespace TradeWeb.API.Models
         public string PdfColumns { get; set; } = "";     // CSV, exact columns + order to display
         public string PdfGroupBy { get; set; } = "";      // single column name to group by
         public string PdfSumColumns { get; set; } = "";   // CSV, columns to sum per group
+        public string PdfSortBy { get; set; } = "";        // single column name to sort by (row column, or a sum column when grouped)
+        public string PdfSortOrder { get; set; } = "";      // "asc" (default) or "desc"
 
         // --- pass-through fields, same names/meaning as the frontend tab Setting ---
         public string GroupBy { get; set; } = "";

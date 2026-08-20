@@ -291,14 +291,15 @@ namespace TradeWeb.API.QuestPdfTemplates
                 // Charts sit on their own line(s) below the table (not beside it) - a wide
                 // table sitting next to a short chart stack left a large dead gap where the
                 // table's cell had already finished but the row stayed tall to match the
-                // charts. Up to 3 charts always share a single row (shrinking to fit rather
-                // than wrapping); a 4th+ chart wraps to another row of up to 3.
+                // charts. The grid is always 3 slots wide - every card is sized as if the
+                // row were full (TabContentWidth / 3), even when fewer than 3 charts are
+                // present, so a lone chart takes a single 1/3-width slot and leaves the
+                // rest of the row blank instead of stretching to fill it. A 4th+ chart
+                // wraps to another row of up to 3.
                 const float chartGap = 12f;
                 const float chartInset = 6f;
-                const float maxChartCardWidth = 320f; // cap so 1-2 charts don't stretch oversized
-                const int maxChartsPerRow = 3;
-                int chartsPerRow = Math.Min(maxChartsPerRow, charts.Count);
-                float chartCardWidth = Math.Min(maxChartCardWidth, (TabContentWidth - (chartsPerRow - 1) * chartGap) / chartsPerRow);
+                const int chartsPerRow = 3;
+                float chartCardWidth = (TabContentWidth - (chartsPerRow - 1) * chartGap) / chartsPerRow;
 
                 // The SVG must be generated at exactly the size QuestPDF hands it after
                 // padding is subtracted (Border() draws on the edge without consuming extra
@@ -523,7 +524,18 @@ namespace TradeWeb.API.QuestPdfTemplates
 
             if (!grouped)
             {
-                foreach (var row in view.Rows)
+                var rows = view.Rows;
+                if (view.SortCol != null)
+                {
+                    bool numeric = view.Numeric.TryGetValue(view.SortCol, out var isNumeric) && isNumeric;
+                    rows = numeric
+                        ? rows.OrderBy(r => ToDouble(r.TryGetValue(view.SortCol, out var v) ? v : (JsonElement?)null)).ToList()
+                        : rows.OrderBy(r => ExtractRaw(r, view.SortCol), StringComparer.OrdinalIgnoreCase).ToList();
+                    if (view.SortDescending)
+                        rows.Reverse();
+                }
+
+                foreach (var row in rows)
                 {
                     var cells = new List<string>();
                     Dictionary<int, Color> colors = null;
@@ -581,8 +593,16 @@ namespace TradeWeb.API.QuestPdfTemplates
             }
 
             // Default (no column explicitly sorted) order: alphabetical by group value,
-            // same as the page's compareOnCols fallback.
-            order = order.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
+            // same as the page's compareOnCols fallback. When PdfSortBy names a sum
+            // column, order groups by that column's summed value instead.
+            if (view.SortCol != null && view.SortCol != view.GroupCol
+                && order.Count > 0 && buckets[order[0]].Sums.ContainsKey(view.SortCol))
+                order = order.OrderBy(k => buckets[k].Sums[view.SortCol]).ToList();
+            else
+                order = order.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
+
+            if (view.SortDescending)
+                order.Reverse();
 
             var grandSums = view.Columns.Where(c => c != view.GroupCol).ToDictionary(c => c, c => 0.0);
             int grandCount = 0;
@@ -688,6 +708,8 @@ namespace TradeWeb.API.QuestPdfTemplates
             public Dictionary<string, double> ColWidths = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, ValueColorConfig> TextColors = new Dictionary<string, ValueColorConfig>(StringComparer.OrdinalIgnoreCase);
             public string GroupCol;
+            public string SortCol;
+            public bool SortDescending;
 
             public bool IsRightAligned(string col) =>
                 Numeric.TryGetValue(col, out var n) && n && !LeftAligned.Contains(col);
@@ -753,6 +775,15 @@ namespace TradeWeb.API.QuestPdfTemplates
                 var pdfGroupBy = (setting.PdfGroupBy ?? "").Trim();
                 var explicitColumns = SplitCsv(setting.PdfColumns).Select(ResolveRaw).Where(c => c != null).ToList();
                 var explicitSumColumns = SplitCsv(setting.PdfSumColumns).Select(ResolveRaw).Where(c => c != null).ToList();
+
+                // PDF-only sort override: which column drives row/group order, and its
+                // direction. Resolved the same loose way as pdfGroupBy/pdfColumns - the
+                // configured name just needs to match a raw column, case/whitespace-insensitive.
+                var pdfSortBy = (setting.PdfSortBy ?? "").Trim();
+                if (pdfSortBy.Length > 0)
+                    view.SortCol = ResolveRaw(pdfSortBy);
+                view.SortDescending = string.Equals((setting.PdfSortOrder ?? "").Trim(), "desc", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals((setting.PdfSortOrder ?? "").Trim(), "descending", StringComparison.OrdinalIgnoreCase);
 
                 if (pdfGroupBy.Length > 0)
                     view.GroupCol = ResolveRaw(pdfGroupBy);
