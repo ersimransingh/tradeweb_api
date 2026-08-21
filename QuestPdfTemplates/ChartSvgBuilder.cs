@@ -23,7 +23,10 @@ namespace TradeWeb.API.QuestPdfTemplates
         };
 
         private const int MaxPieSlices = 10;
-        private const int MaxBarCategories = 30;
+        // Was 30 - far too high to ever kick in for realistic data (30 skinny bars is
+        // unreadable well before the fold-into-"Others" mechanism even applied). Matches
+        // the pie chart's cap so both chart types fold the smallest categories the same way.
+        private const int MaxBarCategories = 10;
         private const string OthersLabel = "Others";
         private const string AxisTextColor = "#121212";
         private const string GridColor = "#BED0C4";
@@ -47,7 +50,12 @@ namespace TradeWeb.API.QuestPdfTemplates
             double total = values.Sum();
             float legendTop = height - LegendHeight(labels, width - 20);
             float chartAreaTop = 20;
-            float radius = Math.Min(width * 0.28f, (legendTop - chartAreaTop) / 2f - 4);
+            // A floor keeps the pie from collapsing to a near-zero/negative radius (a
+            // garbled sliver of overlapping paths) when a long legend - many client names,
+            // each forced onto its own row in a narrow chart - eats nearly the whole
+            // height. A cramped legend is far more readable than a broken pie.
+            const float minRadius = 22f;
+            float radius = Math.Max(minRadius, Math.Min(width * 0.28f, (legendTop - chartAreaTop) / 2f - 4));
             float cx = width / 2f;
             float cy = chartAreaTop + radius + 4;
 
@@ -110,15 +118,22 @@ namespace TradeWeb.API.QuestPdfTemplates
                 return sb.ToString();
             }
 
-            float axisLeft = 42;
+            double max = seriesValues.SelectMany(v => v).DefaultIfEmpty(0).Max();
+            if (max <= 0) max = 1;
+
+            // Was a fixed 42pt - too narrow for large Indian-formatted values (crores+
+            // routinely run 12-14 digits with separators), clipping the leftmost digits
+            // off the edge of the SVG canvas. Widens to fit the largest grid label.
+            float axisLeft = AxisLeftMargin(max);
             float legendTop = height - LegendHeight(names, width - 20);
-            float axisBottom = legendTop - 26; // room for the rotated category labels above the legend
+            // Category labels are capped at 15 chars and rotated -45deg (RotatedCategoryLabel);
+            // at font-size 6 that needs ~38pt of vertical clearance plus the label's own
+            // +8pt offset from axisBottom - the old fixed 26pt reservation was well short
+            // of that, so long labels overlapped the legend text below them.
+            float axisBottom = legendTop - 50;
             float axisTop = 20;
             float plotWidth = width - axisLeft - 10;
             float plotHeight = axisBottom - axisTop;
-
-            double max = seriesValues.SelectMany(v => v).DefaultIfEmpty(0).Max();
-            if (max <= 0) max = 1;
 
             sb.Append(GridLines(axisLeft, axisTop, width - 5, axisBottom, max));
             sb.Append($"<line x1=\"{F(axisLeft)}\" y1=\"{F(axisTop)}\" x2=\"{F(axisLeft)}\" y2=\"{F(axisBottom)}\" stroke=\"{GridColor}\" stroke-width=\"1\" />");
@@ -172,15 +187,22 @@ namespace TradeWeb.API.QuestPdfTemplates
                 return sb.ToString();
             }
 
-            float axisLeft = 42;
+            double max = seriesValues.SelectMany(v => v).DefaultIfEmpty(0).Max();
+            if (max <= 0) max = 1;
+
+            // Was a fixed 42pt - too narrow for large Indian-formatted values (crores+
+            // routinely run 12-14 digits with separators), clipping the leftmost digits
+            // off the edge of the SVG canvas. Widens to fit the largest grid label.
+            float axisLeft = AxisLeftMargin(max);
             float legendTop = height - LegendHeight(names, width - 20);
-            float axisBottom = legendTop - 26; // room for the rotated category labels above the legend
+            // Category labels are capped at 15 chars and rotated -45deg (RotatedCategoryLabel);
+            // at font-size 6 that needs ~38pt of vertical clearance plus the label's own
+            // +8pt offset from axisBottom - the old fixed 26pt reservation was well short
+            // of that, so long labels overlapped the legend text below them.
+            float axisBottom = legendTop - 50;
             float axisTop = 20;
             float plotWidth = width - axisLeft - 10;
             float plotHeight = axisBottom - axisTop;
-
-            double max = seriesValues.SelectMany(v => v).DefaultIfEmpty(0).Max();
-            if (max <= 0) max = 1;
 
             sb.Append(GridLines(axisLeft, axisTop, width - 5, axisBottom, max));
             sb.Append($"<line x1=\"{F(axisLeft)}\" y1=\"{F(axisTop)}\" x2=\"{F(axisLeft)}\" y2=\"{F(axisBottom)}\" stroke=\"{GridColor}\" stroke-width=\"1\" />");
@@ -248,6 +270,11 @@ namespace TradeWeb.API.QuestPdfTemplates
         }
 
         private const float LegendRowHeight = 11;
+        // Long client/scrip names used to run to 25 chars each, meaning even one entry
+        // could exceed a narrow chart's row width and force every single entry onto its
+        // own row - a legend with many entries then ate nearly the whole chart height
+        // (collapsing a pie's radius to near zero). Shorter entries fit 2+ per row.
+        private const int LegendEntryMaxChars = 16;
 
         private static void AppendBottomLegend(StringBuilder sb, string[] labels, float width, float top, float maxWidth)
         {
@@ -256,7 +283,7 @@ namespace TradeWeb.API.QuestPdfTemplates
 
             for (int i = 0; i < labels.Length; i++)
             {
-                string entry = Truncate(labels[i], 25);
+                string entry = Truncate(labels[i], LegendEntryMaxChars);
                 float entryWidth = 12 + entry.Length * 3.6f + 12;
 
                 if (x + entryWidth > maxWidth)
@@ -284,7 +311,7 @@ namespace TradeWeb.API.QuestPdfTemplates
 
             foreach (var label in labels)
             {
-                string entry = Truncate(label, 25);
+                string entry = Truncate(label, LegendEntryMaxChars);
                 float entryWidth = 12 + entry.Length * 3.6f + 12;
 
                 if (x + entryWidth > maxWidth)
@@ -297,6 +324,16 @@ namespace TradeWeb.API.QuestPdfTemplates
             }
 
             return 10 + rows * LegendRowHeight;
+        }
+
+        // How wide the y-axis gutter needs to be to fit its largest label (the top grid
+        // line, formatted from `max`) without clipping - large Indian-formatted values
+        // (crores+) can run well past the old fixed 42pt margin.
+        private static float AxisLeftMargin(double max)
+        {
+            string label = IndianNumberFormat.Format(max, 0);
+            float textWidth = label.Length * 6f * 0.6f; // matches GridLines' font-size="6"
+            return Math.Max(42f, textWidth + 14f); // 4pt label-to-axis gap + 10pt buffer
         }
 
         private static string GridLines(float left, float top, float right, float bottom, double max)

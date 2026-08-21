@@ -65,6 +65,12 @@ namespace TradeWeb.API.Controllers
 
                 foreach (var tab in widget.GridTabs ?? new List<GridTab>())
                 {
+                    // Opt-in, same as DashboardPdfDocument's own tab filter: a tab that
+                    // won't render in the PDF (Setting.ShowInPdf not explicitly true)
+                    // shouldn't have its stored procedure called at all.
+                    if (tab.Setting == null || tab.Setting.ShowInPdf != true)
+                        continue;
+
                     if ((tab.Rows?.Count ?? 0) > 0)
                         continue;
 

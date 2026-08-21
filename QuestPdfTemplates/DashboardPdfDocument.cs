@@ -357,13 +357,13 @@ namespace TradeWeb.API.QuestPdfTemplates
                 {
                     foreach (var colName in view.Columns)
                     {
-                        var cell = header.Cell().Border(1).BorderColor(ThemeBorder).PaddingVertical(6).PaddingHorizontal(6);
+                        var cell = header.Cell().Border(1).BorderColor(ThemeBorder).PaddingVertical(3).PaddingHorizontal(5);
                         var text = view.IsRightAligned(colName) ? cell.AlignRight() : cell.AlignLeft();
                         text.Text(view.HideLabels.Contains(colName) ? "" : PrettifyKey(colName))
                             .Bold().FontSize(8).FontColor(ThemeText).ClampLines(2);
                     }
                     if (grouped)
-                        header.Cell().Border(1).BorderColor(ThemeBorder).PaddingVertical(6).PaddingHorizontal(6)
+                        header.Cell().Border(1).BorderColor(ThemeBorder).PaddingVertical(3).PaddingHorizontal(5)
                             .AlignRight().Text("Count").Bold().FontSize(8).FontColor(ThemeText).ClampLines(2);
                 });
 
@@ -389,7 +389,7 @@ namespace TradeWeb.API.QuestPdfTemplates
                         bool isCountCell = grouped && i == dRow.Cells.Count - 1;
                         string colName = isCountCell ? null : view.Columns[i];
 
-                        var cell = table.Cell().Border(1).BorderColor(ThemeBorder).PaddingVertical(5).PaddingHorizontal(6);
+                        var cell = table.Cell().Border(1).BorderColor(ThemeBorder).PaddingVertical(2).PaddingHorizontal(5);
 
                         bool right = isCountCell || (colName != null && view.IsRightAligned(colName));
                         var text = right ? cell.AlignRight() : cell.AlignLeft();
@@ -859,7 +859,7 @@ namespace TradeWeb.API.QuestPdfTemplates
             if (labelCol.Length == 0 || valueCols.Count == 0)
                 return null;
 
-            var grouped = GroupAndSum(rows, labelCol, valueCols);
+            var grouped = GroupAndSum(rows, labelCol, valueCols, view);
             var labels = grouped.Select(g => Convert.ToString(g[labelCol]) ?? "").ToArray();
             string title = $"By {PrettifyKey(labelCol)}";
 
@@ -909,7 +909,7 @@ namespace TradeWeb.API.QuestPdfTemplates
 
         // ---- helpers ----
 
-        private static List<Dictionary<string, object>> GroupAndSum(List<Dictionary<string, JsonElement>> rows, string groupByCol, List<string> sumCols)
+        private static List<Dictionary<string, object>> GroupAndSum(List<Dictionary<string, JsonElement>> rows, string groupByCol, List<string> sumCols, TabView view)
         {
             var groups = new Dictionary<string, Dictionary<string, object>>();
             var order = new List<string>();
@@ -929,6 +929,20 @@ namespace TradeWeb.API.QuestPdfTemplates
                 foreach (var sc in sumCols)
                     g[sc] = (double)g[sc] + ToDouble(row.TryGetValue(sc, out var v) ? v : (JsonElement?)null);
             }
+
+            // Same ordering as the table (Setting.PdfSortBy/PdfSortOrder): when the sort
+            // column is one of this chart's summed value columns, order categories by that
+            // summed value; otherwise fall back to alphabetical-by-label, the same default
+            // BuildDisplayRows uses - so a chart's category/slice order lines up with the
+            // table's row order instead of raw first-seen insertion order.
+            if (view.SortCol != null && view.SortCol != groupByCol
+                && order.Count > 0 && groups[order[0]].ContainsKey(view.SortCol))
+                order = order.OrderBy(k => (double)groups[k][view.SortCol]).ToList();
+            else
+                order = order.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
+
+            if (view.SortDescending)
+                order.Reverse();
 
             return order.Select(k => groups[k]).ToList();
         }
