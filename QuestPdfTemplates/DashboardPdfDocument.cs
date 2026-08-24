@@ -293,12 +293,14 @@ namespace TradeWeb.API.QuestPdfTemplates
                 // table's cell had already finished but the row stayed tall to match the
                 // charts. The grid is always 3 slots wide - every card is sized as if the
                 // row were full (TabContentWidth / 3), even when fewer than 3 charts are
-                // present, so a lone chart takes a single 1/3-width slot and leaves the
-                // rest of the row blank instead of stretching to fill it. A 4th+ chart
-                // wraps to another row of up to 3.
+                // present, so a lone chart takes a single 1/2-width slot and leaves the
+                // rest of the row blank instead of stretching to fill it. A 3rd+ chart
+                // wraps to another row of up to 2.
+                // Was 3 - squeezed each chart (and its pie labels/legend) down to a size
+                // where text got cramped; 2 per row gives each chart noticeably more room.
                 const float chartGap = 12f;
                 const float chartInset = 6f;
-                const int chartsPerRow = 3;
+                const int chartsPerRow = 2;
                 float chartCardWidth = (TabContentWidth - (chartsPerRow - 1) * chartGap) / chartsPerRow;
 
                 // The SVG must be generated at exactly the size QuestPDF hands it after
@@ -360,17 +362,17 @@ namespace TradeWeb.API.QuestPdfTemplates
                         var cell = header.Cell().Border(1).BorderColor(ThemeBorder).PaddingVertical(3).PaddingHorizontal(5);
                         var text = view.IsRightAligned(colName) ? cell.AlignRight() : cell.AlignLeft();
                         text.Text(view.HideLabels.Contains(colName) ? "" : PrettifyKey(colName))
-                            .Bold().FontSize(8).FontColor(ThemeText).ClampLines(2);
+                            .FontFamily(FontSetup.TableFontFamily).Bold().FontSize(8).FontColor(ThemeText).ClampLines(2);
                     }
                     if (grouped)
                         header.Cell().Border(1).BorderColor(ThemeBorder).PaddingVertical(3).PaddingHorizontal(5)
-                            .AlignRight().Text("Count").Bold().FontSize(8).FontColor(ThemeText).ClampLines(2);
+                            .AlignRight().Text("Count").FontFamily(FontSetup.TableFontFamily).Bold().FontSize(8).FontColor(ThemeText).ClampLines(2);
                 });
 
                 if (displayRows.Count == 0)
                 {
                     table.Cell().ColumnSpan((uint)(view.Columns.Count + (grouped ? 1 : 0))).Padding(10).AlignCenter()
-                        .Text("No data available").FontSize(8).FontColor(Colors.Grey.Medium);
+                        .Text("No data available").FontFamily(FontSetup.TableFontFamily).FontSize(8).FontColor(Colors.Grey.Medium);
                     return;
                 }
 
@@ -398,7 +400,7 @@ namespace TradeWeb.API.QuestPdfTemplates
                         if (dRow.CellColors != null && dRow.CellColors.TryGetValue(i, out var cc))
                             color = cc;
 
-                        var descriptor = text.Text(dRow.Cells[i]).FontSize(8).FontColor(color).ClampLines(2);
+                        var descriptor = text.Text(dRow.Cells[i]).FontFamily(FontSetup.TableFontFamily).FontSize(8).FontColor(color).ClampLines(2);
                         if (bold) descriptor.Bold();
                     }
                 }
@@ -867,7 +869,12 @@ namespace TradeWeb.API.QuestPdfTemplates
             {
                 case "pie":
                     var pieValues = grouped.Select(g => ToDouble(g.TryGetValue(valueCols[0], out var v) ? v : null)).ToArray();
-                    return ChartSvgBuilder.BuildPieChart(title, labels, pieValues, width, height);
+                    // Bar/line charts keep "By {label}" up top and show the value column
+                    // via the bottom legend (Series.Name). A pie has no series legend, so
+                    // it would otherwise show no indication of what's being measured -
+                    // show the value column (e.g. "Ledger Balance") up top instead.
+                    string pieTitle = PrettifyKey(valueCols[0]);
+                    return ChartSvgBuilder.BuildPieChart(pieTitle, labels, pieValues, width, height);
 
                 case "bar":
                     return ChartSvgBuilder.BuildBarChart(title, labels, valueCols.Select(vc => new ChartSvgBuilder.Series

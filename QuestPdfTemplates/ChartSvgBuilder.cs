@@ -37,6 +37,14 @@ namespace TradeWeb.API.QuestPdfTemplates
             public double[] Values;
         }
 
+        // Slices thinner than this share of the pie get their percentage pulled outside
+        // the circle on a leader line instead of stamped on the slice - below this an
+        // arc is too narrow for the on-slice text to fit without overlapping its
+        // neighbours (the case a 10-slice pie with several small categories hits).
+        // Was 7 - still let some borderline slices keep their on-slice label crammed
+        // against its neighbours, so widened to catch more of them.
+        private const double SmallSliceThresholdPct = 10.0;
+
         public static string BuildPieChart(string title, string[] labels, double[] values, float width, float height)
         {
             List<double[]> seriesValues;
@@ -48,16 +56,6 @@ namespace TradeWeb.API.QuestPdfTemplates
             sb.Append(TitleText(title, width));
 
             double total = values.Sum();
-            float legendTop = height - LegendHeight(labels, width - 20);
-            float chartAreaTop = 20;
-            // A floor keeps the pie from collapsing to a near-zero/negative radius (a
-            // garbled sliver of overlapping paths) when a long legend - many client names,
-            // each forced onto its own row in a narrow chart - eats nearly the whole
-            // height. A cramped legend is far more readable than a broken pie.
-            const float minRadius = 22f;
-            float radius = Math.Max(minRadius, Math.Min(width * 0.28f, (legendTop - chartAreaTop) / 2f - 4));
-            float cx = width / 2f;
-            float cy = chartAreaTop + radius + 4;
 
             if (total <= 0 || labels.Length == 0)
             {
@@ -66,13 +64,36 @@ namespace TradeWeb.API.QuestPdfTemplates
                 return sb.ToString();
             }
 
+            bool hasSmallSlice = values.Any(v => v > 0 && v / total * 100 < SmallSliceThresholdPct);
+
+            // The legend is the one place every slice's percentage is guaranteed to show
+            // (small slices' on-slice text moves to a callout, big slices' stays on the
+            // slice) - folding it into "Name (12.3%)" here means the reader never has to
+            // cross-reference a slice's colour back to a number shown somewhere else.
+            var legendLabels = labels.Select((l, i) => $"{Truncate(l, PieLegendNameMaxChars)} ({F1(values[i] / total * 100)}%)").ToArray();
+
+            float legendTop = height - LegendHeight(legendLabels, width - 20, PieLegendEntryMaxChars);
+            float chartAreaTop = 20;
+            // A floor keeps the pie from collapsing to a near-zero/negative radius (a
+            // garbled sliver of overlapping paths) when a long legend - many client names,
+            // each forced onto its own row in a narrow chart - eats nearly the whole
+            // height. A cramped legend is far more readable than a broken pie.
+            const float minRadius = 22f;
+            // Outside callout labels need horizontal clearance on both sides of the
+            // circle - reserve it in the radius so the leader line + text never runs
+            // off the edge of the chart.
+            float sideMargin = hasSmallSlice ? 48f : 0f;
+            float radius = Math.Max(minRadius, Math.Min(Math.Min(width * 0.28f, width / 2f - sideMargin), (legendTop - chartAreaTop) / 2f - 4));
+            float cx = width / 2f;
+            float cy = chartAreaTop + radius + 4;
+
             double angle = -90;
-            var midpoints = new List<(double x, double y, double pct)>();
+            var slices = new List<(double mid, double pct, bool small)>();
 
             for (int i = 0; i < labels.Length; i++)
             {
                 double slice = values[i] <= 0 ? 0 : (values[i] / total) * 360.0;
-                if (slice <= 0) { midpoints.Add((0, 0, 0)); continue; }
+                if (slice <= 0) { slices.Add((0, 0, false)); continue; }
 
                 double startAngle = angle;
                 double endAngle = angle + slice;
@@ -86,20 +107,99 @@ namespace TradeWeb.API.QuestPdfTemplates
 
                 sb.Append($"<path d=\"M {F(cx)},{F(cy)} L {F(x0)},{F(y0)} A {F(radius)},{F(radius)} 0 {largeArc} 1 {F(x1)},{F(y1)} Z\" fill=\"{color}\" stroke=\"white\" stroke-width=\"1\" />");
 
-                var (mx, my) = PointOnCircle(cx, cy, radius * 0.65f, midAngle);
-                midpoints.Add((mx, my, values[i] / total * 100));
+                double pct = values[i] / total * 100;
+                slices.Add((midAngle, pct, pct < SmallSliceThresholdPct));
             }
 
-            for (int i = 0; i < labels.Length; i++)
+            foreach (var s in slices)
             {
-                if (midpoints[i].pct <= 0) continue;
-                sb.Append($"<text x=\"{F(midpoints[i].x)}\" y=\"{F(midpoints[i].y)}\" font-size=\"7\" font-weight=\"bold\" fill=\"white\" text-anchor=\"middle\" dominant-baseline=\"middle\">{F1(midpoints[i].pct)}%</text>");
+                if (s.pct <= 0 || s.small) continue;
+                var (mx, my) = PointOnCircle(cx, cy, radius * 0.65f, s.mid);
+                sb.Append($"<text x=\"{F(mx)}\" y=\"{F(my)}\" font-size=\"7\" font-weight=\"bold\" fill=\"white\" text-anchor=\"middle\" dominant-baseline=\"middle\">{F1(s.pct)}%</text>");
             }
 
-            AppendBottomLegend(sb, labels, width, legendTop, width - 20);
+            // Callouts are free to use the whole band between the title and the legend -
+            // clamped to it below so a pie with several small slices stacks its labels
+            // into that space instead of running down past the legend's own text.
+            float calloutTop = chartAreaTop - 6f;
+            float calloutBottom = legendTop - 4f;
+            AppendCalloutLabels(sb, slices, cx, cy, radius, calloutTop, calloutBottom);
+
+            AppendBottomLegend(sb, legendLabels, width, legendTop, width - 20, PieLegendEntryMaxChars);
 
             sb.Append("</svg>");
             return sb.ToString();
+        }
+
+        private const float CalloutMinGap = 8f;
+        private const float CalloutElbowOffset = 6f;
+        private const float CalloutLegLength = 12f;
+
+        // Draws percentage labels for thin slices outside the circle, each linked back
+        // to its slice by a bent leader line - mirrors how Highcharts/ApexCharts handle
+        // pie data labels that don't fit on the slice itself.
+        private static void AppendCalloutLabels(StringBuilder sb, List<(double mid, double pct, bool small)> slices, float cx, float cy, float radius, float top, float bottom)
+        {
+            var left = new List<(float y, double pct, double mid)>();
+            var right = new List<(float y, double pct, double mid)>();
+
+            foreach (var s in slices)
+            {
+                if (s.pct <= 0 || !s.small) continue;
+                var (ex, ey) = PointOnCircle(cx, cy, radius, s.mid);
+                (ex >= cx ? right : left).Add((ey, s.pct, s.mid));
+            }
+
+            AppendCalloutSide(sb, left, cx, cy, radius, top, bottom, isRight: false);
+            AppendCalloutSide(sb, right, cx, cy, radius, top, bottom, isRight: true);
+        }
+
+        private static void AppendCalloutSide(StringBuilder sb, List<(float y, double pct, double mid)> items, float cx, float cy, float radius, float top, float bottom, bool isRight)
+        {
+            if (items.Count == 0) return;
+            items.Sort((a, b) => a.y.CompareTo(b.y));
+
+            // Spread stacked labels vertically so consecutive callouts on the same side
+            // don't sit on top of each other - a top-down push against the previous
+            // label's position, ...
+            var ys = new float[items.Count];
+            ys[0] = items[0].y;
+            for (int i = 1; i < items.Count; i++)
+                ys[i] = Math.Max(items[i].y, ys[i - 1] + CalloutMinGap);
+
+            // ... then pulled back up if that push ran the last label past the legend -
+            // this is what actually keeps a many-small-slice pie's callouts from
+            // overlapping the legend text below it.
+            if (ys[ys.Length - 1] > bottom)
+            {
+                ys[ys.Length - 1] = bottom;
+                for (int i = ys.Length - 2; i >= 0; i--)
+                    ys[i] = Math.Min(ys[i], ys[i + 1] - CalloutMinGap);
+            }
+
+            // If there are still more labels than the band can hold at MinGap even after
+            // that (e.g. a great many small slices on one side), fall back to spacing
+            // them evenly across the whole band - tighter gaps, but never off the edges.
+            if (ys[0] < top)
+            {
+                float step = items.Count > 1 ? (bottom - top) / (items.Count - 1) : 0;
+                for (int i = 0; i < ys.Length; i++)
+                    ys[i] = top + step * i;
+            }
+
+            float columnX = isRight ? cx + radius + CalloutElbowOffset + CalloutLegLength : cx - radius - CalloutElbowOffset - CalloutLegLength;
+            string anchor = isRight ? "start" : "end";
+            float textX = isRight ? columnX + 2 : columnX - 2;
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                var (edgeX, edgeY) = PointOnCircle(cx, cy, radius, items[i].mid);
+                var (bendX, bendY) = PointOnCircle(cx, cy, radius + CalloutElbowOffset, items[i].mid);
+                float labelY = ys[i];
+
+                sb.Append($"<polyline points=\"{F(edgeX)},{F(edgeY)} {F(bendX)},{F(bendY)} {F(columnX)},{F(labelY)}\" fill=\"none\" stroke=\"{AxisTextColor}\" stroke-width=\"0.5\" />");
+                sb.Append($"<text x=\"{F(textX)}\" y=\"{F(labelY + 2.5f)}\" font-size=\"6.5\" fill=\"{AxisTextColor}\" text-anchor=\"{anchor}\">{F1(items[i].pct)}%</text>");
+            }
         }
 
         public static string BuildBarChart(string title, string[] categories, List<Series> series, float width, float height)
@@ -275,15 +375,21 @@ namespace TradeWeb.API.QuestPdfTemplates
         // own row - a legend with many entries then ate nearly the whole chart height
         // (collapsing a pie's radius to near zero). Shorter entries fit 2+ per row.
         private const int LegendEntryMaxChars = 16;
+        // Pie legend entries carry a "Name (12.3%)" suffix on top of the name (see
+        // BuildPieChart) - the name itself is already shortened to PieLegendNameMaxChars
+        // before the suffix is appended, so this just needs to be long enough not to
+        // re-truncate that combined string.
+        private const int PieLegendEntryMaxChars = 24;
+        private const int PieLegendNameMaxChars = 12;
 
-        private static void AppendBottomLegend(StringBuilder sb, string[] labels, float width, float top, float maxWidth)
+        private static void AppendBottomLegend(StringBuilder sb, string[] labels, float width, float top, float maxWidth, int maxChars = LegendEntryMaxChars)
         {
             float x = 10;
             float y = top + 10;
 
             for (int i = 0; i < labels.Length; i++)
             {
-                string entry = Truncate(labels[i], LegendEntryMaxChars);
+                string entry = Truncate(labels[i], maxChars);
                 float entryWidth = 12 + entry.Length * 3.6f + 12;
 
                 if (x + entryWidth > maxWidth)
@@ -304,14 +410,14 @@ namespace TradeWeb.API.QuestPdfTemplates
         // caller can reserve exactly that much vertical space instead of a fixed
         // allowance that clips whenever a legend needs more than one row (which any
         // multi-series bar/line chart's legend, or a many-slice pie's, easily does).
-        private static float LegendHeight(string[] labels, float maxWidth)
+        private static float LegendHeight(string[] labels, float maxWidth, int maxChars = LegendEntryMaxChars)
         {
             float x = 10;
             int rows = 1;
 
             foreach (var label in labels)
             {
-                string entry = Truncate(label, LegendEntryMaxChars);
+                string entry = Truncate(label, maxChars);
                 float entryWidth = 12 + entry.Length * 3.6f + 12;
 
                 if (x + entryWidth > maxWidth)
