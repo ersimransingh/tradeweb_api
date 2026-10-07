@@ -26701,7 +26701,7 @@ SELECT @DPID AS CompanyCode, @CompanyName AS CompanyName, CompanyLogo = @strBase
             try
             {
                 string baseDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Typst");
-                string logoPath = Path.Combine(baseDir, "CompanyLogo.png");
+                string logoPath = Path.Combine(baseDir, "Assets", "CompanyLogo.png");
                 string headerImagePath = string.Empty;
 
                 objUtility.TypstCreateCompanyLogo(baseDir);
@@ -26749,7 +26749,7 @@ SELECT @DPID AS CompanyCode, @CompanyName AS CompanyName, CompanyLogo = @strBase
             try
             {
                 string baseDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Typst");
-                string logoPath = Path.Combine(baseDir, "CompanyLogo.png");
+                string logoPath = Path.Combine(baseDir, "Assets", "CompanyLogo.png");
                 string headerImagePath = string.Empty;
 
                 objUtility.TypstCreateCompanyLogo(baseDir);

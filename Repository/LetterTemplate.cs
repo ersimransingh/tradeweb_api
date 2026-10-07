@@ -22,6 +22,17 @@ namespace TradeWeb.API.Repository
 
         public DocumentMetadata GetMetadata() => DocumentMetadata.Default;
 
+        private static byte[] LoadImage(string path)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                    return File.ReadAllBytes(path);
+            }
+            catch { /* ignore image errors */ }
+            return null;
+        }
+
         public DocumentSettings GetSettings()
         {
             return DocumentSettings.Default;
@@ -42,41 +53,30 @@ namespace TradeWeb.API.Repository
 
                         // Logo and Company name + address
                         column.Item().Row(row =>
+                        {
+                            var headerImageBytes = LoadImage(headerImagePath);
+                            var logoImageBytes = LoadImage(logoPath);
+
+                            if (logoImageBytes != null)
                             {
-                                if (!string.IsNullOrWhiteSpace(headerImagePath))
+                                row.ConstantItem(80).Height(50).Image(logoImageBytes).FitArea();
+                            }
+
+                            if (headerImageBytes != null)
+                            {
+                                // Letterhead banner beside the logo (8pt gutter after the logo box)
+                                row.RelativeItem().Element(container =>
                                 {
-                                    try
-                                    {
-                                        if (File.Exists(headerImagePath))
-                                        {
-                                            var imageBytes = File.ReadAllBytes(headerImagePath);
-                                            //row.ConstantItem(200).Height(90).Image(imageBytes).FitArea();
-                                            row.AutoItem().Element(container =>
-                                            {
-                                                container
-                                                    .MaxWidth(490)
-                                                    .MaxHeight(105)
-                                                    .Image(imageBytes);
-                                            });
-                                        }
-                                    }
-                                    catch { /* ignore image errors */ }
-                                }
-                                else
-                                {
-                                    if (!string.IsNullOrWhiteSpace(logoPath))
-                                    {
-                                        try
-                                        {
-                                            if (File.Exists(logoPath))
-                                            {
-                                                var imageBytes = File.ReadAllBytes(logoPath);
-                                                row.ConstantItem(80).Height(50).Image(imageBytes).FitArea();
-                                            }
-                                        }
-                                        catch { /* ignore image errors */ }
-                                    }
-                                    // CENTER: Company Details
+                                    container
+                                        .PaddingLeft(8)
+                                        .MaxWidth(490)
+                                        .MaxHeight(105)
+                                        .Image(headerImageBytes);
+                                });
+                            }
+                            else
+                            {
+                                // CENTER: Company Details
                                     row.RelativeItem().Column(col =>
                                     {
                                         col.Item().AlignCenter()
