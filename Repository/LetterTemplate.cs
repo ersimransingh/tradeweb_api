@@ -86,8 +86,10 @@ namespace TradeWeb.API.Repository
                                         col.Item().AlignCenter().Text(_data.Address1).FontSize(10);
                                         col.Item().AlignCenter().Text(_data.Address2).FontSize(10);
                                         col.Item().AlignCenter().Text(_data.Address3).FontSize(10);
-                                        col.Item().AlignCenter().Text(_data.CINNo).FontSize(10);
-                                        col.Item().AlignCenter().Text(_data.ReportName).FontSize(10).SemiBold();
+                                        if (!string.IsNullOrWhiteSpace(_data.CINNo))
+                                            col.Item().AlignCenter().Text(_data.CINNo).FontSize(10);
+                                        if (!string.IsNullOrWhiteSpace(_data.ReportName))
+                                            col.Item().AlignCenter().Text(_data.ReportName).FontSize(10).SemiBold();
                                     });
                                     // RIGHT EMPTY SPACE (for balance)
                                     row.ConstantItem(80);
@@ -105,9 +107,12 @@ namespace TradeWeb.API.Repository
                     {
                         text.Line("To,");
                         text.Line(_data.Client + "[" + _data.ClientCode + "]");
-                        text.Line(_data.ClientAddress1);
-                        text.Line(_data.ClientAddress2);
-                        text.Line(_data.ClientAddress3);
+                        if (!string.IsNullOrWhiteSpace(_data.ClientAddress1))
+                            text.Line(_data.ClientAddress1);
+                        if (!string.IsNullOrWhiteSpace(_data.ClientAddress2))
+                            text.Line(_data.ClientAddress2);
+                        if (!string.IsNullOrWhiteSpace(_data.ClientAddress3))
+                            text.Line(_data.ClientAddress3);
                         text.Line("Pin: " + _data.Clientpin);
                         text.Line("Mobile: " + _data.Telephone);
                     });
@@ -117,17 +122,23 @@ namespace TradeWeb.API.Repository
 
                     column.Item().PaddingTop(10).Text(text =>
                     {
-                        text.Line(_data.HeaderText);
-                        text.Line("");
-                        text.Line("");
-                        text.Line("");
+                        if (!string.IsNullOrWhiteSpace(_data.HeaderText))
+                        {
+                            text.Line(_data.HeaderText);
+                            text.Line("");
+                            text.Line("");
+                            text.Line("");
+                        }
                         text.Line(_data.BodyText);
                     });
 
-                    column.Item().PaddingTop(25).Text(text =>
+                    if (!string.IsNullOrWhiteSpace(_data.FooterText))
                     {
-                        text.Line(_data.FooterText);
-                    });
+                        column.Item().PaddingTop(25).Text(text =>
+                        {
+                            text.Line(_data.FooterText);
+                        });
+                    }
                 });
 
                 // ================= FOOTER =================
