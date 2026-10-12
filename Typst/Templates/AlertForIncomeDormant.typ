@@ -66,19 +66,18 @@
           #companyJson.Address2 \
           #companyJson.Address3 \
           Pin: #companyJson.Clientpin \
-          Mobile: #companyJson.Telephone \   \
-		 \
+          Mobile: #companyJson.Telephone \
         ],
 		
       )
 	  
 	  v(10pt)
 	  //// Subject line
-	  text(rs1Dat1.Subject)
-	  
+	  text(rs1Dat1.Subject.trim())
+
 	  v(13pt)
-	  /////// Main text 
-	  text(rs1Dat1.HeaderText)
+	  /////// Main text
+	  text(rs1Dat1.HeaderText.trim())
 	  
 	   //v(10pt)
 	   
@@ -87,7 +86,7 @@
 	   v(10pt)
 	   
 	   
-	   text(rs1Dat1.BodyText)
+	   text(rs1Dat1.BodyText.trim())
 	  
 	   v(10pt)
 	   
@@ -96,7 +95,7 @@
 
 	   v(15pt)
 	   
-	   text(rs1Dat1.FooterText)
+	   text(rs1Dat1.FooterText.trim())
 	   
 	  	   
   }
