@@ -21,6 +21,8 @@ using TradeWeb.API.Repository;
 using AspNetCoreRateLimit;
 using TradeWeb.API.Controllers;
 using Microsoft.AspNetCore.HttpOverrides;
+using TradeWeb.API.Filters;
+using TradeWeb.API.Helpers;
 using TradeWeb.API.QuestPdfServicesClass;
 
 namespace TradeWeb.API
@@ -70,7 +72,9 @@ namespace TradeWeb.API
             services.AddScoped<IEstroNetRepository, EstroNetRepository>();
             services.AddScoped<IWhatsAppRepository, WhatsAppRepository>();
             services.AddSingleton<TokenStore>();
+            services.AddSingleton<E2EKeyService>();
             services.AddScoped<MainController.EncryptResponseAttribute>();
+            services.AddScoped<E2EDecryptFilter>();
             services.AddScoped<QuestPdfServiceClass>();
             services.AddScoped<ClientFundLedgerQuestService>();
             //services.AddScoped<ValidateUser>();
@@ -176,7 +180,8 @@ namespace TradeWeb.API
                     {
                         builder.WithOrigins(orginAllowed.Split(","))
                                .AllowAnyMethod()
-                               .AllowAnyHeader();
+                               .AllowAnyHeader()
+                               .WithExposedHeaders(E2EEncryptionHelper.PublicKeyHeader);
                         // .AllowCredentials(); // only if you're sending cookies or auth headers
                     });
                     //options.AddDefaultPolicy(builder =>
@@ -193,7 +198,8 @@ namespace TradeWeb.API
                          builder.SetIsOriginAllowed(_ => true)
                         .AllowAnyOrigin()
                         .AllowAnyMethod()
-                        .AllowAnyHeader());
+                        .AllowAnyHeader()
+                        .WithExposedHeaders(E2EEncryptionHelper.PublicKeyHeader));
                 });
             }
             services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
