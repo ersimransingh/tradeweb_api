@@ -18,6 +18,7 @@ namespace TradeWeb.API
                 .ConfigureWebHostDefaults(webBuilder =>
                 {
                     webBuilder.UseStartup<Startup>();
+                    webBuilder.ConfigureKestrel(options => options.AddServerHeader = false); //// Server version disclosure
                     ReadWriteFile();
                 });
 

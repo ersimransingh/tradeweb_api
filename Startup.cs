@@ -27,12 +27,14 @@ namespace TradeWeb.API
 {
     public class Startup
     {
-        public Startup(IConfiguration configuration)
+        public Startup(IConfiguration configuration, IWebHostEnvironment environment)
         {
             Configuration = configuration;
+            Environment = environment;
         }
 
         public IConfiguration Configuration { get; }
+        public IWebHostEnvironment Environment { get; }
 
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
@@ -185,7 +187,7 @@ namespace TradeWeb.API
                     //    .AllowAnyHeader());
                 });
             }
-            else
+            else if (Environment.IsDevelopment())
             {
                 services.AddCors(options =>
                 {
@@ -194,6 +196,14 @@ namespace TradeWeb.API
                         .AllowAnyOrigin()
                         .AllowAnyMethod()
                         .AllowAnyHeader());
+                });
+            }
+            else
+            {
+                //// No OriginAllowed configured: allow no cross-origin callers (VAPT - no Access-Control-Allow-Origin: *)
+                services.AddCors(options =>
+                {
+                    options.AddPolicy("AllowBackOffice", builder => { });
                 });
             }
             services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -220,17 +230,30 @@ namespace TradeWeb.API
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
         {
             app.UseForwardedHeaders();
+            //// Security headers first so every response (static files, 401, 429, CORS preflight) carries them
+            app.Use(async (context, next) =>
+            {
+                context.Response.Headers["X-XSS-Protection"] = "0";
+                context.Response.Headers["X-Frame-Options"] = "DENY";
+                context.Response.Headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'";
+                context.Response.Headers["Referrer-Policy"] = "no-referrer";
+                context.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+                context.Response.Headers["Cross-Origin-Opener-Policy"] = "same-origin";
+                context.Response.Headers["Cross-Origin-Resource-Policy"] = "same-origin";
+                context.Response.Headers["X-Permitted-Cross-Domain-Policies"] = "none";
+                await next.Invoke();
+            });
             if (env.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
+                app.UseSwagger();
+                app.UseSwaggerUI(c =>
+                {
+                    c.SwaggerEndpoint("../swagger/v1/swagger.json", "TradeWeb.API V1");
+                });
             }
             app.UseStaticFiles();
             app.UseIpRateLimiting();
-            app.UseSwagger();
-            app.UseSwaggerUI(c =>
-            {
-                c.SwaggerEndpoint("../swagger/v1/swagger.json", "TradeWeb.API V1");
-            });
             app.UseRouting();
 
             //app.UseCors(); //// Allowing CORS policy
@@ -241,14 +264,6 @@ namespace TradeWeb.API
             app.UseSession();
             app.Use(async (context, next) =>
             {
-                context.Response.Headers.Add("X-XSS-Protection", "1; mode = block"); //// ClickJacking 
-                context.Response.Headers.Add("X-Frame-Options", "DENY");  //// Missing securing Headers
-                //context.Response.Headers.Add("X-Content-Type-Options", "nosniff");
-                context.Response.Headers.Add("Content-Security-Policy", "default-src 'self'");
-                context.Response.Headers.Add("Referrer-Policy", "no-referrer");
-                context.Response.Headers.Add("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-                context.Response.Headers.Add("Server", "unknown"); //// Server version desclosure
-                context.Response.Headers.Add("Feature-Policy", "accelerometer 'none'; camera 'none'; microphone 'none';");
                 context.Request.Headers.Remove("Origin");
                 if (context.Request.Method == "OPTIONS") //// Option method desable
                 {
