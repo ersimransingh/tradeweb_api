@@ -8895,7 +8895,7 @@ BEGIN
 		cc_DateofBirth+'|'+cc_Gender+'|'+cc_MaritialStatus+'|'+NATIONALITY+'|'+ResidentialStatus+'|'+DifferentlyAbledstatusFlag+'|'+
 		Typeofimpairment+'|'+CAST(Percentageofimpairment AS VARCHAR)+'|'+UDIDnumber+'|||'+PANNO+'|'+AadhaarNo+'|||||||||'+
 		PhotoFileName+'|'+IDProofFileName+'|'+AddressProofFileName+'|'+cc_Caddress1+'|'+cc_Address2+'|'+cc_address3+'|'+
-		cc_AddressCity+'|'+cc_AddressDistrict+'|'+cc_AddressState+'|'+cc_AddressCountry+'|'+cc_AddressPINCode+'|'+
+		cc_AddressCity+'|'+cc_AddressDistrict+'|'+cc_AddressPINCode+'|'+cc_AddressState+'|'+cc_AddressCountry+'|'+
 		AddressProofType+'|'+AddressSameas+'||||||||||||||+91|'+cc_MobileNo+'|||'+cc_Cemail+'|'+CONVERT(VARCHAR,GETDATE(),105)+'|'+cc_AddressCity+'|'+
 		CONVERT(VARCHAR,GETDATE(),105)+'|01|'+LTRIM(RTRIM(ISNULL(@um_user_name,'')))+'|'+ISNULL(@um_designation,'')+'|'+LTRIM(RTRIM(ISNULL(@cx_VerifyBy,'')))+'|'+
 		ISNULL(@um_empCode,'')+'|'+@strCKYCCOMPNAME+'|'+@strCKYCFINO+'|'+cc_DIN+'||||||'
@@ -8917,7 +8917,7 @@ BEGIN
 	    REVERSE(LEFT(REVERSE(cc_FatherSpouseName), CHARINDEX(' ', REVERSE(cc_FatherSpouseName)) - 1)), ''))) END))), 
 	    FatherSpouseLastName = ltrim(rtrim((CASE WHEN CHARINDEX(' ', cc_FatherSpouseName) > 0 THEN REVERSE(LEFT(REVERSE(cc_FatherSpouseName), 
 	    CHARINDEX(' ', REVERSE(cc_FatherSpouseName)) - 1)) ELSE '' END))), 
-	    cc_DateofBirth = convert(VARCHAR,cc_DateofBirth,105), cc_Gender,  cc_MaritialStatus, NATIONALITY ='IN',
+	    cc_DateofBirth = convert(VARCHAR,CAST(cc_DateofBirth AS DATE),105), cc_Gender,  cc_MaritialStatus, NATIONALITY ='IN',
         ResidentialStatus ='01',  DifferentlyAbledstatusFlag = CAST(case when cc_DifferentlyAbledstatusFlag = 'Y' THEN 1 ELSE 0 END AS VARCHAR),
         Typeofimpairment = cc_Typeofimpairment, Percentageofimpairment = cc_Percentageofimpairment,
         UDIDnumber = REPLICATE('X', LEN(cc_UID)-4) + RIGHT(cc_UID, 4), PANNO=cc_Cpanno, 
@@ -9755,7 +9755,7 @@ BEGIN
     SELECT ma_cmcd = LTRIM(RTRIM(ma_cmcd)), 
     [FILENAME] = REPLACE(replace(substring(CASE WHEN isnull(DocumentName,'') = '' THEN ma_filename ELSE DocumentName END  ,1,15),' ',''),'/','')+'_'+
     CAST(ma_srno AS VARCHAR),
-    ISNULL(CKycIDCode,'Z') as IDProof, ISNULL(CKycAddressCode,'99') as AddressProof, ISNULL(CKYCDocCode,'98') As DocumentCode,  DocNo = (CASE WHEN DocumentName LIKE '%PAN%' THEN 
+    ISNULL(KRAIDCode,'Z') as IDProof, ISNULL(KRAAddressCode,'99') as AddressProof, ISNULL(CKYCDocCode,'98') As DocumentCode,  DocNo = (CASE WHEN DocumentName LIKE '%PAN%' THEN 
     ISNULL((SELECT CM_PANNO FROM CLIENT_MASTER(NOLOCK) WHERE CM_cD = XX.ma_cmcd), XX.DocumentNo)
     WHEN DocumentName LIKE '%Aadhaar%' THEN ISNULL((SELECT CM_uid FROM CLIENT_info(NOLOCK) WHERE CM2_cD = XX.ma_cmcd),XX.DocumentNo) else XX.DocumentNo end), 
     ProofType FROM Client_ModifyAttach(NOLOCK) xx LEFT OUTER JOIN tbl_DocumentKRACKYCMapping(NOLOCK) 

@@ -128,8 +128,8 @@ namespace TradeWeb.API.Models
         public string UserId { get; set; }
         public string UserType { get; set; }
         public string UserAccess { get; set; }
-
         private string _secretKey = "";
+
         public string SecretKey
         {
             get => _secretKey;
@@ -254,6 +254,10 @@ namespace TradeWeb.API.Models
         public string Body { get; set; }
         public byte[] Document { get; set; }
         public string FileName { get; set; }
+        public string CCEmail { get; set; }
+        public string BCCEmail { get; set; }
+        public string FilePassword { get; set; }
+        public byte[] FinalDocument { get; set; }
     }
 
     public class DigitalSendEmailRequest
@@ -272,5 +276,124 @@ namespace TradeWeb.API.Models
         public string code { get; set; }
         public string description { get; set; }
         public object result { get; set; }
+    }
+
+    public class EncryptDecryptEPIRequest
+    {
+        public string key { get; set; }
+        public string mode { get; set; }
+        public dynamic payload { get; set; }
+    }
+
+    public class SMTPSettings
+    {
+        public string Email { get; set; }
+        public string Server { get; set; }
+        public string Port { get; set; }
+        public string User { get; set; }
+        public string Password { get; set; }
+        public string CCMail { get; set; }
+        public string BCCEmail { get; set; }
+        public string SSL { get; set; }
+    }
+
+    public class PostEmail
+    {
+        public class Attachment
+        {
+            public string name { get; set; }
+            public string content { get; set; }
+        }
+
+        public class Attributes
+        {
+            public string LEAD { get; set; }
+            public string BAND { get; set; }
+        }
+
+        public class Bcc
+        {
+            public string email { get; set; }
+        }
+
+        public class Cc
+        {
+            public string email { get; set; }
+        }
+
+        public class Content
+        {
+            public string type { get; set; }
+            public string value { get; set; }
+        }
+
+        public class From
+        {
+            public string email { get; set; }
+            public string name { get; set; }
+        }
+
+        public class Personalization
+        {
+            public Attributes attributes { get; set; }
+            public List<To> to { get; set; }
+            public List<Cc> cc { get; set; }
+            public List<Bcc> bcc { get; set; }
+            public string token_to { get; set; }
+            public string token_cc { get; set; }
+            public string token_bcc { get; set; }
+            public List<Attachment> attachments { get; set; }
+        }
+
+        public class EmailReq
+        {
+            public From from { get; set; }
+            public string reply_to { get; set; }
+            public string subject { get; set; }
+            public int template_id { get; set; }
+            public List<string> tags { get; set; }
+            public List<Content> content { get; set; }
+            public List<Attachment> attachments { get; set; }
+            public List<Personalization> personalizations { get; set; }
+            public Settings settings { get; set; }
+            public List<Bcc> bcc { get; set; }
+            public int schedule { get; set; }
+        }
+
+        public class Settings
+        {
+            public bool open_track { get; set; }
+            public bool click_track { get; set; }
+            public bool unsubscribe_track { get; set; }
+            public string ip_pool { get; set; }
+        }
+
+        public class To
+        {
+            public string email { get; set; }
+            public string name { get; set; }
+        }
+    }
+
+    public class NameMatchRequest
+    {
+        public string Name1 { get; set; }
+        public string Name2 { get; set; }
+    }
+
+    public class NameMatchResult
+    {
+        public double TokenSortRatio { get; set; }
+        public double TokenSetRatio { get; set; }
+        public double JaroWinkler { get; set; }
+        public double FinalScore { get; set; }
+        public string MatchStatus { get; set; }
+        public string Status { get; set; }
+    }
+
+    public class ValidatePDF
+    {
+        public string clientCode { get; set; }
+        public string refNo { get; set; }
     }
 }

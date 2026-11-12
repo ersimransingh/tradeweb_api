@@ -1,10 +1,13 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using iTextSharp.text.pdf;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using QuestPDF.Fluent;
+using QuestPDF.Infrastructure;
 using Renci.SshNet;
 using System;
 using System.Collections.Generic;
@@ -16,6 +19,8 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Security;
+using System.Security.Authentication;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -23,8 +28,11 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using TradeWeb.API.Logs;
 using TradeWeb.API.Models;
+using TradeWeb.API.QuestPdfTemplates;
 using TradeWeb.API.Repository;
 using TradeWeb.API.Service;
+
+//using TradeWeb.API.Service;
 using TradeWeb.Service;
 
 namespace TradeWeb.API.Controllers
@@ -38,7 +46,7 @@ namespace TradeWeb.API.Controllers
         private readonly ITradeWebRepository _tradewebRepo;
         private readonly ILogger<ThirdPartyServiceController> _logger;
 
-        ThirdPartyServiceDAO dao = new ThirdPartyServiceDAO();
+        //ThirdPartyServiceDAO dao = new ThirdPartyServiceDAO();
         ConvertData returnJson = new ConvertData();
         DataTable retrunDt = new DataTable();
 
@@ -223,7 +231,7 @@ namespace TradeWeb.API.Controllers
                         #region Insert Service Response in tbl_GenericAPILog
 
                         LogInfo.WriteErrorLog("Soap Result ::::@ " + outPut.ToString());
-                        dao.InsertThirdPartyServiceData(fModel, JsonString, outPut == null ? "" : outPut.ToString());
+                        _objUtility.InsertThirdPartyServiceData(fModel, JsonString, outPut == null ? "" : outPut.ToString()); //changeit
                         #endregion
                     }
                 }
@@ -267,6 +275,7 @@ namespace TradeWeb.API.Controllers
 
                 using (var httpClient = new HttpClient())
                 {
+                    httpClient.DefaultRequestHeaders.ExpectContinue = true;
                     using (var request = new HttpRequestMessage(new HttpMethod(apiCallingType), url))
                     {
                         if (authKey != "")
@@ -316,8 +325,12 @@ namespace TradeWeb.API.Controllers
                         #endregion
 
                         request.Content = multipartContent;
-                        ServicePointManager.Expect100Continue = true;
-                        System.Net.ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls12;
+                        //ServicePointManager.Expect100Continue = true;
+                        //System.Net.ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls12;
+                        var handler = new HttpClientHandler
+                        {
+                            SslProtocols = SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12
+                        };
                         var response = httpClient.SendAsync(request).Result;
                         string content = "";
                         if (!response.IsSuccessStatusCode)
@@ -347,7 +360,7 @@ namespace TradeWeb.API.Controllers
                                 return Ok(outPut);
                             }
                         }
-                        catch (JsonReaderException jex)
+                        catch (JsonReaderException)
                         {
                             outPut = content;
                             return Ok(outPut);
@@ -394,8 +407,8 @@ namespace TradeWeb.API.Controllers
             {
                 #region Insert Service Response in tbl_GenericAPILog
 
-                ThirdPartyServiceDAO dao = new ThirdPartyServiceDAO();
-                dao.InsertThirdPartyServiceData(fModel, JsonString, outPut == null ? "" : outPut.ToString());
+                //ThirdPartyServiceDAO dao = new ThirdPartyServiceDAO();
+                _objUtility.InsertThirdPartyServiceData(fModel, JsonString, outPut == null ? "" : outPut.ToString()); //changeit
                 #endregion
             }
         }
@@ -651,7 +664,7 @@ namespace TradeWeb.API.Controllers
                         fModel.ProjectName = "REKYC";
                         fModel.APIVendorName = "SFTP-File Upload";
                         string JsonString = JsonConvert.SerializeObject(request);
-                        dao.InsertThirdPartyServiceData(fModel, JsonString, ouputResp);
+                        _objUtility.InsertThirdPartyServiceData(fModel, JsonString, ouputResp); //changeit
                     }
                 }
                 return Ok("File uploaded successfully.");
@@ -722,7 +735,7 @@ namespace TradeWeb.API.Controllers
                         fModel.ProjectName = "REKYC";
                         fModel.APIVendorName = "SFTP-File Download";
                         string JsonString = JsonConvert.SerializeObject(request);
-                        dao.InsertThirdPartyServiceData(fModel, JsonString, ouputResp);
+                        _objUtility.InsertThirdPartyServiceData(fModel, JsonString, ouputResp); //changeit
                     }
                 }
             }
@@ -781,7 +794,7 @@ namespace TradeWeb.API.Controllers
         public IActionResult SendOTP([FromBody] SendOTP request)
         {
             string chars1 = "1234567890", finalResponse = "";
-            bool mobOtp = false, emailOtp = false, smsLogs = false, emailLogs = false;
+            bool mobOtp = false, emailOtp = false, smsLogs = false; //emailLogs = false
             char[] stringChars1 = new char[4];
 
             Random random1 = new Random();
@@ -1043,95 +1056,6 @@ namespace TradeWeb.API.Controllers
             }
         }
 
-        [HttpPost("ReadAndImportCSV", Name = "ReadAndImportCSV")]
-        public IActionResult ReadAndImportCSV(ReadAndImportCSVModel request)
-        {
-            try
-            {
-                //string baseDir = AppDomain.CurrentDomain.BaseDirectory + "ImportFileCSV";
-                //string csvPath = Path.Combine(baseDir, "xxxx_0_ADJUSTED_POSITIONS.CSV");
-
-                string baseDir = request.folderName;
-                string csvFilePath = Path.Combine(baseDir, request.fileName);
-                if (!System.IO.Directory.Exists(baseDir))
-                {
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "Root folder not found", ""));
-                }
-                else if (!System.IO.File.Exists(csvFilePath))
-                {
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "File not found", ""));
-                }
-                //string[] files = Directory.GetFiles(baseDir);
-                //int fileCount = 0;
-                //foreach (string file in files)
-                //{
-                var result = new Dictionary<string, string>();
-                try
-                {
-                    string[] lines = System.IO.File.ReadAllLines(csvFilePath);
-
-                    if (lines.Length == 0)
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "File not found", ""));
-
-                    // Header
-                    result["Header"] = lines[0];
-
-                    // Data lines
-                    for (int i = 1; i < lines.Length; i++)
-                    {
-                        result[$"Line{i}"] = lines[i];
-                    }
-                    // Convert to JSON
-                    var jsonOptions = new JsonSerializerOptions
-                    {
-                        WriteIndented = true
-                    };
-
-                    var jsonObj = new
-                    {
-                        FileSeqNo = request.fileSeqNo,
-                        UserId = request.userId,
-                        BatchNo = request.batchNo,
-                        InputJson = result,
-                        X_Filter = new
-                        {
-                            ImportDate = request.importDate
-                        }
-                    };
-                    var json = System.Text.Json.JsonSerializer.Serialize(jsonObj, new JsonSerializerOptions
-                    {
-                        WriteIndented = true
-                    });
-
-                    //fileCount++;
-                    //ImportLargeFile(json);
-                    DataSet sp = _tradewebRepo.ImportLargeFileRepo(json);
-                    if (sp != null && sp.Tables.Count > 0 && sp.Tables[0].Rows.Count > 0)
-                    {
-                        string output = sp.Tables[0].Rows[0][0].ToString();
-                        if (output == "S")
-                        {
-                            return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", sp.Tables[0], ""));
-                        }
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", sp.Tables[0], ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "No record found", ""));
-                    }
-                    // }
-                }
-                catch (Exception e)
-                {
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "Error: while import file \n" + e.Message.ToString(), ""));
-                }
-
-            }
-            catch (Exception ex)
-            {
-                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "An error occurred during file processing. " + ex.Message.ToString(), ""));
-            }
-        }
 
         [HttpPost("ImportLargeFile", Name = "ImportLargeFile")]
         public IActionResult ImportLargeFile([FromBody] object request)
@@ -1170,80 +1094,321 @@ namespace TradeWeb.API.Controllers
             }
         }
 
-        [HttpPost("UpdateImportSeqFilter", Name = "UpdateImportSeqFilter")]
-        public IActionResult UpdateImportSeqFilter([FromBody] object request)
+        [HttpPost("EncryptDecryptEPI", Name = "EncryptDecryptEPI")]
+        public IActionResult EncryptDecryptEPI([FromBody] EncryptDecryptEPIRequest request)
         {
             try
             {
-                if (request == null)
+                var payload = request.payload.ToString().Trim();
+                var type = request.mode.ToString().Trim();
+                var key = request.key.ToString().Trim();
+                string strResponse = "";
+
+                if (type.Equals("encrypt", StringComparison.OrdinalIgnoreCase) || type.Equals("decrypt", StringComparison.OrdinalIgnoreCase))
                 {
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "Data should not be blank", ""));
-                }
-                else if (string.IsNullOrEmpty(request.ToString()) || request.ToString() == "string")
-                {
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "Data should not be blank", ""));
-                }
-                else
-                {
-                    DataSet sp = _tradewebRepo.UpdateImportSeqFilter(request);
-                    if (sp != null && sp.Tables.Count > 0 && sp.Tables[0].Rows.Count > 0)
+                    if (type.Equals("encrypt", StringComparison.OrdinalIgnoreCase))
                     {
-                        string output = sp.Tables[0].Rows[0][0].ToString();
-                        if (output == "S")
-                        {
-                            for (int i = 0; i < sp.Tables.Count; i++)
-                            {
-                                sp.Tables[i].TableName = "rs" + i;
-                            }
-                            return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", sp, ""));
-                        }
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", sp.Tables[0], ""));
+                        strResponse = _objUtility.Encrypt(payload, key);
                     }
                     else
                     {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "No record found", ""));
+                        strResponse = _objUtility.Decrypt(payload, key);
+                    }
+
+                    return Ok(new { message = "success", data = strResponse });
+                }
+                else
+                {
+                    return Ok(new { message = "Invalid type", data = "" });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Ok(new { message = "An error occurred during processing. " + ex.Message.ToString(), data = "" });
+            }
+        }
+
+        [HttpPost("Encrypt", Name = "Encrypt")]
+        public IActionResult Encrypt([FromBody] EncryptModel request)
+        {
+            try
+            {
+                var plaintext = request.PlainText.ToString().Trim();
+                var key = request.Key.ToString().Trim();
+                string strResponse = "";
+
+                strResponse = _objUtility.encryptIPO(plaintext, key);
+
+                //return Ok(strResponse);
+                return Ok(new { message = "success", data = strResponse });
+            }
+            catch (Exception ex)
+            {
+                //return Ok("Error in encryption" + ex.Message);
+                return Ok(new { message = "Error in encryption", data = ex.Message });
+            }
+        }
+
+        [HttpPost("GenerateDashboardPdf", Name = "GenerateDashboardPdf")]
+        public IActionResult GenerateDashboardPdf([FromBody] DashboardPdfRequest req)
+        {
+            try
+            {
+                if (req == null || req.Widgets == null || req.Widgets.Count == 0)
+                {
+                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "At least one widget is required.", ""));
+                }
+
+                QuestPDF.Settings.License = LicenseType.Community;
+                FontSetup.EnsureRegistered();
+
+                ApplyCompanyBranding((name, logo) =>
+                {
+                    if (!string.IsNullOrWhiteSpace(name)) req.CompanyName = name;
+                    if (!string.IsNullOrWhiteSpace(logo)) req.CompanyLogoBase64 = logo;
+                });
+
+                PopulateTabRows(req);
+
+                var document = new DashboardPdfDocument(req);
+
+                byte[] pdfBytes;
+                using (var ms = new MemoryStream())
+                {
+                    document.GeneratePdf(ms);
+                    pdfBytes = ms.ToArray();
+                }
+
+                string safeTitle = string.IsNullOrWhiteSpace(req.Title) ? "Dashboard" : req.Title;
+                foreach (char c in Path.GetInvalidFileNameChars())
+                    safeTitle = safeTitle.Replace(c, '_');
+
+                string pdfName = $"{safeTitle}.pdf";
+
+                if (string.Equals(req.Output, "file", StringComparison.OrdinalIgnoreCase))
+                    return File(pdfBytes, "application/pdf", pdfName);
+
+                var response = new PDFResponse
+                {
+                    PDFName = pdfName,
+                    Base64PDF = Convert.ToBase64String(pdfBytes)
+                };
+
+                return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", response, ""));
+            }
+            catch (Exception ex)
+            {
+                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "An error occurred during PDF generation. " + ex.Message, ""));
+            }
+        }
+
+        // Company name/logo always come from the DB (SP_InitializeLogin's branding lookup)
+        // rather than the caller, so the PDF header can't be spoofed by the request body.
+        // Best-effort: a DB hiccup falls back to whatever the caller supplied (if anything)
+        // instead of failing the whole PDF.
+        private void ApplyCompanyBranding(Action<string, string> apply)
+        {
+            try
+            {
+                var result = _tradewebRepo.GetCompanyBranding();
+                if (result is DataTable dt && dt.Rows.Count > 0)
+                {
+                    var row = dt.Rows[0];
+                    string companyName = dt.Columns.Contains("CompanyName") ? Convert.ToString(row["CompanyName"]) : "";
+                    string companyLogo = dt.Columns.Contains("CompanyLogo") ? Convert.ToString(row["CompanyLogo"]) : "";
+                    apply(companyName, companyLogo);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        // Replays each tab's DataApi server-side when the caller didn't supply Rows:
+        // same ActionName/Option -> stored procedure lookup (tbl_GenericAPIDefinition)
+        // the main TradeWeb endpoint uses, so a layout-only payload still gets tab data.
+        // Best-effort per tab: a failed tab renders "No data available" instead of
+        // failing the whole PDF.
+        private void PopulateTabRows(DashboardPdfRequest req)
+        {
+            foreach (var widget in req.Widgets ?? new List<DashboardWidget>())
+            {
+                if (!string.Equals(widget.Type, "tableWithGraph", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                foreach (var tab in widget.GridTabs ?? new List<GridTab>())
+                {
+                    // Opt-in, same as DashboardPdfDocument's own tab filter: a tab that
+                    // won't render in the PDF (Setting.ShowInPdf not explicitly true)
+                    // shouldn't have its stored procedure called at all.
+                    if (tab.Setting == null || tab.Setting.ShowInPdf != true)
+                        continue;
+
+                    if ((tab.Rows?.Count ?? 0) > 0)
+                        continue;
+
+                    var option = tab.DataApi?.JUi?.Option?.Trim();
+                    if (string.IsNullOrEmpty(option))
+                        continue;
+
+                    try
+                    {
+                        string actionName = tab.DataApi.JUi.ActionName?.Trim();
+                        if (string.IsNullOrEmpty(actionName))
+                            actionName = "TradeWeb";
+
+                        string userId = "";
+                        if (tab.DataApi.JApi != null && tab.DataApi.JApi.TryGetValue("UserId", out var u))
+                            userId = JsonValueToString(u);
+                        if (!string.IsNullOrWhiteSpace(req.UserId))
+                            userId = req.UserId.Trim();
+
+                        // Same dsXml shape the page posts to api/Main/TradeWeb.
+                        var sb = new StringBuilder();
+                        sb.Append("<dsXml>");
+                        sb.Append("<J_Ui>\"ActionName\":\"").Append(SecurityElement.Escape(actionName))
+                            .Append("\", \"Option\":\"").Append(SecurityElement.Escape(option)).Append("\"</J_Ui>");
+                        sb.Append("<Sql></Sql>");
+                        AppendFilterXml(sb, "X_Filter", tab.DataApi.XFilter);
+                        AppendFilterXml(sb, "X_Filter_Multiple", tab.DataApi.XFilterMultiple);
+                        sb.Append("<J_Api>\"UserId\":\"").Append(SecurityElement.Escape(userId)).Append("\"</J_Api>");
+                        sb.Append("</dsXml>");
+
+                        var result = _tradewebRepo.CommonAPIrepoCall(actionName, option, sb.ToString());
+                        if (result?.Data is DataSet ds && ds.Tables.Count > 0)
+                            tab.Rows = DataTableToRows(ds.Tables[0]);
+                    }
+                    catch
+                    {
+                        // leave tab.Rows empty -> the table renders "No data available"
                     }
                 }
+            }
+        }
+
+        private static string JsonValueToString(JsonElement value)
+        {
+            if (value.ValueKind == JsonValueKind.Null || value.ValueKind == JsonValueKind.Undefined)
+                return "";
+            return value.ValueKind == JsonValueKind.String ? (value.GetString() ?? "") : value.ToString();
+        }
+
+        private static void AppendFilterXml(StringBuilder sb, string elementName, Dictionary<string, JsonElement> filter)
+        {
+            sb.Append('<').Append(elementName).Append('>');
+            if (filter != null)
+            {
+                foreach (var kv in filter)
+                {
+                    sb.Append('<').Append(kv.Key).Append('>')
+                        .Append(SecurityElement.Escape(JsonValueToString(kv.Value)))
+                        .Append("</").Append(kv.Key).Append('>');
+                }
+            }
+            sb.Append("</").Append(elementName).Append('>');
+        }
+
+        private static List<Dictionary<string, JsonElement>> DataTableToRows(DataTable dt)
+        {
+            // TradeWeb's generic API stored procedures (tbl_GenericAPIDefinition) return
+            // their result set as a single unnamed column - ADO.NET names it "Column1" -
+            // holding the whole row set as one JSON array (SQL Server FOR JSON). This is
+            // the same shape MainController.TradeWeb() unwraps into "rs0" for the page, so
+            // mirror that here instead of treating the blob as one literal-text cell.
+            if (dt.Columns.Count > 0 && dt.Columns[0].ColumnName == "Column1" && dt.Rows.Count > 0)
+            {
+                var raw = dt.Rows[0]["Column1"]?.ToString();
+                if (string.IsNullOrWhiteSpace(raw))
+                    return new List<Dictionary<string, JsonElement>>();
+
+                try
+                {
+                    return System.Text.Json.JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(raw)
+                        ?? new List<Dictionary<string, JsonElement>>();
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    return new List<Dictionary<string, JsonElement>>();
+                }
+            }
+
+            // Newtonsoft serializes a DataTable as a flat array of row objects
+            // (dates as ISO strings, numerics as numbers, DBNull as null).
+            var json = JsonConvert.SerializeObject(dt);
+            return System.Text.Json.JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(json)
+                ?? new List<Dictionary<string, JsonElement>>();
+        }
+
+        [HttpPost("Match")]
+        public IActionResult Match([FromBody] NameMatchRequest request)
+        {
+            if (request == null)
+                return BadRequest(new NameMatchResult { Status = "Fail", MatchStatus = "INVALID INPUT" });
+
+            var result = NameMatcher.Match(request.Name1, request.Name2);
+            return Ok(result);
+        }
+
+        [HttpPost("ValidatePDF", Name = "ValidatePDF")]
+        public IActionResult ValidateRekycPDF([FromBody] ValidatePDF request)
+        {
+            try
+            {
+                DataTable dt = _objUtility.OpenDataTable("Select ma_proof, ma_field, ma_filename From Client_ModifyAttach  Where  ma_field like '%Attachment%' And ma_cmcd = '" + request.clientCode + "' And ma_refno = " + request.refNo);
+                bool finalValid = true;
+                string messageOutput = "";
+                foreach (DataRow row in dt.Rows)
+                {
+                    if (string.IsNullOrEmpty(row["ma_proof"].ToString()))
+                    {
+                        continue;
+                    }
+                    byte[] fileBytes = (byte[])row["ma_proof"];
+                    string base64 = Encoding.UTF8.GetString(fileBytes);
+                    byte[] pdfBytes = Convert.FromBase64String(base64);
+                    string extension = GetFileExtTypst(base64); ;
+
+                    bool isValid;
+                    string message;
+
+                    switch (extension)
+                    {
+                        case ".pdf":
+                            isValid = ValidatePdf(pdfBytes, out message);
+                            break;
+
+                        case ".jpg":
+                        case ".jpeg":
+                        case ".png":
+                        case ".bmp":
+                            isValid = ValidateImage(pdfBytes, out message);
+                            break;
+
+                        default:
+                            isValid = false;
+                            message = "Unsupported file type";
+                            break;
+                    }
+                    if (isValid == false)
+                    {
+                        finalValid = false;
+                        message = message + " for " + row["ma_filename"].ToString() + "\n";
+                        messageOutput = messageOutput + " " + message;
+                    }
+
+                    // Update database
+                }
+                if (!finalValid)
+                {
+                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", messageOutput, ""));
+                }
+                return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", "All Attachments Are Valid!", ""));
             }
             catch (Exception ex)
             {
                 return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "An error occurred during file processing. " + ex.Message.ToString(), ""));
             }
         }
-
-
-
-
-        //[HttpPost("GenerateTypstUsingDBTable", Name = "GenerateTypstUsingDBTable")]
-        //public IActionResult GenerateTypstUsingDBTable([FromBody] object request)
-        //{
-        //    try
-        //    {
-        //        DataSet sp = _tradewebRepo.GenerateTypstUsingDBTable("ClientFundLedger", "Client Fund Ledger", "ClientFundLedger");
-        //        if (sp != null && sp.Tables.Count > 0 && sp.Tables[0].Rows.Count > 0)
-        //        {
-        //            string output = sp.Tables[0].Rows[0][0].ToString();
-        //            if (output == "S")
-        //            {
-        //                for (int i = 0; i < sp.Tables.Count; i++)
-        //                {
-        //                    sp.Tables[i].TableName = "rs" + i;
-        //                }
-        //                return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", sp, ""));
-        //            }
-        //            return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", sp.Tables[0], ""));
-        //        }
-        //        else
-        //        {
-        //            return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "No record found", ""));
-        //        }
-
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "An error occurred during file processing. " + ex.Message.ToString(), ""));
-        //    }
-        //}
 
 
         #region Private methods
@@ -1391,6 +1556,77 @@ namespace TradeWeb.API.Controllers
                 }
 
                 return sb.ToString();
+            }
+        }
+
+        private static bool ValidatePdf(byte[] fileBytes, out string message)
+        {
+            message = string.Empty;
+
+            try
+            {
+                using (var reader = new PdfReader(fileBytes))
+                {
+                    int pages = reader.NumberOfPages;
+
+                    if (pages <= 0)
+                    {
+                        message = "No pages found ";
+                        return false;
+                    }
+                    //message = $"Valid PDF ({pages} pages)";
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                message = ex.Message;
+                return false;
+            }
+        }
+
+        private string GetFileExtTypst(string base64)
+        {
+            var data = base64.Substring(0, 5);
+
+            switch (data.ToUpper())
+            {
+                case "IVBOR":
+                    return ".png";
+                case "/9J/4":
+                    return ".jpg";
+                case "AAAAF":
+                    return ".mp4";
+                case "JVBER":
+                    return ".pdf";
+                case "AAABA":
+                    return ".ico";
+                case "UMFYI":
+                    return ".rar";
+                case "E1XYD":
+                    return ".rtf";
+                case "U1PKC":
+                    return ".txt";
+                default:
+                    return ".jpg";
+            }
+        }
+
+        private static bool ValidateImage(byte[] fileBytes, out string message)
+        {
+            try
+            {
+                using var ms = new MemoryStream(fileBytes);
+                using var img = System.Drawing.Image.FromStream(ms);
+
+                //message = $"Valid Image ({img.Width}x{img.Height})";
+                message = "";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                message = ex.Message;
+                return false;
             }
         }
         #endregion

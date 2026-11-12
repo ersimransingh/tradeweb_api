@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using System;
+using System.Linq;
 using System.Security.Claims;
 using TradeWeb.API.Repository;
 
@@ -13,7 +14,7 @@ namespace TradeWeb.API.Controllers
 
         public override void OnActionExecuting(ActionExecutingContext context)
         {
-            UtilityCommon _baseUtilityCommon = new UtilityCommon();
+            //UtilityCommon _baseUtilityCommon = new UtilityCommon();
             ClaimsIdentity claimIdentity = context.HttpContext.User.Identity as ClaimsIdentity;
             string userId = claimIdentity.FindFirst("username")?.Value ?? "";
 

@@ -1,47 +1,68 @@
+using AspNetCoreRateLimit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Localization;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
 using Microsoft.OpenApi.Models;
 using Microsoft.VisualBasic;
+using QuestPDF.Drawing;
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Globalization;
+using System.IO;
 using System.Text;
-using TradeWeb.API.Data;
-using TradeWeb.API.Repository;
-using AspNetCoreRateLimit;
+using System.Threading.Channels;
+using System.Threading.Tasks;
 using TradeWeb.API.Controllers;
-using Microsoft.AspNetCore.HttpOverrides;
+using TradeWeb.API.Filters;
 using TradeWeb.API.QuestPdfServicesClass;
+using TradeWeb.API.Repository;
+using TradeWeb.API.Service;
 
 namespace TradeWeb.API
 {
     public class Startup
     {
-        public Startup(IConfiguration configuration)
+        public IConfiguration Configuration { get; }
+
+        public Startup(IConfiguration configuration, IWebHostEnvironment env)
         {
             Configuration = configuration;
-        }
 
-        public IConfiguration Configuration { get; }
+            FontManager.RegisterFont(File.OpenRead(Path.Combine(env.ContentRootPath, "Fonts", "cour.ttf")));
+            FontManager.RegisterFont(File.OpenRead(Path.Combine(env.ContentRootPath, "Fonts", "courbd.ttf")));
+            FontManager.RegisterFont(File.OpenRead(Path.Combine(env.ContentRootPath, "Fonts", "couri.ttf")));
+            FontManager.RegisterFont(File.OpenRead(Path.Combine(env.ContentRootPath, "Fonts", "courbi.ttf")));
+            FontManager.RegisterFont(File.OpenRead(Path.Combine(env.ContentRootPath, "Fonts", "calibri.ttf")));
+            FontManager.RegisterFont(File.OpenRead(Path.Combine(env.ContentRootPath, "Fonts", "calibrib.ttf")));
+        }
 
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
-            services.AddDbContext<DataContext>(options => options.UseSqlServer(Configuration.GetConnectionString("DefaultConnection")));
+            //services.AddDbContext<DataContext>(options => options.UseSqlServer(Configuration.GetConnectionString("DefaultConnection")));
 
-            services.AddIdentity<AppUser, IdentityRole>()
-                .AddEntityFrameworkStores<DataContext>()
-                .AddDefaultTokenProviders();
+            // Register as singleton
+            services.AddScoped(sp =>
+            {
+                var cfg = sp.GetRequiredService<IConfiguration>();
+                var decrypted = GetDecryptedConnection(
+                    cfg.GetConnectionString("DefaultConnection")
+                );
+                return new ConnectionString(decrypted);
+            });
 
             services.Configure<IpRateLimitOptions>(Configuration.GetSection("IpRateLimiting"));
             services.Configure<IpRateLimitPolicies>(Configuration.GetSection("IpRateLimitingPolicies"));
@@ -58,22 +79,19 @@ namespace TradeWeb.API
 
             //// TODO : Added dependancy here
             services.AddScoped<UtilityCommon>();
-            services.AddScoped<ModelTradeWebCommon>();
             services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
             services.AddScoped<ITradeWebRepository, TradeWebRepository>();
-            services.AddScoped<ICrossWebRepository, CrossWebRepository>();
-            services.AddScoped<IEstroWebRepository, EstroWebRepository>();
-            services.AddScoped<ITradeNetRepository, TradeNetRepository>();
-            services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
-            services.AddScoped<ITradeMobileRepository, TradeMobileRepository>();
-            services.AddScoped<ICrossNetRepository, CrossNetRepository>();
-            services.AddScoped<IEstroNetRepository, EstroNetRepository>();
             services.AddScoped<IWhatsAppRepository, WhatsAppRepository>();
             services.AddSingleton<TokenStore>();
+            services.AddSingleton<E2EKeyService>();
             services.AddScoped<MainController.EncryptResponseAttribute>();
             services.AddScoped<QuestPdfServiceClass>();
-            services.AddScoped<ClientFundLedgerQuestService>();
+            services.AddScoped<E2EDecryptFilter>();
+            services.AddScoped<QuestPdfCommonService>();
             //services.AddScoped<ValidateUser>();
+            services.AddScoped<DigitalEmailService>();                 // scoped, not singleton
+            services.AddSingleton(Channel.CreateUnbounded<DigitalEmailJob>());
+            services.AddHostedService<DigitalEmailWorker>();
 
             services.Configure<RequestLocalizationOptions>(
                 options =>
@@ -95,7 +113,8 @@ namespace TradeWeb.API
                     ForwardedHeaders.XForwardedProto;
 
                 // For IIS / reverse proxy
-                options.KnownNetworks.Clear();
+                //options.KnownNetworks.Clear();
+                options.KnownIPNetworks.Clear();
                 options.KnownProxies.Clear();
             });
 
@@ -103,36 +122,88 @@ namespace TradeWeb.API
             services.AddControllers();
             services.AddMvcCore().AddApiExplorer();
 
+            #region old code swagger
+            //services.AddSwaggerGen(c =>
+            //{
+            //    c.SwaggerDoc("v1", new OpenApiInfo { Title = "TradeWeb.API", Version = "v1" });
+            //    var security = new Dictionary<string, IEnumerable<string>>
+            //    {
+            //        {"Bearer", new string[] { }},
+            //    };
+            //    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme()
+            //    {
+            //        Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"",
+            //        Name = "Authorization",
+            //        In = ParameterLocation.Header,
+            //        Type = SecuritySchemeType.ApiKey,
+            //        BearerFormat = "JWT",
+            //    });
+            //    /*c.AddSecurityRequirement(new OpenApiSecurityRequirement
+            //    {
+            //        {
+            //              new OpenApiSecurityScheme
+            //                {
+            //                    Reference = new OpenApiReference
+            //                    {
+            //                        Type = ReferenceType.SecurityScheme,
+            //                        Id = "Bearer"
+            //                    }
+            //                },
+            //                new string[] {}
+            //        }
+            //    });*/
+            //    c.AddSecurityRequirement(doc => new OpenApiSecurityRequirement
+            //    {
+            //        {
+            //            new OpenApiSecuritySchemeReference("Bearer"),
+            //            new List<string>()
+            //        }
+            //    });
+            //});
+            #endregion
+
             services.AddSwaggerGen(c =>
             {
-                c.SwaggerDoc("v1", new OpenApiInfo { Title = "TradeWeb.API", Version = "v1" });
-                var security = new Dictionary<string, IEnumerable<string>>
+                c.SwaggerDoc("v1", new OpenApiInfo
                 {
-                    {"Bearer", new string[] { }},
-                };
-                c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme()
+                    Title = "TradeWeb.API",
+                    Version = "v1"
+                });
+
+                //c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+                //{
+                //    Name = "Authorization",
+                //    Type = SecuritySchemeType.Http,
+                //    Scheme = "bearer",
+                //    BearerFormat = "JWT",
+                //    In = ParameterLocation.Header,
+                //    Description = "Enter: Bearer {token}"
+                //});
+
+                c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
                 {
-                    Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"",
                     Name = "Authorization",
-                    In = ParameterLocation.Header,
                     Type = SecuritySchemeType.ApiKey,
-                    BearerFormat = "JWT",
+                    In = ParameterLocation.Header,
+                    Description = "Enter: Bearer {token}"
                 });
+
                 c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
                 {
-                    {
-                          new OpenApiSecurityScheme
-                            {
-                                Reference = new OpenApiReference
-                                {
-                                    Type = ReferenceType.SecurityScheme,
-                                    Id = "Bearer"
-                                }
-                            },
-                            new string[] {}
-                    }
-                });
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            new string[] {}
+        }
+    });
             });
+
             services.ConfigureApplicationCookie(options =>
             {
                 // Cookie settings
@@ -150,13 +221,26 @@ namespace TradeWeb.API
             string orginAllowed = "";
             try
             {
-                using (Microsoft.Data.SqlClient.SqlConnection sqlCon = new Microsoft.Data.SqlClient.SqlConnection(GetConnectionStr(Configuration.GetConnectionString("DefaultConnection"))))
+                using (var sqlCon = new SqlConnection(GetConnectionStr(Configuration.GetConnectionString("DefaultConnection"))))
                 {
                     sqlCon.Open();
-                    UtilityCommon utilityCommon = new UtilityCommon();
-                    if (utilityCommon.fnchkTable("Webparameter"))
+
+                    using (var cmd = new SqlCommand(
+                        "SELECT COUNT(*) FROM sysobjects WHERE name = 'WebParameter'", sqlCon))
                     {
-                        orginAllowed = utilityCommon.GetWebParameter("OriginAllowed");
+                        int count = Convert.ToInt32(cmd.ExecuteScalar());
+
+                        if (count > 0)
+                        {
+                            cmd.CommandText = "SELECT sp_sysvalue FROM WebParameter WITH (NOLOCK) WHERE sp_parmcd = 'OriginAllowed'";
+
+                            object result = cmd.ExecuteScalar();
+
+                            if (result != null && result != DBNull.Value)
+                            {
+                                orginAllowed = result.ToString();
+                            }
+                        }
                     }
                 }
             }
@@ -164,6 +248,7 @@ namespace TradeWeb.API
             {
                 // Fallback when SQL connection cannot be established during startup (e.g. globalization invariant mode).
             }
+
             if (orginAllowed == "")
             {
                 orginAllowed = Configuration["AllowedOrigins"];
@@ -176,7 +261,8 @@ namespace TradeWeb.API
                     {
                         builder.WithOrigins(orginAllowed.Split(","))
                                .AllowAnyMethod()
-                               .AllowAnyHeader();
+                               .AllowAnyHeader()
+                               .WithExposedHeaders(E2EEncryptionHelper.PublicKeyHeader);
                         // .AllowCredentials(); // only if you're sending cookies or auth headers
                     });
                     //options.AddDefaultPolicy(builder =>
@@ -193,7 +279,8 @@ namespace TradeWeb.API
                          builder.SetIsOriginAllowed(_ => true)
                         .AllowAnyOrigin()
                         .AllowAnyMethod()
-                        .AllowAnyHeader());
+                        .AllowAnyHeader()
+                        .WithExposedHeaders(E2EEncryptionHelper.PublicKeyHeader));
                 });
             }
             services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -211,6 +298,8 @@ namespace TradeWeb.API
                         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(Decrypt(Configuration["Jwt:Key"])))
                     };
                 });
+
+            services.AddHostedService<SchedulerService>();
 
             services.AddMvc();
             services.AddControllers();
@@ -241,20 +330,34 @@ namespace TradeWeb.API
             app.UseSession();
             app.Use(async (context, next) =>
             {
-                context.Response.Headers.Add("X-XSS-Protection", "1; mode = block"); //// ClickJacking 
-                context.Response.Headers.Add("X-Frame-Options", "DENY");  //// Missing securing Headers
-                //context.Response.Headers.Add("X-Content-Type-Options", "nosniff");
-                context.Response.Headers.Add("Content-Security-Policy", "default-src 'self'");
-                context.Response.Headers.Add("Referrer-Policy", "no-referrer");
-                context.Response.Headers.Add("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-                context.Response.Headers.Add("Server", "unknown"); //// Server version desclosure
-                context.Response.Headers.Add("Feature-Policy", "accelerometer 'none'; camera 'none'; microphone 'none';");
-                context.Request.Headers.Remove("Origin");
-                if (context.Request.Method == "OPTIONS") //// Option method desable
+                context.Response.OnStarting(() =>
                 {
-                    context.Response.StatusCode = 405;
+                    if (context.Request.IsHttps)
+                    {
+                        context.Response.Headers["Strict-Transport-Security"] =
+                            "max-age=31536000; includeSubDomains; preload";
+                    }
+
+                    context.Response.Headers["X-XSS-Protection"] = "1; mode=block";
+                    context.Response.Headers["X-Frame-Options"] = "DENY";
+                    context.Response.Headers["Content-Security-Policy"] = "default-src 'self'";
+                    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+                    context.Response.Headers["Server"] = "unknown";
+                    context.Response.Headers["Feature-Policy"] = "accelerometer 'none'; camera 'none'; microphone 'none';";
+                    context.Response.Headers["Permissions-Policy"] = "accelerometer=(), camera=(), microphone=(), geolocation=()";
+
+                    return Task.CompletedTask;
+                });
+
+                context.Request.Headers.Remove("Origin");
+
+                if (context.Request.Method == "OPTIONS")
+                {
+                    context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+                    return;
                 }
-                await next.Invoke();
+
+                await next();
             });
             var options = app.ApplicationServices.GetService<IOptions<RequestLocalizationOptions>>();
             app.UseRequestLocalization(options.Value);
@@ -264,7 +367,7 @@ namespace TradeWeb.API
             });
         }
 
-        public string Decrypt(string strenc)
+        public static string Decrypt(string strenc)
         {
             int m = 0;
             string strEncKey = null;
@@ -289,7 +392,7 @@ namespace TradeWeb.API
                     System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
                     gsFinal = gsFinal + Strings.Chr(Strings.Asc(gsEcDc) - Strings.Asc(gsCompare) - 13);
                 }
-                catch (Exception e) { }
+                catch (Exception) { }
             }
             return gsFinal;
         }
@@ -311,9 +414,40 @@ namespace TradeWeb.API
                 }
                 return StrConn;
             }
-            catch (Exception ex) { }
+            catch (Exception) { }
 
             return "";
+        }
+
+        private static string GetDecryptedConnection(string connection)
+        {
+            if (connection.Contains("EPWD"))
+            {
+                //UtilityCommon utilityCommon = new UtilityCommon();
+
+                string epwd = connection.Split("EPWD=")[1].Split(";")[0];
+
+                if (!string.IsNullOrWhiteSpace(epwd))
+                {
+                    string pwd = Decrypt(epwd);
+                    connection = connection.Replace(epwd, pwd);
+                }
+
+                connection = connection.Replace("EPWD", "Pwd");
+            }
+            /*if (!connection.Contains("TrustServerCertificate", StringComparison.OrdinalIgnoreCase))
+                connection += ";TrustServerCertificate=True";*/
+
+            return connection;
+        }
+
+        public class ConnectionString
+        {
+            public string Default { get; }
+            public ConnectionString(string defaultConn)
+            {
+                Default = defaultConn;
+            }
         }
     }
 }

@@ -74,158 +74,158 @@ namespace TradeWeb.API.Controllers
             return BadRequest();
         }
 
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpGet("EstroUserProfile", Name = "EstroUserProfile")]
-        public IActionResult Home_UserProfile1()
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var tokenS = objUtility.GetToken();
-                    var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
-                    userId = " and cm_cd = '" + userId + "'";
+        //[Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
+        //[HttpGet("EstroUserProfile", Name = "EstroUserProfile")]
+        //public IActionResult Home_UserProfile1()
+        //{
+        //    if (ModelState.IsValid)
+        //    {
+        //        try
+        //        {
+        //            var tokenS = objUtility.GetToken();
+        //            var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
+        //            userId = " and cm_cd = '" + userId + "'";
 
-                    var getData = _estroWebRepository.GetUserDetails(userId);
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", retrunDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
+        //            var getData = _estroWebRepository.GetUserDetails(userId);
+        //            if (getData != null)
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
+        //            }
+        //            else
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", retrunDt, ""));
+        //            }
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
+        //        }
+        //    }
+        //    return BadRequest();
+        //}
 
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpGet, Route("Holding")]
-        public IActionResult Holding()
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var tokenS = objUtility.GetToken();
-                    var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
-                    userId = " and cm_cd = '" + userId + "'";
+        //[Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
+        //[HttpGet, Route("Holding")]
+        //public IActionResult Holding()
+        //{
+        //    if (ModelState.IsValid)
+        //    {
+        //        try
+        //        {
+        //            var tokenS = objUtility.GetToken();
+        //            var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
+        //            userId = " and cm_cd = '" + userId + "'";
 
-                    var getData = _estroWebRepository.GetHolding(userId);
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", retrunDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
+        //            var getData = _estroWebRepository.GetHolding(userId);
+        //            if (getData != null)
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
+        //            }
+        //            else
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", retrunDt, ""));
+        //            }
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
+        //        }
+        //    }
+        //    return BadRequest();
+        //}
 
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpGet, Route("Ledger")]
-        public IActionResult Ledger(string FromDt, string ToDt)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var tokenS = objUtility.GetToken();
-                    var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
-                    userId = " and cm_cd = '" + userId + "'";
-                    FromDt = objUtility.mfnReplaceForSQLInjection(FromDt);
-                    ToDt = objUtility.mfnReplaceForSQLInjection(ToDt);
-                    var getData = _estroWebRepository.GetLedger(userId, FromDt, ToDt);
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", retrunDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
+        //[Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
+        //[HttpGet, Route("Ledger")]
+        //public IActionResult Ledger(string FromDt, string ToDt)
+        //{
+        //    if (ModelState.IsValid)
+        //    {
+        //        try
+        //        {
+        //            var tokenS = objUtility.GetToken();
+        //            var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
+        //            userId = " and cm_cd = '" + userId + "'";
+        //            FromDt = objUtility.mfnReplaceForSQLInjection(FromDt);
+        //            ToDt = objUtility.mfnReplaceForSQLInjection(ToDt);
+        //            var getData = _estroWebRepository.GetLedger(userId, FromDt, ToDt);
+        //            if (getData != null)
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
+        //            }
+        //            else
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", retrunDt, ""));
+        //            }
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
+        //        }
+        //    }
+        //    return BadRequest();
+        //}
 
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpGet, Route("Transaction")]
-        public IActionResult Transaction(string FromDt, string ToDt)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var tokenS = objUtility.GetToken();
-                    var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
-                    userId = " and cm_cd = '" + userId + "'";
-                    FromDt = objUtility.mfnReplaceForSQLInjection(FromDt);
-                    ToDt = objUtility.mfnReplaceForSQLInjection(ToDt);
-                    var getData = _estroWebRepository.GetTransaction(userId, FromDt, ToDt);
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", retrunDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
+        //[Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
+        //[HttpGet, Route("Transaction")]
+        //public IActionResult Transaction(string FromDt, string ToDt)
+        //{
+        //    if (ModelState.IsValid)
+        //    {
+        //        try
+        //        {
+        //            var tokenS = objUtility.GetToken();
+        //            var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
+        //            userId = " and cm_cd = '" + userId + "'";
+        //            FromDt = objUtility.mfnReplaceForSQLInjection(FromDt);
+        //            ToDt = objUtility.mfnReplaceForSQLInjection(ToDt);
+        //            var getData = _estroWebRepository.GetTransaction(userId, FromDt, ToDt);
+        //            if (getData != null)
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
+        //            }
+        //            else
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", retrunDt, ""));
+        //            }
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
+        //        }
+        //    }
+        //    return BadRequest();
+        //}
 
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpGet, Route("Security_Listing")]
-        public IActionResult Security_Listing(string SearchBy, string SearchText, string Alphabet, bool blnActive)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var tokenS = objUtility.GetToken();
-                    var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
-                    SearchBy = objUtility.mfnReplaceForSQLInjection(SearchBy);
-                    SearchText = objUtility.mfnReplaceForSQLInjection(SearchText);
-                    Alphabet = objUtility.mfnReplaceForSQLInjection(Alphabet);
-                    var getData = _estroWebRepository.Security_Listing(SearchBy, SearchText, Alphabet, blnActive);
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", retrunDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
+        //[Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
+        //[HttpGet, Route("Security_Listing")]
+        //public IActionResult Security_Listing(string SearchBy, string SearchText, string Alphabet, bool blnActive)
+        //{
+        //    if (ModelState.IsValid)
+        //    {
+        //        try
+        //        {
+        //            var tokenS = objUtility.GetToken();
+        //            var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
+        //            SearchBy = objUtility.mfnReplaceForSQLInjection(SearchBy);
+        //            SearchText = objUtility.mfnReplaceForSQLInjection(SearchText);
+        //            Alphabet = objUtility.mfnReplaceForSQLInjection(Alphabet);
+        //            var getData = _estroWebRepository.Security_Listing(SearchBy, SearchText, Alphabet, blnActive);
+        //            if (getData != null)
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
+        //            }
+        //            else
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", retrunDt, ""));
+        //            }
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
+        //        }
+        //    }
+        //    return BadRequest();
+        //}
 
         //[Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
         //[HttpGet("Bills", Name = "[Controller]/Bills")]

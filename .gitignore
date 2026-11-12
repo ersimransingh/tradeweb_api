@@ -410,3 +410,6 @@ Thumbs.db
 SQL/Old_Files/
 SQL/*.zip
 dynamic.pdf
+
+# Generated QuestPDF output files
+**/JsonFiles/output*

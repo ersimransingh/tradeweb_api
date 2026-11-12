@@ -14,10 +14,7 @@
       "launchBrowser": true,
       "launchUrl": "swagger",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT": "0",
-        "CLR_ICU_VERSION_OVERRIDE": "78",
-        "OPENSSL_CONF": "/home/simon/Documents/GitHub/TradeWebAPI_20260622/openssl.minimal.cnf"
+        "ASPNETCORE_ENVIRONMENT": "Development"
       }
     },
     "TradeWeb.API": {
@@ -25,10 +22,7 @@
       "launchBrowser": true,
       "launchUrl": "swagger/index.html",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT": "0",
-        "CLR_ICU_VERSION_OVERRIDE": "78",
-        "OPENSSL_CONF": "/home/simon/Documents/GitHub/TradeWebAPI_20260622/openssl.minimal.cnf"
+        "ASPNETCORE_ENVIRONMENT": "Development"
       },
       "applicationUrl": "https://localhost:5001;http://localhost:5000"
     }

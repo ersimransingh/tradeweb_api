@@ -1,3 +1,5 @@
+﻿using Ganss.Xss;
+using iTextSharp.text.pdf;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -8,12 +10,13 @@ using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.IdentityModel.Tokens.Jwt;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Mail;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -21,9 +24,10 @@ using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
 using System.Xml.Serialization;
-using TradeWeb.API.Data;
+using TradeWeb.API.Logs;
 using TradeWeb.API.Models;
 using TradeWeb.Repo.Interface;
+using static TradeWeb.API.Startup;
 
 namespace TradeWeb.API.Repository
 {
@@ -35,42 +39,19 @@ namespace TradeWeb.API.Repository
         public readonly IHttpContextAccessor _httpContextAccessor;
         public IConfiguration session;
         public string StrConn = ""; //ConfigurationManager.ConnectionStrings["TradeWebConnectionString"].ConnectionString;
+        private readonly string _connStr;
 
         #region Constructor
         /// <summary>
         /// //TODO : Add constructor for declare initialize values.
         /// </summary>
-        public UtilityCommon(IConfiguration config, IHttpContextAccessor httpContextAccessor)
+        public UtilityCommon(IConfiguration config, IHttpContextAccessor httpContextAccessor, ConnectionString connectionString)
         {
             ConfigurationManager = config;
             _httpContextAccessor = httpContextAccessor;
-        }
-
-        public UtilityCommon()
-        {
+            _connStr = connectionString.Default;
         }
         #endregion
-
-        #region Cross-Platform Helpers
-        /// <summary>
-        /// Returns the India time zone. Works on Windows ("India Standard Time") and Linux ("Asia/Kolkata").
-        /// </summary>
-        public static TimeZoneInfo GetIndianTimeZone()
-        {
-            try
-            {
-                return TimeZoneInfo.FindSystemTimeZoneById("India Standard Time");
-            }
-            catch (TimeZoneNotFoundException)
-            {
-                return TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            }
-        }
-        #endregion
-
-
-        public enum MessageType { Success, Error, Info, Warning };
-
 
         public enum eNewDateformat
         {
@@ -80,901 +61,12 @@ namespace TradeWeb.API.Repository
             eLongDate = 4
         }
 
-        public enum eAddDate
-        {
-            eDay = 1,
-            eMonth = 2,
-            eYear = 3,
-            eWeek = 4
-        }
-
         public enum eMonthFormat
         {
             eLongMonth = 1,
             eShortMonth = 2
         }
 
-        public bool InvalidDateCheck(dynamic txtobj)
-        {
-            if (Regex.IsMatch(txtobj.Text, (@"(((0[1-9]|[12][0-9]|3[01])([/])(0[13578]|10|12)([/])(\d{4}))|(([0][1-9]|[12][0-9]|30)([/])(0[469]|11)([/])(\d{4}))|((0[1-9]|1[0-9]|2[0-8])([/])(02)([/])(\d{4}))|((29)(\.|-|\/)(02)([/])([02468][048]00))|((29)([/])(02)([/])([13579][26]00))|((29)([/])(02)([/])([0-9][0-9][0][48]))|((29)([/])(02)([/])([0-9][0-9][2468][048]))|((29)([/])(02)([/])([0-9][0-9][13579][26])))")))
-            {
-                return true;
-            }
-            else
-            {
-                return false;
-            }
-        }
-
-        public string EsignConnectionString(bool IsCommexES, string StrDt)
-        {
-            string ConnectionString = string.Empty;
-            string strproduct = string.Empty;
-            char[] ArrSeparators = new char[1];
-            string strsql = string.Empty;
-            ArrSeparators[0] = '/';
-            if ((ConfigurationManager["IsTradeweb"] == "T") || (ConfigurationManager["IsTradeweb"] == "O") || (Convert.ToInt16(fnFireQueryTradeWeb("sysobjects", "count(0)", "name", "Other_Products", true)) > 0))
-            {
-                if (IsCommexES == true)
-                    strproduct = "CommexES";
-                else
-                {
-                    if (ConfigurationManager["IsTradeweb"] == "O" || (Convert.ToInt16(fnFireQueryTradeWeb("sysobjects", "count(0)", "name", "Other_Products", true)) > 0))
-                    {
-                        strsql = "select * from Other_Products Where OP_Product Like 'TPLUSESIGN%'";
-                        strsql += " and '" + StrDt.Trim() + "'  between OP_DSN and OP_URL ";
-                        DataSet ds = new DataSet();
-                        ds = OpenDataSet(strsql);
-                        if (ds.Tables[0].Rows.Count > 0)
-                        {
-                            ConnectionString = "server=" + ds.Tables[0].Rows[0]["OP_Server"].ToString().Trim() + ";Database=" + ds.Tables[0].Rows[0]["OP_DataBase"].ToString().Trim() + ";Uid=" + ds.Tables[0].Rows[0]["OP_User"].ToString().Trim() + ";Pwd=" + ds.Tables[0].Rows[0]["OP_PWD"].ToString().Trim() + ";Max Pool Size=200;Connect Timeout=20000;pooling='true'";
-                            return ConnectionString;
-                        }
-                        else
-                        {
-                            strproduct = "TPlusES";
-                        }
-                    }
-                    else
-                    {
-                        strproduct = "TPlusES";
-                    }
-                }
-            }
-            else if (ConfigurationManager["IsTradeweb"] == "C")
-            {
-                strproduct = "CrossES";
-            }
-            else if (ConfigurationManager["IsTradeweb"] == "E")
-            {
-                strproduct = "EstroES";
-            }
-            string[] TPlusES = GetWebParameter(strproduct).Split(ArrSeparators);
-            if (TPlusES.Length > 1 || (TPlusES.Length == 1 && TPlusES[0] != string.Empty))
-            {
-                ConnectionString = "server=" + TPlusES[0].ToString().Trim() + ";Database=" + TPlusES[1].ToString().Trim() + ";Uid=" + TPlusES[3].ToString().Trim() + ";Pwd=" + TPlusES[4].ToString().Trim() + ";Max Pool Size=200;Connect Timeout=20000;pooling='true'";
-            }
-            return ConnectionString;
-        }
-
-        public DataView MergeDataTablesOnKey(DataView ObjView1, DataView ObjView2, string Sort)
-        {
-
-            DataTable ObjTable1 = ObjView1.ToTable();
-            DataTable ObjTable2 = ObjView2.ToTable();
-            string CommonKeyColumnName = ObjTable2.Columns[0].ColumnName;
-            //add all table belonging to second view to the first table except the common column
-            foreach (DataColumn ObjTable2Column in ObjTable2.Columns)
-            {
-                if (ObjTable2Column.ColumnName != CommonKeyColumnName && ObjTable2Column.ColumnName != "Status" && ObjTable1.Columns.Contains(ObjTable2Column.ColumnName) == false)
-                {
-                    DataColumn ObjNewTable1Column = new DataColumn(ObjTable2Column.ColumnName);
-                    ObjNewTable1Column.DataType = ObjTable2Column.DataType;
-                    ObjNewTable1Column.MaxLength = ObjTable2Column.MaxLength;
-                    ObjNewTable1Column.AllowDBNull = ObjTable2Column.AllowDBNull;
-                    ObjNewTable1Column.Unique = ObjTable2Column.Unique;
-                    ObjNewTable1Column.AutoIncrement = ObjTable2Column.AutoIncrement;
-                    ObjNewTable1Column.AutoIncrementSeed = ObjTable2Column.AutoIncrementSeed;
-                    ObjNewTable1Column.AutoIncrementStep = ObjTable2Column.AutoIncrementStep;
-                    ObjTable1.Columns.Add(ObjNewTable1Column);
-
-                }
-            }
-            //move through all rows table 1
-            foreach (DataRow ObjTable1Row in ObjTable1.Rows)
-            {
-                //move through all rows of table 2
-                foreach (DataRow ObjTable2Row in ObjTable2.Rows)
-                {
-                    //if the value of the common column field for both table1 row and table 2 row are equal
-                    // throw new Exception(ObjTable1Row[CommonKeyColumnName].ToString() +" "+ ObjTable2Row[CommonKeyColumnName].ToString());
-                    if (ObjTable1Row[CommonKeyColumnName].Equals(ObjTable2Row[CommonKeyColumnName]))
-                    {
-                        //copy values of all fields of table2row  to table1 row
-                        foreach (DataColumn ObjTable2Column in ObjTable2.Columns)
-                        {
-                            if (ObjTable2Column.ColumnName != "Status")
-                                ObjTable1Row[ObjTable2Column.ColumnName] = ObjTable2Row[ObjTable2Column.ColumnName];
-                        }
-                    }
-                }
-
-            }
-            DataView ObjView = ObjTable1.DefaultView;
-            ObjView.Sort = Sort;
-            return ObjView;
-        }
-        public void SendEmail(MailMessage ObjMessage)
-        {
-            if (ConfigurationManager["EnableEmail"] == "False")
-                return;
-            ObjMessage.IsBodyHtml = true;
-            SmtpClient ObjClient = new SmtpClient();
-            ObjClient.EnableSsl = true;
-            ObjClient.Host = ConfigurationManager["EmailServer"];
-            ObjClient.Port = int.Parse(ConfigurationManager["EmailServerPort"]);
-            ObjClient.Credentials = new NetworkCredential(ConfigurationManager["EmailServerUserID"], ConfigurationManager["EmailServerPassword"]);
-            ObjClient.Send(ObjMessage);
-        }
-
-        public string GetApplicationMode()
-        {
-            return "MultipleOrganizationsMultipleBranch";
-        }
-
-        public DateTime GetDateTimeFromTimeString(string TimeString)
-        {
-            DateTime ObjDateTime = DateTime.Today;
-            string StrHoursMinutes = TimeString.Substring(0, TimeString.Length - 3);
-            string StrAMPM = TimeString.Substring(TimeString.Length - 2);
-            int Hours = int.Parse(StrHoursMinutes.Substring(0, StrHoursMinutes.IndexOf(':')).Trim());
-            int Minutes = int.Parse(StrHoursMinutes.Substring(StrHoursMinutes.IndexOf(':') + 1, 2).Trim());
-            if (StrAMPM == "AM")
-                ObjDateTime = ObjDateTime.AddHours(Hours);
-            else
-                ObjDateTime = ObjDateTime.AddHours(Hours + 12);
-            ObjDateTime = ObjDateTime.AddMinutes(Minutes);
-            return ObjDateTime;
-        }
-
-        public DataView MergeViews(dynamic ObjDataViewCollection, string Sort)
-        {
-            DataView ObjMergedView = ObjDataViewCollection[0];
-            int i = 0;
-            while (i < ObjDataViewCollection.Count - 1)
-            {
-                ObjMergedView = MergeDataTablesOnKey(ObjMergedView, ObjDataViewCollection[i + 1], string.Empty);
-                i++;
-            }
-            ObjMergedView.Sort = Sort;
-            return ObjMergedView;
-        }
-        public string ParseDate(string Date)
-        {
-            char[] ArrSeparators = new char[1];
-            ArrSeparators[0] = ' ';
-            string[] ArrDateParts = Date.Split(ArrSeparators);
-            string DatePart2 = string.Empty;
-            switch (ArrDateParts[1])
-            {
-                case "Jan":
-                    DatePart2 = "01";
-                    break;
-                case "Feb":
-                    DatePart2 = "02";
-                    break;
-                case "Mar":
-                    DatePart2 = "03";
-                    break;
-
-                case "Apr":
-                    DatePart2 = "04";
-                    break;
-
-                case "May":
-                    DatePart2 = "05";
-                    break;
-
-                case "Jun":
-                    DatePart2 = "06";
-                    break;
-
-                case "Jul":
-                    DatePart2 = "07";
-                    break;
-
-                case "Aug":
-                    DatePart2 = "08";
-                    break;
-
-                case "Sep":
-                    DatePart2 = "09";
-                    break;
-
-                case "Oct":
-                    DatePart2 = "10";
-                    break;
-
-
-                case "Nov":
-                    DatePart2 = "11";
-                    break;
-
-                case "Dec":
-                    DatePart2 = "12";
-                    break;
-
-            }
-            return ArrDateParts[2] + DatePart2 + ArrDateParts[0];
-        }
-        public void prTempFOBill(SqlConnection ObjConnectionTmp)
-        {
-            string strCreate = string.Empty;
-            try
-            {
-                strCreate = "drop table  ##tmpfobill ";
-                ExecuteSQLTmp(strCreate, ObjConnectionTmp);
-            }
-            catch (Exception EX)
-            {
-
-                strCreate = "CREATE TABLE  ##tmpfobill ( ";
-                strCreate = strCreate + "[tx_controlflag] numeric(18,3) NOT NULL ,";
-                strCreate = strCreate + "[tx_dt] [char] (8) NOT NULL ,";
-                strCreate = strCreate + "[tx_clientcd] [char] (8) NOT NULL ,";
-                strCreate = strCreate + "[tx_mainbrcd] [char] (8) NOT NULL ,";
-                strCreate = strCreate + "[tx_seriesid] [numeric]  NOT NULL ,";
-                strCreate = strCreate + "[tx_desc] char(45) NOT NULL,";
-                strCreate = strCreate + "[tx_bqty] numeric (18,3)  NOT NULL ,";
-                strCreate = strCreate + "[tx_sqty] numeric(18,3)   NOT NULL ,";
-                strCreate = strCreate + "[tx_rate] [money]  NOT NULL ,";
-                strCreate = strCreate + "[tx_mainbrrate] [money]  NOT NULL ,";
-                strCreate = strCreate + "[tx_marketrate] [money]  NOT NULL ,";
-                strCreate = strCreate + "[tx_servicetax] [money]  NOT NULL ,";
-                strCreate = strCreate + "[tx_closerate] [money]  NOT NULL ,";
-                strCreate = strCreate + "[tx_sortlist] [numeric] NOT NULL,";
-                strCreate = strCreate + "[tx_prodtype] [char] (2) NOT NULL,";
-                strCreate = strCreate + "[tx_value] [money] NOT NULL, ";
-                strCreate = strCreate + "[tx_exchange] [char] (1) NOT NULL, ";
-                strCreate = strCreate + "[tx_marketrate1] [money]  NOT NULL ,";
-                strCreate = strCreate + "[tx_Brokerage] [money]  NOT NULL ";
-                strCreate = strCreate + " )";
-                ExecuteSQLTmp(strCreate, ObjConnectionTmp);
-            }
-
-            try
-            {
-                strCreate = "Drop table [#tmpbillcharges]";
-                ExecuteSQLTmp(strCreate, ObjConnectionTmp);
-            }
-            catch (Exception ex)
-            {
-                strCreate = "CREATE TABLE [#tmpbillcharges] ([bc_dt] [char] (8) NOT NULL,[bc_clientcd] [char] (8) NOT NULL,[bc_desc] [char] (40) NOT NULL,[bc_amount] [money] NOT NULL,[bc_billno] [numeric] NOT NULL,[bc_exchange] [char] (1) NOT NULL) ";
-                ExecuteSQLTmp(strCreate, ObjConnectionTmp);
-            }
-
-            try
-            {
-                strCreate = " drop table [#tmpmosesdates] ";
-                ExecuteSQLTmp(strCreate, ObjConnectionTmp);
-            }
-            catch (Exception ex)
-            {
-                strCreate = "CREATE TABLE [#tmpmosesdates] ([bd_dt] [char] (8) NOT NULL )";
-                ExecuteSQLTmp(strCreate, ObjConnectionTmp);
-            }
-        }
-        public void prTempFOBill1(SqlConnection ObjConnectionTmp)
-        {
-            string strsql = string.Empty;
-            try
-            {
-                strsql = " Drop Table ##tmpfobill ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-            }
-            catch (Exception ex)
-            {
-                strsql = "CREATE TABLE [##tmpfobill] ([tx_controlflag] numeric(18,3) NOT NULL , ";
-                strsql = strsql + " [tx_dt] [char] (8) NOT NULL ,[tx_clientcd] [char] (8) NOT NULL , ";
-                strsql = strsql + " [tx_mainbrcd] [char] (8) NOT NULL ,[tx_seriesid] [numeric]  NOT NULL , ";
-                strsql = strsql + " [tx_desc] char(45) NOT NULL,[tx_bqty] numeric (18,3)  NOT NULL , ";
-                strsql = strsql + " [tx_sqty] numeric(18,3)   NOT NULL ,[tx_rate] [money]  NOT NULL ,";
-                strsql = strsql + " [tx_mainbrrate] [money]  NOT NULL ,[tx_marketrate] [money]  NOT NULL ,";
-                strsql = strsql + " [tx_servicetax] [money]  NOT NULL ,[tx_closerate] [money]  NOT NULL ,";
-                strsql = strsql + " [tx_sortlist] [numeric] NOT NULL,[tx_prodtype] [char] (2) NOT NULL,";
-                strsql = strsql + " [tx_value] [money] NOT NULL,[tx_multiplier] [money] NOT Null, ";
-                strsql = strsql + " tx_tradeid varchar(20) NOT NULL,tx_time char (8) NOT NULL,";
-                strsql = strsql + " tx_orderid varchar(20) NOT NULL) ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-            }
-            try
-            {
-                strsql = " Drop Table #tmpbillcharges ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-            }
-
-            catch (Exception ex)
-            {
-                strsql = "CREATE TABLE [#tmpbillcharges] ([bc_dt] [char] (8) NOT NULL, ";
-                strsql = strsql + "[bc_clientcd] [char] (8) NOT NULL,[bc_desc] [char] (40) NOT NULL, ";
-                strsql = strsql + "[bc_amount] [money] NOT NULL,[bc_billno] [numeric] NOT NULL ) ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-            }
-
-            try
-            {
-                strsql = " Drop Table #tmpmosesdates";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-            }
-
-            catch (Exception ex)
-            {
-                strsql = "CREATE TABLE [#tmpmosesdates] ([bd_dt] [char] (8) NOT NULL )";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-            }
-        }
-
-        public string GetSlashDate(string Date)
-        {
-            if (Date.ToString().Trim() == "")
-                return string.Empty;
-            int Year = int.Parse(Date.Substring(0, 4));
-            int Month = int.Parse(Date.Substring(4, 2));
-            int Day = int.Parse(Date.Substring(6, 2));
-
-            return new DateTime(Year, Month, Day).ToString("dd/MM/yyyy", new System.Globalization.CultureInfo("en-GB"));
-        }
-
-        public string GetSqlTradeHolding(string rsCon, string strClient, string strdate, string strcollat, SqlConnection ObjConnectionTmp)
-        {
-            string Strsql = string.Empty;
-            Strsql = "select dm_clientcd,dm_scripcd,sum(dm_qty * (-1)) as qty,dm_isin,";
-            Strsql = Strsql + " ss_name,ss_bserate,convert(decimal(15,2),(ss_bserate*sum(dm_qty * (-1)))) as valuation ,'Beneficiary Holding' as bh_type,cast((Tmp_haricut) as decimal(15,2)) HairCut,convert(decimal(15,2), 0) as AfterHaricut ,(case dm_tmkttype  when 'X' then 'Marked For Sale against debit' else '' end)  as Remark ";
-            Strsql = Strsql + " ,'' unpledge,'' lnkUnPledge ";
-            Strsql = Strsql + " from demat with (nolock), ourdps with (nolock) ,settlements with (nolock) ,client_master with (nolock),securities with (nolock),#TmpVarMargin";
-            Strsql = Strsql + " where cm_cd = dm_clientcd and dm_stlmnt = se_stlmnt and dm_scripcd = ss_cd";
-            Strsql = Strsql + " and dm_ourdp = od_cd";
-            Strsql = Strsql + " and Tmp_scripcd = dm_scripcd and od_acttype in ('B','M') and dm_type = 'BC' and dm_locked = 'N' and dm_transfered = 'N'";
-            Strsql = Strsql + " and dm_clientcd in (" + strClient.Trim() + ") and dm_ourdp not in " + strcollat;
-            Strsql = Strsql + " group by dm_clientcd,dm_scripcd,dm_isin, ss_name,Tmp_haricut,ss_bserate,dm_tmkttype having abs(sum(dm_qty)) > 0 ";
-            Strsql = Strsql + " union all ";
-
-            Strsql = Strsql + " select dm_clientcd,dm_scripcd,sum(dm_qty * (-1)) as qty,dm_isin,ss_name,ss_bserate, convert(decimal(15,2),(ss_bserate*sum(dm_qty * (-1))))";
-            Strsql = Strsql + " as valuation ,'COLLAT Holding' as bh_type,cast((Tmp_haricut) as decimal(15,2)) HairCut,convert(decimal(15,2), 0) as AfterHaricut,(case dm_tmkttype  when 'X' then 'Marked For Sale against debit' else '' end)  as Remark ";
-            Strsql = Strsql + " ,'' unpledge,'' lnkUnPledge from demat with (nolock),ourdps with (nolock) ,settlements with (nolock) ,client_master with (nolock) ,securities with (nolock) ,#TmpVarMargin where cm_cd = dm_clientcd and dm_stlmnt = se_stlmnt and dm_scripcd = ss_cd and dm_ourdp = od_cd and Tmp_scripcd = dm_scripcd";
-            Strsql = Strsql + " and od_acttype in ('B','M') and dm_type = 'BC' and dm_locked = 'N' and dm_transfered = 'N'";
-            Strsql = Strsql + " and dm_clientcd in (" + strClient.Trim() + ") and dm_ourdp in " + strcollat;
-            Strsql = Strsql + " group by dm_clientcd,dm_scripcd,dm_isin, ss_name,Tmp_haricut,ss_bserate,dm_tmkttype";
-            Strsql = Strsql + " having abs(sum(dm_qty)) > 0 ";
-            Strsql = Strsql + " Union all  ";
-
-            Strsql = Strsql + " select dm_clientcd,dm_scripcd,sum(dm_qty * (-1)) as qty,dm_isin,ss_name,ss_bserate, convert(decimal(15,2),(ss_bserate*sum(dm_qty * (-1)))) as valuation ,'Expected Holding' as bh_type,cast((Tmp_haricut) as decimal(15,2)) HairCut,convert(decimal(15,2), 0) as AfterHaricut ,(case dm_tmkttype  when 'X' then 'Marked For Sale against debit' else '' end)  as Remark ";
-            Strsql = Strsql + " ,'' unpledge,'' lnkUnPledge from demat with (nolock), ourdps with (nolock) ,settlements with (nolock) ,client_master with (nolock) ,securities  with (nolock) ,#TmpVarMargin";
-            Strsql = Strsql + " where cm_cd = dm_clientcd and dm_stlmnt = se_stlmnt and dm_scripcd = ss_cd and dm_ourdp = od_cd and od_acttype = 'P'and dm_type = 'BC' and dm_locked = 'N' and dm_transfered <> 'S' and se_shpayoutdt > '" + strdate + "' ";
-            Strsql = Strsql + " and dm_ourdp not in " + strcollat;
-            Strsql = Strsql + " and dm_clientcd in (" + strClient.Trim() + ") and Tmp_scripcd = dm_scripcd";
-            Strsql = Strsql + " group by dm_clientcd,dm_scripcd,dm_isin, ss_name,se_stlmnt,Tmp_haricut,ss_bserate,dm_tmkttype";
-            Strsql = Strsql + " having abs(sum(dm_qty)) > 0 ";
-            Strsql = Strsql + " Union all  ";
-
-            Strsql = Strsql + " select dm_clientcd,dm_scripcd,sum(dm_qty * (-1)) as qty,dm_isin,ss_name,ss_bserate, convert(decimal(15,2),(ss_bserate*sum(dm_qty * (-1)))) as valuation ,'Pool Holding' as bh_type,cast((Tmp_haricut) as decimal(15,2)) HairCut,convert(decimal(15,2), 0) as AfterHaricut ,(case dm_tmkttype  when 'X' then 'Marked For Sale against debit' else '' end)  as Remark ";
-            Strsql = Strsql + " ,'' unpledge,'' lnkUnPledge from demat with (nolock), ourdps with (nolock) ,settlements with (nolock) ,client_master with (nolock) ,securities  with (nolock) ,#TmpVarMargin";
-            Strsql = Strsql + " where cm_cd = dm_clientcd and dm_stlmnt = se_stlmnt and dm_scripcd = ss_cd and dm_ourdp = od_cd and od_acttype = 'P'and dm_type = 'BC' and dm_locked = 'N' and dm_transfered ='N' and se_shpayoutdt <= '" + strdate + "'";
-            Strsql = Strsql + " and dm_ourdp not in " + strcollat;
-            Strsql = Strsql + " and dm_clientcd in (" + strClient.Trim() + ") and Tmp_scripcd = dm_scripcd";
-            Strsql = Strsql + " group by dm_clientcd,dm_scripcd,dm_isin, ss_name,se_stlmnt,Tmp_haricut,ss_bserate,dm_tmkttype";
-            Strsql = Strsql + " having abs(sum(dm_qty)) > 0 ";
-            Strsql = Strsql + " Union all  ";
-
-            Strsql = Strsql + " select dm_clientcd,dm_scripcd,sum(dm_qty * (-1)) as qty,dm_isin,ss_name,ss_bserate, convert(decimal(15,2),(ss_bserate*sum(dm_qty * (-1)))) as valuation ,'Undelivered Holding' as bh_type,cast((Tmp_haricut) as decimal(15,2)) HairCut,convert(decimal(15,2), 0) as AfterHaricut,(case dm_tmkttype  when 'X' then 'Marked For Sale against debit' else '' end)  as Remark";
-            Strsql = Strsql + " ,'' unpledge,'' lnkUnPledge from demat with (nolock), ourdps with (nolock),settlements with (nolock), client_master with (nolock),securities  with (nolock),#TmpVarMargin";
-            Strsql = Strsql + " where cm_cd = dm_clientcd and dm_stlmnt = se_stlmnt and dm_scripcd = ss_cd and dm_ourdp = od_cd and od_acttype = 'P' and dm_type = 'CB' and dm_locked = 'N' and dm_transfered <> 'S'";
-            Strsql = Strsql + " and dm_clientcd in (" + strClient.Trim() + ") and dm_ourdp not in " + strcollat;
-            Strsql = Strsql + " and Tmp_scripcd = dm_scripcd group by dm_clientcd,dm_scripcd,dm_isin, ss_name,Tmp_haricut,ss_bserate,dm_tmkttype having abs(sum(dm_qty)) > 0 ";
-
-            Strsql = Strsql + " union all ";
-            Strsql = Strsql + " select dm_clientcd,dm_scripcd,sum(dm_qty * (-1)) as qty,dm_isin,";
-            Strsql = Strsql + " ss_name,ss_bserate,convert(decimal(15,2),(ss_bserate*sum(dm_qty * (-1)))) as valuation ,(case od_acttype when 'T' then 'Margin Trading' when 'C' then 'MTF Collateral' else '' end ) as bh_type,cast((Tmp_haricut) as decimal(15,2)) HairCut,convert(decimal(15,2), 0) as AfterHaricut ,(case dm_tmkttype  when 'X' then 'Marked For Sale against debit' else '' end)  as Remark ";
-            Strsql = Strsql + " ,'' unpledge,'' lnkUnPledge from demat with (nolock), ourdps with (nolock) ,settlements with (nolock) ,client_master with (nolock),securities with (nolock),#TmpVarMargin";
-            Strsql = Strsql + " where cm_cd = dm_clientcd and dm_stlmnt = se_stlmnt and dm_scripcd = ss_cd";
-            Strsql = Strsql + " and dm_ourdp = od_cd";
-            Strsql = Strsql + " and Tmp_scripcd = dm_scripcd and od_acttype in ('T','C') and dm_type = 'BC' and dm_locked = 'N' and dm_transfered = 'N'";
-            Strsql = Strsql + " and dm_clientcd in (" + strClient.Trim() + ")";
-            Strsql = Strsql + " group by dm_clientcd,dm_scripcd,dm_isin, ss_name,Tmp_haricut,ss_bserate,dm_tmkttype,od_acttype ";
-            Strsql = Strsql + " having abs(sum(dm_qty)) > 0 ";
-
-            DataSet DsMPTrx = new DataSet();
-            DsMPTrx = OpenDataSet("select * from SysObjects where name= 'MrgPledge_TRX'");
-            if (DsMPTrx.Tables[0].Rows.Count > 0)
-            {
-                string strOurdp = string.Empty;
-                DataTable dt = OpenDataTable("select distinct MPT_OurDP from MrgPledge_TRX Where MPT_TRXFlag ='P'");
-                if (dt.Rows.Count > 0)
-                {
-                    for (int i = 0; i <= dt.Rows.Count - 1; i++)
-                    {
-                        strOurdp += "'" + dt.Rows[i]["MPT_OurDP"].ToString().Trim() + "',";
-                    }
-                    strOurdp = strOurdp.Remove(strOurdp.Length - 1);
-                }
-                else
-                {
-                    strOurdp = "''";
-                }
-                Strsql = Strsql + " union all ";
-                Strsql = Strsql + " select MPT_clientcd dm_clientcd,MPT_scripcd dm_scripcd,sum(case When MPT_DRCR ='C' Then MPT_Qty else -MPT_Qty  end) as qty,im_isin,ss_name,ss_bserate, ";
-                Strsql = Strsql + " (ss_bserate*sum(case When MPT_DRCR ='C' Then MPT_Qty else -MPT_Qty  end)) as valuation ,'Margin Pledge' bh_type,cast((Tmp_haricut) as decimal(15,2)) HairCut, ";
-                Strsql = Strsql + " convert(decimal(15,2), 0) as AfterHaricut ,''  ";
-                Strsql = Strsql + " ,'Un-Pledge ' unpledge,";
-                Strsql = Strsql + " MPT_clientcd +'/'+ MPT_scripcd +'/' + ss_name +'/'+ convert(varchar,sum(case When MPT_DRCR ='C' Then MPT_Qty else -MPT_Qty  end)) +'/P' lnkUnPledge ";
-                Strsql = Strsql + " from MrgPledge_TRX a,securities with (nolock),#TmpVarMargin ,Isin with (nolock) ";
-                Strsql = Strsql + " where im_scripcd = ss_cd and im_active = 'Y' and im_priority = (select min(im_priority) from Isin Where im_scripcd = MPT_scripcd and im_active = 'Y' )  ";
-                Strsql = Strsql + " and Tmp_scripcd = im_scripcd ";
-                Strsql = Strsql + " and  Tmp_scripcd = MPT_scripcd and ss_cd = MPT_scripcd ";
-                Strsql = Strsql + " and MPT_clientcd in (" + strClient.Trim() + ") ";
-                Strsql += " and MPT_OurDP in (" + strOurdp + ") ";
-                Strsql = Strsql + " group by MPT_clientcd,MPT_scripcd,im_isin,ss_name,ss_bserate,Tmp_haricut ";
-                Strsql = Strsql + " having abs(sum(case When MPT_DRCR ='C' Then MPT_Qty else -MPT_Qty  end)) > 0 ";
-                Strsql = Strsql + " union all ";
-                Strsql = Strsql + " select MPT_clientcd dm_clientcd,MPT_scripcd dm_scripcd,Sum(case MPT_DRCR when 'D' Then MPT_Qty else -MPT_Qty end) as qty,im_isin,ss_name,ss_bserate, ";
-                Strsql = Strsql + " (ss_bserate*Sum(case MPT_DRCR when 'D' Then MPT_Qty else -MPT_Qty end)) as valuation ,'Margin Re-Pledge' bh_type,cast((Tmp_haricut) as decimal(15,2)) HairCut, ";
-                Strsql = Strsql + " convert(decimal(15,2), 0) as AfterHaricut ,'' ";
-                Strsql = Strsql + " ,'Un-Re-Pledge '  unpledge,";
-                Strsql = Strsql + "  MPT_clientcd +'/'+ MPT_scripcd +'/' + ss_name +'/'+ convert(varchar,sum(case When MPT_DRCR ='C' Then MPT_Qty else -MPT_Qty  end))+'/R' lnkUnPledge ";
-                Strsql = Strsql + " from MrgPledge_TRX a,securities with (nolock),#TmpVarMargin ,Isin with (nolock) ";
-                Strsql = Strsql + " where im_scripcd = ss_cd and im_active = 'Y' and im_priority = (select min(im_priority) from Isin Where im_scripcd = MPT_scripcd and im_active = 'Y' ) ";
-                Strsql = Strsql + " and Tmp_scripcd = im_scripcd ";
-                Strsql = Strsql + " and  Tmp_scripcd = MPT_scripcd and ss_cd = MPT_scripcd ";
-                Strsql = Strsql + " and MPT_clientcd in (" + strClient.Trim() + ") and MPT_TRXFlag ='R'";
-                Strsql += " and MPT_OurDP in (" + strOurdp + ") ";
-                Strsql = Strsql + " group by MPT_clientcd,MPT_scripcd,im_isin,ss_name,ss_bserate,Tmp_haricut ";
-                Strsql = Strsql + " having abs(Sum(case MPT_DRCR when 'D' Then MPT_Qty else -MPT_Qty end)) > 0 ";
-            }
-
-            DsMPTrx = OpenDataSet("select * from SysObjects where name= 'CUSAPledge_TRX'");
-            if (DsMPTrx.Tables[0].Rows.Count > 0)
-            {
-                string strOurdp = string.Empty;
-                DataTable dt = OpenDataTable("select distinct CUP_OurDP from CUSAPledge_TRX Where CUP_TRXFlag ='P'");
-                if (dt.Rows.Count > 0)
-                {
-                    for (int i = 0; i <= dt.Rows.Count - 1; i++)
-                    {
-                        strOurdp += "'" + dt.Rows[i]["CUP_OurDP"].ToString().Trim() + "',";
-                    }
-                    strOurdp = strOurdp.Remove(strOurdp.Length - 1);
-                }
-                else
-                {
-                    strOurdp = "''";
-                }
-                Strsql = Strsql + " union all ";
-                Strsql = Strsql + " select CUP_clientcd dm_clientcd,CUP_scripcd dm_scripcd,sum(case When CUP_DRCR ='C' Then CUP_Qty else -CUP_Qty  end) as qty,im_isin,ss_name,ss_bserate, ";
-                Strsql = Strsql + " (ss_bserate*sum(case When CUP_DRCR ='C' Then CUP_Qty else -CUP_Qty  end)) as valuation ,'CUSPA Pledge' bh_type,cast((Tmp_haricut) as decimal(15,2)) HairCut, ";
-                Strsql = Strsql + " convert(decimal(15,2), 0) as AfterHaricut ,''  ";
-                Strsql = Strsql + " ,'' unpledge,";
-                Strsql = Strsql + " '' lnkUnPledge ";
-                Strsql = Strsql + " from CUSAPledge_TRX a,securities with (nolock),#TmpVarMargin ,Isin with (nolock) ";
-                Strsql = Strsql + " where im_scripcd = ss_cd and im_active = 'Y' and im_priority = (select min(im_priority) from Isin Where im_scripcd = CUP_scripcd and im_active = 'Y' )  ";
-                Strsql = Strsql + " and Tmp_scripcd = im_scripcd ";
-                Strsql = Strsql + " and  Tmp_scripcd = CUP_scripcd and ss_cd = CUP_scripcd ";
-                Strsql = Strsql + " and CUP_clientcd in (" + strClient.Trim() + ") ";
-                Strsql += " and CUP_OurDP in (" + strOurdp + ") ";
-                Strsql = Strsql + " group by CUP_clientcd,CUP_scripcd,im_isin,ss_name,ss_bserate,Tmp_haricut ";
-                Strsql = Strsql + " having abs(sum(case When CUP_DRCR ='C' Then CUP_Qty else -CUP_Qty  end)) > 0 ";
-                Strsql = Strsql + " union all ";
-                Strsql = Strsql + " select CUP_clientcd dm_clientcd,CUP_scripcd dm_scripcd,Sum(case CUP_DRCR when 'D' Then CUP_Qty else -CUP_Qty end) as qty,im_isin,ss_name,ss_bserate, ";
-                Strsql = Strsql + " (ss_bserate*Sum(case CUP_DRCR when 'D' Then CUP_Qty else -CUP_Qty end)) as valuation ,'CUSPA Re-Pledge' bh_type,cast((Tmp_haricut) as decimal(15,2)) HairCut, ";
-                Strsql = Strsql + " convert(decimal(15,2), 0) as AfterHaricut ,'' ";
-                Strsql = Strsql + " ,''  unpledge,";
-                Strsql = Strsql + " '' lnkUnPledge ";
-                Strsql = Strsql + " from CUSAPledge_TRX a,securities with (nolock),#TmpVarMargin ,Isin with (nolock) ";
-                Strsql = Strsql + " where im_scripcd = ss_cd and im_active = 'Y' and im_priority = (select min(im_priority) from Isin Where im_scripcd = CUP_scripcd and im_active = 'Y' ) ";
-                Strsql = Strsql + " and Tmp_scripcd = im_scripcd ";
-                Strsql = Strsql + " and  Tmp_scripcd = CUP_scripcd and ss_cd = CUP_scripcd ";
-                Strsql = Strsql + " and CUP_clientcd in (" + strClient.Trim() + ") and CUP_TRXFlag ='R'";
-                Strsql += " and CUP_OurDP in (" + strOurdp + ") ";
-                Strsql = Strsql + " group by CUP_clientcd,CUP_scripcd,im_isin,ss_name,ss_bserate,Tmp_haricut ";
-                Strsql = Strsql + " having abs(Sum(case CUP_DRCR when 'D' Then CUP_Qty else -CUP_Qty end)) > 0 ";
-            }
-            return Strsql;
-        }
-
-        public void GetHairCut(SqlConnection ObjConnectionTmp)
-        {
-            string Strsql = string.Empty;
-            SqlCommand ObjCommand = new SqlCommand();
-            SqlDataAdapter ObjAdapter = new SqlDataAdapter();
-            DataSet ObjDataSet = new DataSet();
-
-            try
-            {
-                Strsql = "Create Table #TmpVarMargin (Tmp_scripcd VarChar(6), Tmp_haricut money )";
-                ExecuteSQLTmp(Strsql, ObjConnectionTmp);
-            }
-            catch (Exception e)
-            {
-                Strsql = "Drop table  #TmpVarMargin";
-                ExecuteSQLTmp(Strsql, ObjConnectionTmp);
-
-                Strsql = "Create Table #TmpVarMargin (Tmp_scripcd VarChar(6), Tmp_haricut money )";
-                ExecuteSQLTmp(Strsql, ObjConnectionTmp);
-            }
-
-            Strsql = "Create index #idx_TmpVarMargin_scripcd on #TmpVarMargin (Tmp_scripcd)";
-            ExecuteSQLTmp(Strsql, ObjConnectionTmp);
-
-            Strsql = "insert into #TmpVarMargin select ss_cd , 0 From securities";
-            ExecuteSQLTmp(Strsql, ObjConnectionTmp);
-
-            //Strsql = "update #TmpVarMargin set Tmp_haricut =isnull((select Case When vm_exchange = 'N' Or vm_exchange = 'Z'";
-            //Strsql = Strsql + " then vm_applicable_var else vm_margin_rate end from VarMargin";
-            //Strsql = Strsql + " where vm_scripcd = Tmp_scripcd and vm_exchange+vm_dt =(select max(vm_exchange+vm_dt) from VarMargin Where vm_scripcd = Tmp_scripcd)),0)";
-            Strsql = " update #TmpVarMargin set Tmp_haricut = case When lv_BseDt > lv_NseDt Then lv_BseVarMargin else lv_NseVarMargin end from LVarMargin with (nolock) where lv_Scripcd = Tmp_scripcd ";
-            ExecuteSQLTmp(Strsql, ObjConnectionTmp);
-
-
-            Strsql = "Select em_name from entity_master with (nolock) where len(em_cd)=1 ";
-            DataSet ObjDataSet1 = new DataSet();
-            ObjCommand.CommandText = Strsql;
-            ObjCommand.Connection = ObjConnectionTmp;
-            ObjAdapter.SelectCommand = ObjCommand;
-            ObjAdapter.Fill(ObjDataSet1);
-            if (ObjDataSet1.Tables[0].Rows.Count > 0)
-            {
-                if (ObjDataSet1.Tables[0].Rows[0][0].ToString().Contains("BP"))
-                {
-                    Strsql = "  update #TmpVarMargin set Tmp_haricut = 25.00 where  Tmp_haricut < 25";
-                    ExecuteSQLTmp(Strsql, ObjConnectionTmp);
-                }
-            }
-        }
-
-        public DataSet fnForBill(string userId, string exchSeg, string dt, SqlConnection ObjConnectionTmp)
-        {
-            if (exchSeg.Substring(1, 1) != "X")
-            {
-                prTempFOBill(ObjConnectionTmp);
-
-                string strinsert = string.Empty;
-                strinsert = "insert into #tmpmosesdates values('" + dt + "') ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                string StrExchWhere = "";
-                string strIndexName = string.Empty;
-                string strsql = string.Empty;
-
-                strIndexName = "idx_trades_dt_clientcd";
-                strsql = "Select Name from sysindexes where Name= 'idx_trades_clientcd'";
-                DataSet ObjIndexds = OpenDataSet(strsql);
-                if (ObjIndexds.Tables[0].Rows.Count > 0)
-                {
-                    strIndexName = "idx_trades_clientcd";
-                }
-
-                if (exchSeg.Substring(0, 1) == "X")
-                { StrExchWhere = ""; }
-                else
-                { StrExchWhere = "and td_exchange = '" + exchSeg.Substring(0, 1) + "'"; }
-
-                strinsert = " insert into  ##tmpfobill  select 1 td_controlflag,'" + dt + "',td_clientcd, ";
-                strinsert = strinsert + " td_mainbrcd, td_seriesid,'',case sign(sum(td_bqty - td_sqty)) when 1 then abs(sum(td_bqty - td_sqty)) else 0 end  td_bqty, case sign(sum(td_bqty - td_sqty)) when 1 then 0 else abs(sum(td_bqty - td_sqty)) end td_sqty, 0.0000 td_rate,0.0000 td_mainbrrate,0.0000 td_mainbrrate, 0.0000 td_servicetax,0.0000 td_closeprice, case sm_prodtype when 'IF' then 1 when 'CF' then 1 when 'EF' then 2 when 'IO' then 5 else 6 end td_sortlist, sm_prodtype,0 ,td_exchange ";
-                strinsert = strinsert + " ,0,0 From Trades with(nolock,index(" + strIndexName + ")) , Series_master with(nolock),Client_master with(nolock)";
-                strinsert = strinsert + " Where td_clientcd = cm_cd and td_exchange = sm_exchange and td_Segment = sm_Segment And td_seriesid = sm_seriesid and sm_expirydt >= '" + dt + "' and  td_dt < '" + dt + "' " + StrExchWhere + " and td_Segment = '" + exchSeg.Substring(1, 1) + "' and sm_prodtype in('IF','EF','CF')  and ltrim(rtrim(td_groupid)) <> 'B'  and td_clientcd = '" + userId + "' group by td_clientcd,td_mainbrcd,td_seriesid,sm_prodtype,td_exchange having sum(td_bqty - td_sqty) <> 0 ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = " insert into ##tmpfobill select 2 td_controlflag,td_dt,td_clientcd,td_mainbrcd, td_seriesid,'',td_bqty,td_sqty, td_rate, td_mainbrrate, td_mainbrrate, td_servicetax,0.0000 td_closeprice, case sm_prodtype when 'IF' then 1 when 'CF' then 1 when 'EF' then 2 when 'IO' then 5 else 6 end td_sortlist, sm_prodtype,0,td_exchange ";
-                strinsert = strinsert + " ,convert(decimal (15,2),td_marketrate) as tx_marketrate1,convert(decimal (15,4),td_brokerage) tx_Brokerage From Trades with(nolock,index(" + strIndexName + ")) , Series_master with(nolock),Client_master with(nolock)";
-                strinsert = strinsert + " Where td_clientcd = cm_cd and td_exchange = sm_exchange and td_Segment = sm_Segment and td_seriesid = sm_seriesid and sm_expirydt >= '" + dt + "' and  td_dt between '" + dt + "' and '" + dt + "' " + StrExchWhere + " and td_Segment = '" + exchSeg.Substring(1, 1) + "' and cm_cd = '" + userId + "' Order By td_tradeid , td_subtradeid ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = " insert into ##tmpfobill select 2 td_controlflag,td_dt,td_clientcd,td_mainbrcd, td_seriesid,'',td_sqty,td_bqty, convert(decimal (15,2),td_marketrate) as tx_marketrate1, td_mainbrrate, td_mainbrrate, 0,0.0000 td_closeprice, case sm_prodtype when 'IF' then 1 when 'CF' then 1 when 'EF' then 2 when 'IO' then 5 else 6 end td_sortlist, sm_prodtype,0,td_exchange ";
-                strinsert = strinsert + " ,convert(decimal (15,2),td_marketrate) as tx_marketrate1,convert(decimal (15,4),td_brokerage) tx_Brokerage From Trades with(nolock,index(" + strIndexName + ")) , Series_master,Client_master ";
-                strinsert = strinsert + " Where td_clientcd = cm_cd and td_exchange = sm_exchange and td_Segment = sm_Segment and td_seriesid = sm_seriesid and sm_expirydt >= '" + dt + "' and  td_dt between '" + dt + "' and '" + dt + "' " + StrExchWhere + " and td_Segment = '" + exchSeg.Substring(1, 1) + "' and ltrim(rtrim(td_groupid)) = 'B'  and td_clientcd = '" + userId + "' Order By td_tradeid , td_subtradeid ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = " insert into ##tmpfobill  select 99 tx_controlflag,bd_dt,tx_clientcd,tx_mainbrcd, tx_seriesid,'',  case sign(sum(tx_bqty - tx_sqty)) when 1 then abs(sum(tx_bqty - tx_sqty)) else 0 end  tx_bqty,  case sign(sum(tx_bqty - tx_sqty)) when 1 then 0 else abs(sum(tx_bqty - tx_sqty)) end tx_sqty,  0.0000 tx_rate,0.0000 tx_mainbrrate,0.0000 tx_mainbrrate, 0.0000 tx_servicetax,0.0000 tx_closeprice,  case sm_prodtype when 'IF' then 1 when 'CF' then 1 when 'EF' then 2 when 'IO' then 5 else 6 end tx_sortlist, sm_prodtype,0 ,sm_exchange";
-                strinsert = strinsert + " ,0,0 From ##tmpfobill  , #tmpmosesdates , Series_master with (nolock),Client_master with (nolock)";
-                strinsert = strinsert + " Where tx_clientcd = cm_cd and sm_exchange = tx_exchange and sm_Segment = '" + exchSeg.Substring(1, 1) + "' And tx_seriesid = sm_seriesid  and sm_expirydt >= bd_dt and  tx_dt < bd_dt  and sm_prodtype in('IF','EF','CF')  and tx_controlflag not in ( '99','3')  group by bd_dt,tx_clientcd,tx_mainbrcd,tx_seriesid,sm_prodtype,sm_exchange  Having Sum(tx_bqty - tx_sqty) <> 0 ";
-                strinsert = strinsert + " Union All ";
-                strinsert = strinsert + " select 3 tx_controlflag,bd_dt,tx_clientcd,tx_mainbrcd, tx_seriesid,'', ";
-                strinsert = strinsert + " case sign(sum(tx_bqty - tx_sqty)) when 1 then 0 else abs(sum(tx_bqty - tx_sqty)) end tx_bqty, ";
-                strinsert = strinsert + " case sign(sum(tx_bqty - tx_sqty)) when 1 then abs(sum(tx_bqty - tx_sqty)) else 0 end  tx_sqty, ";
-                strinsert = strinsert + " 0.0000 tx_rate,0.0000 tx_mainbrrate,0.0000 tx_mainbrrate, 0.0000 tx_servicetax,0.0000 tx_closeprice, ";
-                strinsert = strinsert + " case sm_prodtype when 'IF' then 1 when 'CF' then 1 when 'EF' then 2 when 'IO' then 5 else 6 end tx_sortlist, sm_prodtype,0,sm_exchange ";
-                strinsert = strinsert + " ,0,0 From ##tmpfobill  , #tmpmosesdates , Series_master with (nolock),Client_master with (nolock) ";
-                strinsert = strinsert + " Where tx_clientcd = cm_cd and sm_exchange = tx_exchange and sm_Segment = '" + exchSeg.Substring(1, 1) + "' And tx_seriesid = sm_seriesid ";
-                strinsert = strinsert + " and sm_expirydt >= bd_dt and  tx_dt <= bd_dt ";
-                strinsert = strinsert + " and sm_prodtype in('IF','EF','CF') ";
-                strinsert = strinsert + " and tx_controlflag not in ( '99','3') ";
-                strinsert = strinsert + " group by bd_dt,tx_clientcd,tx_mainbrcd,tx_seriesid,sm_prodtype,sm_exchange ";
-                strinsert = strinsert + " Having Sum(tx_bqty - tx_sqty) <> 0 ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "Update ##tmpfobill set tx_controlflag = '1' where tx_controlflag = '99' ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "insert into ##tmpfobill select case ex_eaflag when 'E' then 5 else 6 end td_controlflag,ex_dt,ex_clientcd,ex_mainbrcd, ex_seriesid,'',ex_eqty,ex_aqty, ex_diffbrokrate,ex_mainbrdiffrate,ex_mainbrdiffrate, ex_servicetax,ex_settlerate, case sm_prodtype when 'IF' then 1 when 'CF' then 1 when 'EF' then 2 when 'IO' then 5 else 6 end + 3 td_sortlist, sm_prodtype,0 ,ex_exchange";
-                strinsert = strinsert + " ,convert(decimal (15,2),ex_diffrate) as tx_marketrate1 ,convert(decimal(15,2),ex_brokerage) tx_Brokerage From Exercise with (nolock), Series_master with (nolock) ,Client_master with (nolock) ";
-                strinsert = strinsert + "Where ex_clientcd = cm_cd and ex_exchange = sm_exchange and ex_Segment = sm_Segment And ex_seriesid = sm_seriesid and sm_expirydt >= '" + dt + "' and ex_dt between '" + dt + "' and '" + dt + "' " + StrExchWhere.Replace("td_", "ex_") + " and ex_Segment = '" + exchSeg.Substring(1, 1) + "' and cm_cd = '" + userId + "' ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "insert into #tmpbillcharges select tx_dt,tx_clientcd,'SERVICE TAX',round(sum(tx_servicetax),2),0,tx_exchange ";
-                strinsert = strinsert + " from ##tmpfobill,#tmpmosesdates,Client_master with (nolock) ";
-                strinsert = strinsert + " where tx_clientcd = cm_cd and tx_dt = bd_dt and cm_cd = '" + userId + "' group by tx_dt,tx_clientcd,tx_exchange having sum(tx_servicetax) > 0 ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "update ##tmpfobill set tx_closerate = ms_lastprice ";
-                strinsert = strinsert + " from ##tmpfobill, Market_summary with (nolock) ";
-                strinsert = strinsert + " where ms_seriesid = tx_seriesid and tx_controlflag in ('1','2') and ms_exchange=tx_exchange and ms_Segment = '" + exchSeg.Substring(1, 1) + "' and ms_dt = tx_dt ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "update ##tmpfobill set tx_rate = ms_prcloseprice ";
-                strinsert = strinsert + " from ##tmpfobill,Market_summary with (nolock) ";
-                strinsert = strinsert + " where ms_seriesid = tx_seriesid and tx_controlflag = 1 and ms_exchange = tx_Exchange  and ms_Segment = '" + exchSeg.Substring(1, 1) + "' and ms_dt = tx_dt ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "update ##tmpfobill set tx_rate = ms_lastprice from ##tmpfobill,Market_summary with (nolock) ";
-                strinsert = strinsert + " where ms_seriesid = tx_seriesid and tx_controlflag = 3";
-                strinsert = strinsert + " and ms_exchange = tx_Exchange  and ms_Segment = '" + exchSeg.Substring(1, 1) + "'";
-                strinsert = strinsert + " and ms_dt = tx_dt";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "insert into #tmpbillcharges select fc_dt,fc_clientcd,fc_desc,round(sum(fc_amount),2),0,fc_exchange ";
-                strinsert = strinsert + " from Fspecialcharges with (nolock) ,#tmpmosesdates,Client_master with (nolock) ";
-                strinsert = strinsert + " where fc_clientcd = cm_cd and fc_dt = bd_dt and cm_cd = '" + userId + "' " + StrExchWhere.Replace("td_", "fc_") + " and fc_Segment = '" + exchSeg.Substring(1, 1) + "' group by fc_dt,fc_clientcd,fc_desc,fc_exchange having round(sum(fc_amount),2) <> 0 ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "insert into #tmpbillcharges select fc_dt,fc_clientcd,'SERVICE TAX',round(sum(fc_servicetax),2),0,fc_exchange ";
-                strinsert = strinsert + " from Fspecialcharges with (nolock) ,#tmpmosesdates,Client_master with (nolock) ";
-                strinsert = strinsert + " where fc_clientcd = cm_cd and fc_dt = bd_dt and cm_cd = '" + userId + "' " + StrExchWhere.Replace("td_", "fc_") + " and fc_Segment = '" + exchSeg.Substring(1, 1) + "' group by fc_dt,fc_clientcd,fc_desc,fc_exchange having round(sum(fc_servicetax),2) <> 0 ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "update ##tmpfobill set tx_value = round(((case tx_controlflag when 5  then (tx_bqty + tx_sqty)*-1 when 6 then (tx_bqty + tx_sqty)*-1 else (tx_bqty - tx_sqty) end) *tx_rate)*sm_multiplier,4)";
-                strinsert = strinsert + " From series_master with (nolock) ";
-                strinsert = strinsert + " Where sm_Segment = '" + exchSeg.Substring(1, 1) + "' and sm_exchange = tx_Exchange and tx_seriesid = sm_seriesid ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "insert into ##tmpfobill select 10 ,bc_dt,bc_clientcd,bc_clientcd, 1,upper(bc_desc),0 td_bqty,0 td_sqty, 0,0 td_mainbrrate,0 td_mainbrrate, 0 td_servicetax,0.0000 td_closeprice, 10 td_sortlist, 'XX',round(sum(bc_amount),2),bc_exchange,0,0 From #tmpbillcharges group by bc_dt,bc_clientcd,bc_desc,bc_exchange ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "insert into ##tmpfobill select 90 ,fb_billdt,fb_clientcd,fb_clientcd, 1,'[PREV. DAY MRGN.]',0 td_bqty,0 td_sqty, 0,0 td_mainbrrate,0 td_mainbrrate, 0 td_servicetax,0.0000 td_closeprice, 90 td_sortlist, 'XX',round(Case when fb_postmrgyn = 'Y' then fb_margin1 else 0 end + CAse When fb_postExpmrgyn = 'Y' then fb_Expmargin1 else 0 end ,2),fb_exchange ";
-                strinsert = strinsert + " ,0,0 From #tmpmosesdates,Fbills with (nolock) ,Client_master with (nolock) ";
-                strinsert = strinsert + " where fb_clientcd = cm_cd and fb_billdt = bd_dt " + StrExchWhere.Replace("td_", "fb_") + " and fb_Segment = '" + exchSeg.Substring(1, 1) + "' and round(Case when fb_postmrgyn = 'Y' then fb_margin1 else 0 end + CAse When fb_postExpmrgyn = 'Y' then fb_Expmargin1 else 0 end ,2) <> 0  and cm_cd = '" + userId + "' ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "insert into ##tmpfobill select 91 ,fb_billdt,fb_clientcd,fb_clientcd, 1,'[CURR. DAY MRGN.]',0 td_bqty,0 td_sqty, 0,0 td_mainbrrate,0 td_mainbrrate, 0 td_servicetax,0.0000 td_closeprice, 91 td_sortlist, 'XX',round(Case When fb_postmrgyn = 'Y' then fb_margin2 else 0 end + Case When fb_postExpmrgyn = 'Y' then fb_Expmargin2 else 0 end,2),fb_exchange ";
-                strinsert = strinsert + " ,0,0 From #tmpmosesdates,Fbills with (nolock) ,Client_master with (nolock) ";
-                strinsert = strinsert + " where fb_clientcd = cm_cd and fb_billdt = bd_dt " + StrExchWhere.Replace("td_", "fb_") + " and fb_Segment = '" + exchSeg.Substring(1, 1) + "' and round(Case When fb_postmrgyn = 'Y' then fb_margin2 else 0 end + Case When fb_postExpmrgyn = 'Y' then fb_Expmargin2 else 0 end,2) <> 0  and cm_cd = '" + userId + "' ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "alter table ##tmpfobill add tx_billno numeric default(0) NOT NULL ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "update ##tmpfobill set tx_billno = fb_billno from ##tmpfobill,Fbills with (nolock) where fb_clientcd = tx_clientcd  and fb_exchange = tx_exchange and fb_Segment = '" + exchSeg.Substring(1, 1) + "' and fb_billdt = tx_dt  ";
-                ExecuteSQLTmp(strinsert, ObjConnectionTmp);
-
-                strinsert = "select tx_sortlist,tx_dt as dt,tx_billno,case tx_controlflag when '1' then 'b/f' when '3' then 'c/f' else convert(char,convert(datetime,tx_dt),103) end tx_dt,tx_clientcd, tx_seriesid,sm_sname as tx_desc, cast((tx_bqty)as decimal(15,0))as tx_bqty,cast((tx_sqty)as decimal(15,0))as tx_sqty,cast((tx_rate)as decimal(15,4))as tx_rate,cast((tx_closerate)as decimal(15,4))as tx_closerate,cast((tx_value)as decimal(15,2))as drcr,cast((((tx_bqty-tx_sqty) * tx_rate)) as decimal(15,2)) value,sm_sname,sm_desc,sm_productcd,sm_symbol, ";
-                strinsert = strinsert + " sm_expirydt,sm_strikeprice,sm_callput,sm_optionstyle,cm_name, ";
-                strinsert = strinsert + " cm_add1,cm_add2,cm_add3,cm_tele1,cm_tele2,cm_email,cm_sebino, cm_panno, cm_add4, cm_pincode,sm_prodtype,cm_groupcd,cm_familycd,cm_brboffcode,cm_subbroker,sm_multiplier, ";
-                strinsert = strinsert + " cm_introducer ,replicate(' ',8-len(ltrim(rtrim(tx_clientcd)))) + ltrim(rtrim(tx_clientcd)) tx_clientcd2 ,case tx_controlflag when '1' then 0 when '3' then 2 else 1 end ord, '' as NetValue ";
-                strinsert = strinsert + " ,tx_marketrate1,tx_Brokerage from ##tmpfobill,Series_master with (nolock) ,Client_master with (nolock) ";
-                strinsert = strinsert + " where tx_clientcd = cm_cd and tx_seriesid = sm_seriesid and tx_exchange = sm_exchange and sm_Segment = '" + exchSeg.Substring(1, 1) + "' and tx_controlflag < 10 ";
-                strinsert = strinsert + " union all ";
-                strinsert = strinsert + " select tx_sortlist,tx_dt as dt,tx_billno,case tx_controlflag when '1' then 'b/f' when '3' then 'c/f' else convert(char,convert(datetime,tx_dt),103) end tx_dt,tx_clientcd, tx_seriesid,tx_desc, cast((tx_bqty)as decimal(15,0))as tx_bqty,cast((tx_sqty)as decimal(15,0))as tx_sqty,cast((tx_rate)as decimal(15,4))as tx_rate,cast((tx_closerate)as decimal(15,4))as tx_closerate,cast((tx_value)as decimal(15,2)) as drcr,cast((((tx_bqty-tx_sqty) * tx_rate))as decimal(15,2)) value, tx_desc as sm_sname,'' sm_desc,'' sm_productcd,'' sm_symbol,'' sm_expirydt, 0 sm_strikeprice, 'X' sm_callput,'X' sm_optionstyle, cm_name,cm_add1,cm_add2,cm_add3,cm_tele1,cm_tele2,cm_email, cm_sebino, cm_panno,cm_add4, ";
-                strinsert = strinsert + " cm_pincode,'EF' as sm_prodtype,cm_groupcd,cm_familycd,cm_brboffcode, ";
-                strinsert = strinsert + " cm_subbroker,0 sm_multiplier,cm_introducer ,replicate('',8-len(ltrim(rtrim(tx_clientcd)))) + ltrim(rtrim(tx_clientcd)),case tx_controlflag when '1' then 0 when '3' then 2 else 1 end ord, '' as NetValue  ";
-                strinsert = strinsert + " ,tx_marketrate1,tx_Brokerage from ##tmpfobill,Client_master with (nolock) ";
-                strinsert = strinsert + " where tx_clientcd = cm_cd and tx_controlflag >= 10 ";
-
-                DataSet objDataset = new DataSet();
-
-                strinsert = " select tx_dt Date,tx_seriesid SeriesId,tx_desc SeriesName,tx_bqty buy,tx_sqty sell,tx_marketrate1 Marketrate, tx_rate Rate,tx_closerate CloseRate,drcr,value,NetValue,tx_sortlist SortOrder,tx_billno BillNo, tx_Brokerage as Brokerage from ( " + strinsert + " ) a ";
-                strinsert += " order by  dt ,tx_sortlist,sm_symbol,tx_seriesid,tx_desc  , ord ";
-                objDataset = OpenDataSetTmp(strinsert, ObjConnectionTmp);
-
-                string StrDrop = string.Empty;
-                prTempFOBill(ObjConnectionTmp);
-                return objDataset;
-
-            }
-
-            else //MCX And NCDEX
-            {
-                prTempFOBill1(ObjConnectionTmp);
-                string strsql = string.Empty;
-
-                strsql = "insert into #tmpmosesdates values('" + dt + "') ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-                string strDelivery = string.Empty;
-                string strSeries_master = string.Empty;
-                string strClient_master = string.Empty;
-                string strTrades = string.Empty;
-                string strMarket_summary = string.Empty;
-                string strFspecialcharges = string.Empty;
-                string strproduct_master = string.Empty;
-                string strFbills = string.Empty;
-
-
-                if (ConfigurationManager["IsTradeWeb"] == "O")
-                {
-                    if (ConfigurationManager["Commex"] != null || ConfigurationManager["Commex"] != string.Empty)
-                    {
-                        string StrCommexConn = "";
-                        StrCommexConn = GetCommexConnection();
-
-                        strSeries_master = StrCommexConn + ".Series_master";
-                        strClient_master = StrCommexConn + ".Client_master";
-                        strTrades = StrCommexConn + ".Trades";
-                        strDelivery = StrCommexConn + ".Delivery";
-                        strMarket_summary = StrCommexConn + ".Market_summary";
-                        strFspecialcharges = StrCommexConn + ".Fspecialcharges";
-                        strproduct_master = StrCommexConn + ".product_master";
-                        strFbills = StrCommexConn + ".Fbills";
-                    }
-                }
-                strsql = "insert into ##tmpfobill select 1 td_controlflag,bd_dt,td_clientcd,td_mainbrcd, td_seriesid,'',case sign(sum(td_bqty - td_sqty)) when 1 then abs(sum(td_bqty - td_sqty)) else 0 end  td_bqty, case sign(sum(td_bqty - td_sqty)) when 1 then 0 else abs(sum(td_bqty - td_sqty)) end td_sqty, 0.0000 td_rate,0.0000 td_mainbrrate,0.0000 td_mainbrrate, 0.0000 td_servicetax,0.0000 td_closeprice, case sm_prodtype when 'CF' then 1 when 'CO' then 2 else 6 end td_sortlist, sm_prodtype,0, sm_multiplier , 0 td_tradeid, '' td_time, 0 td_orderid";
-                strsql = strsql + " From " + strTrades + ", #tmpmosesdates, " + strSeries_master + "," + strClient_master + " ";
-                strsql = strsql + "Where td_clientcd = cm_cd and td_exchange = sm_exchange And td_seriesid = sm_seriesid and sm_expirydt >= bd_dt and  td_dt < bd_dt and td_exchange = '" + exchSeg.Substring(0, 1) + "' and sm_prodtype in('CF') and cm_cd = '" + userId + "' group by bd_dt,td_clientcd,td_mainbrcd,td_seriesid,sm_prodtype, sm_multiplier   having sum(td_bqty - td_sqty) <> 0 ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "insert into ##tmpfobill select 2 td_controlflag,bd_dt,td_clientcd,td_mainbrcd, td_seriesid,'',td_bqty,td_sqty, td_rate,td_mainbrrate,td_mainbrrate, td_servicetax,0.0000 td_closeprice, case sm_prodtype when 'CF' then 1 when 'CO' then 2 else 6 end td_sortlist, sm_prodtype, 0, sm_multiplier, td_tradeid, td_time, td_orderid";
-                strsql = strsql + " From " + strTrades + ", #tmpmosesdates, " + strSeries_master + "," + strClient_master + " ";
-                strsql = strsql + "Where td_clientcd = cm_cd and td_exchange = sm_exchange and td_seriesid = sm_seriesid and sm_expirydt >= bd_dt and  td_dt = bd_dt and td_exchange = '" + exchSeg.Substring(0, 1) + "' and cm_cd = '" + userId + "' ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = " insert into ##tmpfobill  select Case dl_type When 'DL' Then 7 When 'PD' Then 8 When 'SL' Then 9 When 'DS' Then 9.5 Else '' End td_controlflag, dl_BillDate,dl_clientcd,dl_mainbrcd, dl_seriesid,'',  dl_Bqty , dl_SQty ,  dl_rate , dl_mainbrrate, dl_marketrate, dl_servicetax,0,  case sm_prodtype when 'CF' then 1 when 'CO' then 2 else 6 end + 3 td_sortlist, sm_prodtype, (dl_bqty - dl_sQty) * dl_Rate * sm_multiplier  , sm_multiplier , 0 tx_tradeid, '' tx_time, 0 tx_orderid ";
-                strsql = strsql + "  From " + strDelivery + ", #tmpmosesdates, " + strSeries_master + "," + strClient_master + " ";
-                strsql = strsql + "  Where dl_clientcd = cm_cd And dl_exchange = sm_exchange And dl_seriesid = sm_seriesid  and  dl_BillDate = bd_dt  and dl_exchange = '" + exchSeg.Substring(0, 1) + "' and dl_type In ('DL','SL','PD','DS')  and cm_cd = '" + userId + "' ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "insert into ##tmpfobill select 3 td_controlflag,bd_dt,td_clientcd,td_mainbrcd, td_seriesid,'',case sign(sum(td_bqty - td_sqty)) when 1 then 0 else abs(sum(td_bqty - td_sqty)) end  td_bqty, case sign(sum(td_bqty - td_sqty)) when 1 then abs(sum(td_bqty - td_sqty)) else 0 end td_sqty, 0.0000 td_rate,0.0000 td_mainbrrate,0.0000 td_mainbrrate, 0.0000 td_servicetax,0.0000 td_closeprice, case sm_prodtype when 'CF' then 1 when 'CO' then 2 else 6 end td_sortlist, sm_prodtype,0, sm_multiplier, 0,'',0       ";
-                strsql = strsql + " From " + strTrades + ", #tmpmosesdates, " + strSeries_master + "," + strClient_master + " ";
-                strsql = strsql + " Where td_clientcd = cm_cd and td_exchange = sm_exchange And td_seriesid = sm_seriesid and sm_expirydt >= bd_dt and  td_dt <= bd_dt and td_exchange = '" + exchSeg.Substring(0, 1) + "' and sm_prodtype in('CF') and cm_cd = '" + userId + "' group by bd_dt,td_clientcd,td_mainbrcd,td_seriesid,sm_prodtype, sm_multiplier having sum(td_bqty - td_sqty) <> 0";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "insert into #tmpbillcharges select tx_dt,tx_clientcd,'SERVICE TAX',round(sum(tx_servicetax),2),0 ";
-                strsql = strsql + " from ##tmpfobill,#tmpmosesdates," + strClient_master + " ";
-                strsql = strsql + "where tx_clientcd = cm_cd and tx_dt = bd_dt and cm_cd = '" + userId + "' group by tx_dt,tx_clientcd having sum(tx_servicetax) > 0 ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-                strsql = "update ##tmpfobill set tx_closerate = ms_lastprice ";
-                strsql = strsql + " from ##tmpfobill, " + strMarket_summary + " ";
-                strsql = strsql + " where ms_seriesid = tx_seriesid and tx_controlflag in ('1','2') and ms_exchange = '" + exchSeg.Substring(0, 1) + "' and ms_dt = tx_dt ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-                strsql = "update ##tmpfobill set tx_rate = ms_prcloseprice ";
-                strsql = strsql + " from ##tmpfobill," + strMarket_summary + " ";
-                strsql = strsql + " where ms_seriesid = tx_seriesid and tx_controlflag = 1 and ms_exchange = '" + exchSeg.Substring(0, 1) + "' and ms_dt = tx_dt ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-                strsql = "update ##tmpfobill set tx_rate = ms_lastprice ";
-                strsql = strsql + " from ##tmpfobill, " + strMarket_summary + " ";
-                strsql = strsql + " where ms_seriesid = tx_seriesid and tx_controlflag = 3 and ms_exchange = '" + exchSeg.Substring(0, 1) + "' and ms_dt = tx_dt ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "insert into #tmpbillcharges select fc_dt,fc_clientcd,fc_desc,round(sum(fc_amount),2),0";
-                strsql = strsql + " from " + strFspecialcharges + ",#tmpmosesdates," + strClient_master + " ";
-                strsql = strsql + " where fc_clientcd = cm_cd and fc_dt = bd_dt and cm_cd = '" + userId + "' and fc_exchange = '" + exchSeg.Substring(0, 1) + "' group by fc_dt,fc_clientcd,fc_desc having round(sum(fc_amount),2) <> 0 ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "insert into #tmpbillcharges select fc_dt,fc_clientcd,'SERVICE TAX',round(sum(fc_servicetax),2),0 ";
-                strsql = strsql + " from " + strFspecialcharges + ",#tmpmosesdates," + strClient_master + " ";
-                strsql = strsql + " where fc_clientcd = cm_cd and fc_dt = bd_dt and cm_cd = '" + userId + "' and fc_exchange = '" + exchSeg.Substring(0, 1) + "' group by fc_dt,fc_clientcd,fc_desc having round(sum(fc_servicetax),2) <> 0 ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "update ##tmpfobill set tx_value = round(((case tx_controlflag when 5  then (tx_bqty + tx_sqty)*0 when 6 then (tx_bqty + tx_sqty)*0 else (tx_bqty - tx_sqty) end) *tx_rate)*tx_multiplier,4) ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "insert into ##tmpfobill select 10 ,bc_dt,bc_clientcd,bc_clientcd, 1,upper(bc_desc),0 td_bqty,0 td_sqty, 0,0 td_mainbrrate,0 td_mainbrrate, 0 td_servicetax,0.0000 td_closeprice, 10 td_sortlist, 'XX',round(sum(bc_amount),2),0,0,'',0 ";
-                strsql = strsql + " From #tmpbillcharges group by bc_dt,bc_clientcd,bc_desc ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "insert into ##tmpfobill select 90 ,fb_billdt,fb_clientcd,fb_clientcd, 1,'[PREV. DAY MRGN.]',0 td_bqty,0 td_sqty, 0,0 td_mainbrrate,0 td_mainbrrate, 0 td_servicetax,0.0000 td_closeprice, 90 td_sortlist, 'XX',round(fb_margin1,2),0, 0,'',0 ";
-                strsql = strsql + " From #tmpmosesdates," + strFbills + "," + strClient_master + " ";
-                strsql = strsql + " where fb_clientcd = cm_cd and fb_billdt = bd_dt and fb_exchange = '" + exchSeg.Substring(0, 1) + "' and fb_margin1 <> 0 and fb_postmrgyn = 'Y' and cm_cd = '" + userId + "' ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "insert into ##tmpfobill select 91 ,fb_billdt,fb_clientcd,fb_clientcd, 1,'[CURR. DAY MRGN.]',0 td_bqty,0 td_sqty, 0,0 td_mainbrrate,0 td_mainbrrate, 0 td_servicetax,0.0000 td_closeprice, 91 td_sortlist, 'XX',round(fb_margin2,2),0, 0, '', 0 ";
-                strsql = strsql + " From #tmpmosesdates," + strFbills + "," + strClient_master + " ";
-                strsql = strsql + " where fb_clientcd = cm_cd and fb_billdt = bd_dt and fb_exchange = '" + exchSeg.Substring(0, 1) + "' and fb_margin2 <> 0 and fb_postmrgyn = 'Y' and cm_cd = '" + userId + "' ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "alter table ##tmpfobill add tx_billno numeric default(0) NOT NULL ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "update ##tmpfobill set tx_billno = fb_billno ";
-                strsql = strsql + " from ##tmpfobill," + strFbills + " ";
-                strsql = strsql + " where fb_clientcd = tx_clientcd  and fb_exchange = '" + exchSeg.Substring(0, 1) + "' and fb_billdt = tx_dt ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "alter table ##tmpfobill add tx_unit char (15) ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "update a Set tx_unit=left(rtrim(convert(char,convert(numeric,floor(pm_divisor))))+' '+pm_unitper,15) ";
-                strsql = strsql + " from ##tmpfobill a, " + strSeries_master + ", " + strproduct_master + " ";
-                strsql = strsql + " where tx_seriesid = sm_seriesid and sm_exchange='" + exchSeg.Substring(0, 1) + "' and sm_prodtype=pm_type and sm_exchange=pm_exchange and sm_symbol=pm_assetcd ";
-                ExecuteSQLTmp(strsql, ObjConnectionTmp);
-
-
-                strsql = "select tx_sortlist,tx_dt as dt,tx_billno,case tx_controlflag when '1' then 'b/f' when '3' then 'c/f' else convert(char,convert(datetime,tx_dt),103) end tx_dt,tx_clientcd, tx_seriesid,sm_sname as tx_desc,cast((tx_bqty) as decimal(15,2)) as tx_bqty,cast((tx_sqty) as decimal(15,2)) as tx_sqty,cast((tx_rate) as decimal(15,4)) as tx_rate,cast((tx_closerate) as decimal(15,4)) as tx_closerate,cast((tx_value) as decimal(15,2)) as drcr,cast((((tx_bqty-tx_sqty) * tx_rate)) as decimal(15,2))  value,tx_multiplier, sm_sname,sm_desc,sm_productcd,sm_symbol, sm_expirydt,sm_strikeprice, sm_callput,sm_optionstyle,cm_name,cm_add1, cm_add2,cm_add3,cm_tele1, cm_tele2,cm_email, cm_sebino, cm_panno, cm_add4, cm_pincode, sm_prodtype,cm_groupcd,cm_familycd, cm_brboffcode, tx_tradeid,";
-                strsql = strsql + " case tx_controlflag when '1' then 'b/f' when '3' then 'c/f' else tx_time end tx_time, tx_orderid, tx_marketrate, tx_unit,case tx_controlflag when '1' then 0 when '3' then 2 else 1 end ord , '' as NetValue";
-                strsql = strsql + " from ##tmpfobill," + strSeries_master + "," + strClient_master + " ";
-                strsql = strsql + " where tx_clientcd = cm_cd and tx_seriesid = sm_seriesid and sm_exchange = '" + exchSeg.Substring(0, 1) + "' and tx_controlflag < 10 and cm_brboffcode <> '' ";
-                strsql = strsql + "union all ";
-                strsql = strsql + "select tx_sortlist,tx_dt as dt,tx_billno,case tx_controlflag when '1' then 'b/f' when '3' then 'c/f' else convert(char,convert(datetime,tx_dt),103) end tx_dt,tx_clientcd, tx_seriesid,tx_desc, cast((tx_bqty) as decimal(15,2)) as tx_bqty, cast((tx_sqty) as decimal(15,4)) as tx_sqty,tx_rate,cast((tx_closerate) as decimal(15,4)) as tx_closerate ,cast((tx_value) as decimal(15,2)) as drcr,cast((((tx_bqty-tx_sqty) * tx_rate)) as decimal(15,2))  value,tx_multiplier, tx_desc as  sm_sname,'' sm_desc,'' sm_productcd,'' sm_symbol,'' sm_expirydt, 0 sm_strikeprice, 'X' sm_callput,'X' sm_optionstyle, cm_name,cm_add1,cm_add2,cm_add3,cm_tele1,cm_tele2,cm_email, cm_sebino, cm_panno,cm_add4, cm_pincode,'EF' as sm_prodtype,cm_groupcd,cm_familycd, cm_brboffcode, tx_tradeid,";
-                strsql = strsql + "case tx_controlflag when '1' then 'b/f' when '3' then 'c/f' else tx_time end tx_time, tx_orderid, tx_marketrate, tx_unit,case tx_controlflag when '1' then 0 when '3' then 2 else 1 end ord, '' as NetValue";
-                strsql = strsql + " from ##tmpfobill," + strClient_master + " ";
-                strsql = strsql + " where tx_clientcd = cm_cd  and tx_controlflag >= 10 and cm_brboffcode <> ''";
-                DataSet objDataset = new DataSet();
-
-                strsql = " select tx_dt Date,tx_seriesid SeriesId,tx_desc SeriesName,tx_bqty Buy,tx_sqty Sell,tx_marketrate MarketRate, tx_rate Rate,tx_closerate CloseRate,drcr,value,NetValue,tx_sortlist SortOrder,tx_billno BillNo from ( " + strsql + " ) a ";
-                strsql += " order by  dt ,tx_sortlist,sm_symbol,tx_seriesid,tx_desc  , ord ";
-
-                objDataset = OpenDataSetTmp(strsql, ObjConnectionTmp);
-
-                string StrDrop = string.Empty;
-                prTempFOBill1(ObjConnectionTmp);
-                return objDataset;
-            }
-        }
-        //// TODO : Added for return string value;        
-        public string GetPaddedString(string StringToPad, int TotalExpectedLength)
-        {
-
-            int i = StringToPad.Length;
-            while (i < TotalExpectedLength)
-            {
-                StringToPad = StringToPad + " ";
-                i++;
-            }
-            return StringToPad;
-        }
-        public string GetLeftPaddedString(string StringToPad, int TotalExpectedLength)
-        {
-
-            int i = StringToPad.Length;
-            while (i < TotalExpectedLength)
-            {
-                StringToPad = " " + StringToPad;
-                i++;
-            }
-            return StringToPad;
-
-        }
-        public string GetFormattedDate(string Date)
-        {
-            int Year = int.Parse(Date.Substring(0, 4));
-            int Month = int.Parse(Date.Substring(4, 2));
-            int Day = int.Parse(Date.Substring(6, 2));
-
-            return new DateTime(Year, Month, Day).ToString("dd mm yyyy");
-        }
-        public string dtos(string dDate)
-        {    //for converting date to string format
-            string dtos;
-            if (dDate == null || dDate == "")
-                return dDate;
-            else
-                dtos = dDate.Substring(6, 4) + dDate.Substring(3, 2) + dDate.Substring(0, 2);
-            return dtos;
-        }
         public DateTime stod(string Date)
         {
             int Year = int.Parse(Date.Substring(0, 4));
@@ -982,125 +74,7 @@ namespace TradeWeb.API.Repository
             int Day = int.Parse(Date.Substring(6, 2));
             return new DateTime(Year, Month, Day);
         }
-        public string mfnFormatCurrency(Object objAmount, int intDecimal)
-        {
-            return Convert.ToDecimal(objAmount).ToString("N" + intDecimal).Trim().Replace(",", "");
-        }
-        public string GetHtmlFromUrl(string url)
-        {
-            if (string.IsNullOrEmpty(url))
-                throw new ArgumentNullException("url", "Parameter is null or empty");
 
-            string html = "";
-            HttpWebRequest request = GenerateHttpWebRequest(url);
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-            {
-
-                // Get the response stream.
-                Stream responseStream = response.GetResponseStream();
-                // Use a stream reader that understands UTF8.
-                using (StreamReader reader =
-                new StreamReader(responseStream, Encoding.UTF8))
-                {
-                    html = reader.ReadToEnd();
-                }
-            }
-            return html;
-        }
-
-        public HttpWebRequest GenerateHttpWebRequest(string UriString)
-        {
-            // Get a Uri object.
-            Uri Uri = new Uri(UriString);
-            // Create the initial request.
-            HttpWebRequest httpRequest = (HttpWebRequest)WebRequest.Create(Uri);
-            // Return the request.
-            return httpRequest;
-        }
-
-        public decimal mfnRoundoffCashbill(string strClient, string strRefDt, decimal dblBillamount, string strExchange)
-        {
-            string strGroup;
-            string strFamily;
-            string strsql = "";
-            decimal mfnRoundoffCashbill;
-
-            dblBillamount = Math.Round(dblBillamount, 4);
-
-            strsql = "select cm_groupcd,cm_familycd from Client_master where cm_cd = '" + strClient + "'";
-            DataSet objDataset = new DataSet();
-            objDataset = OpenDataSet(strsql);
-
-
-            if (objDataset.Tables[0].Rows.Count <= 0)
-            {
-                mfnRoundoffCashbill = Math.Round(dblBillamount, 2);
-                return mfnRoundoffCashbill;
-            }
-            else
-            {
-                strGroup = objDataset.Tables[0].Rows[0]["cm_groupcd"].ToString();
-                strFamily = objDataset.Tables[0].Rows[0]["cm_familycd"].ToString();
-            }
-
-            if (dblBillamount == 0 || strClient.Trim() == "")
-            {
-                mfnRoundoffCashbill = Math.Round(dblBillamount, 2);
-                return mfnRoundoffCashbill;
-            }
-
-            strsql = "select cg_ledgercd,(case cd_ratep when 0 then 1 else cd_ratep end) cd_ratep from Client_charges,Charges_master";
-            strsql = strsql + " where cg_companycode = cd_companycode and cg_exchange = cd_exchange and cd_cd = cg_cd ";
-            strsql = strsql + " and cd_exchange = '" + strExchange + "' and cg_cd = '00'";
-            strsql = strsql + " and (cd_clientcd + cd_groupcd + cd_familycd + cd_fromdt)";
-            strsql = strsql + " = (select max(cd_clientcd + cd_groupcd + cd_familycd + cd_fromdt)";
-            strsql = strsql + " from Client_charges where cd_cd = '00' and cd_companycode = cg_companycode";
-            strsql = strsql + " and cd_exchange = cg_exchange and (cd_clientcd ='" + strClient + "'";
-            strsql = strsql + " or cd_groupcd = '" + strGroup + "' or cd_familycd = '" + strFamily + "'";
-            strsql = strsql + " or (cd_clientcd + cd_groupcd + cd_familycd) ='')";
-            strsql = strsql + " and cd_fromdt <= '" + (strRefDt) + "')";
-
-            objDataset = new DataSet();
-            objDataset = OpenDataSet(strsql);
-
-            if (objDataset.Tables[0].Rows.Count == 0)
-            {
-                mfnRoundoffCashbill = Math.Round(dblBillamount, 2);
-            }
-            else
-            {
-                if (Convert.ToInt16(objDataset.Tables[0].Rows[0]["cd_ratep"]) == 1)
-                    mfnRoundoffCashbill = Math.Round(dblBillamount, 0);
-                else
-                    mfnRoundoffCashbill = Math.Round(dblBillamount, 2);
-            }
-            return mfnRoundoffCashbill;
-        }
-
-        /*public string Encrypt(string strenc)
-        {
-            int m = 0;
-            string strEncKey = null;
-            string gsEcDc = null;
-            string gsFinal = null;
-            string gsCompare = null;
-            int glNumber = 0;
-            strEncKey = "ASHOKKHE";
-            gsFinal = "";
-            glNumber = Strings.Len(Strings.Trim(strenc));
-            for (m = 1; m <= Math.Round((decimal)glNumber / 8) + 1; m++)
-            {
-                strEncKey = strEncKey + strEncKey;
-            }
-            m = 0;
-            for (m = 1; m <= glNumber; m++)
-            {
-                gsEcDc = Strings.Mid(strenc, m, 1);
-                gsCompare = Strings.Mid(strEncKey, m, 1);
-                gsFinal = gsFinal + Strings.Chr(Strings.Asc(gsEcDc) + Strings.Asc(gsCompare) + 13);
-            }
-            return gsFinal;
-        }*/
         public string Encrypt(string strenc)
         {
             int m = 0;
@@ -1127,6 +101,7 @@ namespace TradeWeb.API.Repository
             }
             return gsFinal;
         }
+
         public string Decrypt(string strenc)
         {
             int m = 0;
@@ -1151,7 +126,7 @@ namespace TradeWeb.API.Repository
                     gsCompare = Strings.Mid(strEncKey, m, 1);
                     gsFinal = gsFinal + Strings.Chr(Strings.Asc(gsEcDc) - Strings.Asc(gsCompare) - 13);
                 }
-                catch (Exception e) { }
+                catch (Exception) { }
             }
             return gsFinal;
         }
@@ -1182,6 +157,7 @@ namespace TradeWeb.API.Repository
             }
             return result;
         }
+
         public bool mfnGetSysSplFeatureDP(string strKeyCode)
         {
             string strsql = "";
@@ -1208,6 +184,7 @@ namespace TradeWeb.API.Repository
             }
             return result;
         }
+
         public bool mfnGetSysSplFeatureCommodity(string strKeyCode)
         {
             string strsql = "";
@@ -1233,7 +210,6 @@ namespace TradeWeb.API.Repository
             }
             return result;
         }
-
 
         public string GetSysParmSt(string strParmcd, string strTableName)//GetSysParmSt("ACREPORT", "Stationary");
         {
@@ -1269,6 +245,7 @@ namespace TradeWeb.API.Repository
             }
             return strReturn;
         }
+
         public string GetWebParameter(string strParmcd)
         {
             string strsql = string.Empty;
@@ -1287,11 +264,12 @@ namespace TradeWeb.API.Repository
             }
 
         }
-        public string GetWebParameter(string strParmcd, SqlConnection sqlConnection)
+
+        public string GetWebParameter(string strParmcd,SqlConnection sqlConnection)
         {
             string strsql = string.Empty;
             string strReturn = string.Empty;
-            strsql = "select sp_sysvalue  from WebParameter with (NoLock) where sp_parmcd ='" + strParmcd + "'";
+            strsql = "select sp_sysvalue  from WebParameter with (NoLock) where sp_parmcd ='" + strParmcd + "'";           
             DataTable dt = OpenDataTable(strsql, sqlConnection);
             if (dt.Rows.Count > 0)
             {
@@ -1303,78 +281,6 @@ namespace TradeWeb.API.Repository
                 return "";
             }
 
-        }
-        public string prAcWhere_DPID()
-        {
-            string strTemp = string.Empty;
-            string gsBankName = "TRADEWEB";
-            string gstrLedger_DPID = string.Empty;
-            string gStrProduct = "F";
-            if (gsBankName.Trim() == "TRADEWEB")
-                strTemp = GetSysParmSt("ACREPORT", "Stationary");
-            else
-                strTemp = "CES";
-            switch (strTemp.Trim())
-            {
-                case "CES":
-                    gstrLedger_DPID = " ld_dpid= 'ANF' ";
-                    //if (gStrProduct == "C")
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) in ('F','D','M')";
-                    //else
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) not in ('F','D','M')";
-                    break;
-                case "CE":
-                    gstrLedger_DPID = "  left(ld_dpid,2)='" + Strings.Left("ANF", 2) + "'";
-                    //if (gStrProduct == "C")
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) in ('F','D','M')";
-                    //else
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) not in ('F','D','M')";
-                    break;
-                case "ES":
-                    gstrLedger_DPID = "  right(ld_dpid,2)='" + Strings.Right("ANF", 2) + "'";
-                    //if (gStrProduct == "C")
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) in ('F','D','M')";
-                    //else
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) not in ('F','D','M')";
-                    break;
-                case "CS":
-                    gstrLedger_DPID = "  ld_dpid like '" + Strings.Left("ANF", 1) + "_" + Strings.Right("ANF", 1) + "'";
-                    //if (gStrProduct == "C")
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) in ('F','D','M')";
-                    //else
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) not in ('F','D','M')";
-                    break;
-                case "C":
-                    gstrLedger_DPID = "  left(ld_dpid,1)='" + Strings.Left("ANF", 1) + "'";
-                    //if (gStrProduct == "C")
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) in ('F','D','M')";
-                    //else
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) not in ('F','D','M')";
-                    break;
-
-                case "E":
-                    gstrLedger_DPID = "  substring(ld_dpid,2,1)='" + Strings.Mid("ANF", 2, 1) + "'";
-                    //if (gStrProduct == "C")
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) in ('F','D','M')";
-                    //else
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) not in ('F','D','M')";
-                    break;
-                case "S":
-                    gstrLedger_DPID = "  right(ld_dpid,1)='" + Strings.Right("ANF", 1) + "'";
-                    //if (gStrProduct == "C")
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) in ('F','D','M')";
-                    //else
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) not in ('F','D','M')";
-                    break;
-                case "N":
-                    gstrLedger_DPID = "  ld_dpid<>'X'";
-                    //if (gStrProduct == "C")
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) in ('F','D','M')";
-                    //else
-                    //    gstrLedger_DPID = gstrLedger_DPID + " and Substring(ld_dpid,2,1) not in ('F','D','M')";
-                    break;
-            }
-            return gstrLedger_DPID.Trim();
         }
 
         public string fnFireQueryTradeWeb(string strTable, string strSelect, string strParam1, string strParam2, bool strInt)
@@ -1406,24 +312,6 @@ namespace TradeWeb.API.Repository
             return strReturn;
         }
 
-        public DataSet fnFireQueryTradeWebDs(string strTable, string strSelect, string strParam1, string strParam2, bool strInt)
-        {
-            string strReturn = string.Empty;
-            string strsql = string.Empty;
-            if ((strParam1.Length == 0) || (strParam2.Length == 0))
-            { strReturn = ""; }
-
-            if (strInt == true)
-                strsql = "select " + strSelect + " from " + strTable + " where " + strParam1 + " = '" + strParam2.Trim() + "'";
-            else
-                strsql = "select " + strSelect + " from " + strTable + " where " + strParam1 + " = " + strParam2.Trim();
-
-            DataSet ObjDataSet = new DataSet();
-            ObjDataSet = OpenDataSet(strsql);
-
-            return ObjDataSet;
-        }
-
         public string fnFireQueryTradeWeb(string strTable, string strSelect, string strParam1, string strParam2, bool strInt, SqlConnection sqlConnection)
         {
             string strReturn = string.Empty;
@@ -1452,121 +340,37 @@ namespace TradeWeb.API.Repository
             return strReturn;
         }
 
-        public string fnFireQueryCross(string strTable, string strSelect, string strParam1, string strParam2, bool strInt)//, [Optional, DefaultParameterValue("")] string s)
-        {
-            string strReturn = string.Empty;
-            string strsql = string.Empty;
-
-            if ((strParam1.Length == 0) || (strParam2.Length == 0))
-            { strReturn = ""; }
-
-            if (strInt == true)
-                strsql = "select " + strSelect + " from " + strTable + " with (noLock) where " + strParam1 + " = '" + strParam2.Trim() + "'";
-            else
-                strsql = "select " + strSelect + " from " + strTable + " with (noLock) where " + strParam1 + " =  " + strParam2.Trim();
-
-            DataSet ObjDataSet = new DataSet();
-            ObjDataSet = OpenDataSet(strsql);
-            if (ObjDataSet.Tables[0].Rows.Count < 1)
-            {
-                if (strInt == true)
-                { strReturn = ""; }
-                else
-                { strReturn = "0"; }
-            }
-            else
-            {
-                strReturn = ObjDataSet.Tables[0].Rows[0][0].ToString().Trim();
-            }
-            return strReturn;
-        }
-
-        //public DataSet OpenDataSet(string strFireQry)
-        //{
-        //    using (SqlConnection ObjConnection = new SqlConnection(StrConn))
-        //    {
-        //        ObjConnection.Open();
-        //        using (SqlCommand objSqlCommand = new SqlCommand(strFireQry, ObjConnection))
-        //        {
-        //            objSqlCommand.Connection = ObjConnection;
-        //            objSqlCommand.CommandText = strFireQry;
-        //            objSqlCommand.CommandTimeout = 5000;
-        //            DataSet MyDataSet = new DataSet();
-        //            using (SqlDataAdapter MyAdapter = new SqlDataAdapter(objSqlCommand))
-        //            {
-        //                MyAdapter.Fill(MyDataSet);
-        //                MyAdapter.Dispose();
-        //                return MyDataSet;
-        //            }
-        //        }
-        //    }
-        //}
         public DataSet OpenDataSet(string strFireQry)
         {
             DataSet ds = new DataSet();
+            //Connection con = new Connection();
             try
             {
-                Connection con = new Connection();
-                try
+                /*con.OpenConection();
+                ds = con.ReturnDataSet(strFireQry);
+                con.CloseConnection();*/
+                using (SqlConnection con = new SqlConnection(_connStr))
                 {
-                    con.OpenConection();
-                    ds = con.ReturnDataSet(strFireQry);
-                    con.CloseConnection();
-                    return ds;
+                    SqlDataAdapter dr = new SqlDataAdapter(strFireQry, con);
+                    dr.Fill(ds);
                 }
-                catch (Exception e)
-                {
-                    con.DisposeConnection();
-                    throw e;
-                }
+                return ds;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                throw ex;
+                //con.DisposeConnection();
+                throw;
             }
         }
-
-        //public DataSet OpenDataSet(string strFireQry, bool blncon, int commandTimeout)
-        //{
-        //    if (myConnection.State == ConnectionState.Closed)
-        //    { myConnection.Open(); }
-
-        //    using (SqlCommand objSqlCommand = new SqlCommand(strFireQry, myConnection))
-        //    {
-        //        objSqlCommand.CommandTimeout = commandTimeout;
-        //        using (SqlDataAdapter MyAdapter = new SqlDataAdapter(objSqlCommand))
-        //        {
-        //            DataSet MyDataSet = new DataSet();
-        //            MyAdapter.Fill(MyDataSet);
-        //            MyAdapter.Dispose();
-        //            return MyDataSet;
-        //        }
-        //    }
-        //}
-
-
-
-        //public void ExecuteSQL(string Str_Qry, SqlConnection con)
-        //{
-
-        //    using (SqlCommand MyCmd = new SqlCommand())
-        //    {
-        //        MyCmd.Connection = con;
-        //        MyCmd.CommandTimeout = 5000;
-        //        MyCmd.CommandText = Str_Qry;
-        //        MyCmd.ExecuteNonQuery();
-        //        MyCmd.Dispose();
-        //    }
-        //}
-
 
         public void ExecuteSQL(string Str_Qry)
         {
             SqlConnection con;
-            using (var db = new DataContext())
+            /*using (var db = new DataContext())
             {
                 con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-            }
+            }*/
+            con = new SqlConnection(_connStr);
             con.Open();
             using (SqlCommand MyCmd = new SqlCommand())
             {
@@ -1582,10 +386,21 @@ namespace TradeWeb.API.Repository
         public dynamic ExecuteSQLReturn(string Str_Qry)
         {
             SqlConnection con;
-            using (var db = new DataContext())
+            con = new SqlConnection(_connStr);
+            con.Open();
+            using (SqlCommand MyCmd = new SqlCommand())
             {
-                con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
+                MyCmd.Connection = con;
+                MyCmd.CommandTimeout = 5000;
+                MyCmd.CommandText = Str_Qry;
+                var rtn = MyCmd.ExecuteScalar();
+                MyCmd.Dispose();
+                return rtn;
             }
+        }
+
+        public dynamic ExecuteSQLReturnWithConn(SqlConnection con, string Str_Qry)
+        {
             con.Open();
             using (SqlCommand MyCmd = new SqlCommand())
             {
@@ -1601,10 +416,7 @@ namespace TradeWeb.API.Repository
         public void ExecuteSQL(string Str_Qry, Dictionary<string, byte[]> sqlParams, SqlTransaction myTrans = null)
         {
             SqlConnection con;
-            using (var db = new DataContext())
-            {
-                con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-            }
+            con = new SqlConnection(_connStr);
             con.Open();
             using (SqlCommand MyCmd = new SqlCommand())
             {
@@ -1638,184 +450,6 @@ namespace TradeWeb.API.Repository
 
         }
 
-        public dynamic ExecuteSQLString(string Str_Qry)
-        {
-            try
-            {
-                SqlConnection con;
-                using (var db = new DataContext())
-                {
-                    con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-                }
-                con.Open();
-                using (SqlCommand MyCmd = new SqlCommand())
-                {
-                    MyCmd.Connection = con;
-                    MyCmd.CommandTimeout = 5000;
-                    MyCmd.CommandText = Str_Qry;
-                    var rtnStr = MyCmd.ExecuteScalar();
-                    MyCmd.Dispose();
-                    return rtnStr.ToString();
-                }
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
-        }
-
-
-        public dynamic ExecuteSQLStringTrans(string Str_Qry, SqlConnection sqlCon, SqlTransaction myTrans = null)
-        {
-            try
-            {
-                using (SqlCommand MyCmd = new SqlCommand())
-                {
-                    MyCmd.Connection = sqlCon;
-                    MyCmd.CommandTimeout = 5000;
-                    MyCmd.CommandText = Str_Qry;
-                    MyCmd.Transaction = myTrans;
-                    var rtnStr = MyCmd.ExecuteScalar();
-                    MyCmd.Dispose();
-                    return rtnStr.ToString();
-                }
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
-        }
-
-        public void ExecuteSQL(string Str_Qry, Dictionary<string, byte[]> sqlParams, SqlConnection sqlCon, SqlTransaction myTrans = null)
-        {
-            using (SqlCommand MyCmd = new SqlCommand())
-            {
-                MyCmd.Connection = sqlCon;
-                MyCmd.CommandTimeout = 5000;
-                MyCmd.CommandText = Str_Qry;
-                MyCmd.Transaction = myTrans;
-
-                foreach (var sqlParam in sqlParams)
-                {
-                    MyCmd.Parameters.Add(new SqlParameter(sqlParam.Key, (object)sqlParam.Value));
-                }
-
-                MyCmd.ExecuteNonQuery();
-                MyCmd.Dispose();
-            }
-
-        }
-
-        public int ExecuteSQLXML(string Str_Qry)
-        {
-            SqlConnection con;
-            using (var db = new DataContext())
-            {
-                con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-            }
-            con.Open();
-            using (SqlCommand MyCmd = new SqlCommand())
-            {
-                MyCmd.Connection = con;
-                MyCmd.CommandTimeout = 5000;
-                MyCmd.CommandText = Str_Qry;
-                int intRowsEffected = MyCmd.ExecuteNonQuery();
-                MyCmd.Dispose();
-                return intRowsEffected;
-            }
-        }
-
-        //public void ExecuteSQL(string Str_Qry, bool blnConnClose, int commandTimeout)
-        //{
-        //    if (myConnection.State == ConnectionState.Closed)
-        //    { myConnection.Open(); }
-        //    SqlCommand MyCmd = new SqlCommand();
-        //    MyCmd.Connection = myConnection;
-        //    MyCmd.CommandText = Str_Qry;
-        //    MyCmd.CommandTimeout = commandTimeout;
-        //    MyCmd.ExecuteNonQuery();
-        //    MyCmd.Dispose();
-        //    if (blnConnClose)
-        //    {
-        //        myConnection.Close();
-        //    }
-        //}
-
-        public string GetDBDate()
-        {
-            string strSQL = "select convert(varchar, getdate(), 112)";
-            DataTable Dt = OpenDataTable(strSQL);
-            return Dt.Rows[0][0].ToString();
-        }
-
-        public string GetDBTime()
-        {
-            string strSQL = "SELECT CONVERT(VARCHAR(8),GETDATE(),108)";
-            DataTable Dt = OpenDataTable(strSQL);
-            return Dt.Rows[0][0].ToString();
-        }
-
-        public string ColourScheme(string ColourFor, string ColourBack)
-        {
-            char[] ArrSeparters = new char[1];
-            ArrSeparters[0] = '/';
-            string[] ColourTitle = ConfigurationManager["ColourTitle"].Split(ArrSeparters);
-            string[] ColourMenu = ConfigurationManager["ColourMenu"].Split(ArrSeparters);
-            string[] ColourHeader = ConfigurationManager["ColourHeader"].Split(ArrSeparters);
-            string[] ColourTotals = ConfigurationManager["ColourTotals"].Split(ArrSeparters);
-            string ColourCode = string.Empty;
-            if ("ColourTitle" == ColourFor)
-            {
-                ColourCode = "BackColor".ToUpper() == ColourBack.ToUpper() ? ColourTitle[1].ToString() : ColourTitle[0].ToString();
-                return ColourCode;
-            }
-            else if ("ColourMenu" == ColourFor)
-            {
-                ColourCode = "BackColor".ToUpper() == ColourBack.ToUpper() ? ColourMenu[1].ToString() : ColourMenu[0].ToString();
-                return ColourCode;
-            }
-            else if ("ColourHeader" == ColourFor)
-            {
-                ColourCode = "BackColor".ToUpper() == ColourBack.ToUpper() ? ColourHeader[1].ToString() : ColourHeader[0].ToString();
-                return ColourCode;
-            }
-            else if ("ColourTotals" == ColourFor)
-            {
-                ColourCode = "BackColor".ToUpper() == ColourBack.ToUpper() ? ColourTotals[1].ToString() : ColourTotals[0].ToString();
-                return ColourCode;
-            }
-            else
-            {
-                return string.Empty;
-            }
-        }
-        public string mfngetDemopass()
-        {
-            string strDate = null;
-            string strDemoPass = null;
-            int iloop = 0;
-            int intTot = 0;
-            string strHeader = null;
-            string strTrailor = null;
-            strDemoPass = (int.Parse(DateTime.Today.ToString().Substring(0, 2)) - DateAndTime.Month(System.DateTime.Today)).ToString() + "/" + DateTime.Today.Month.ToString() + "/" + DateTime.Today.Year.ToString();
-            strDemoPass = DateAndTime.Day(Convert.ToDateTime(strDemoPass)).ToString() + DateAndTime.Month(Convert.ToDateTime(strDemoPass)).ToString();
-            strDate = System.DateTime.Today.DayOfWeek.ToString();
-            for (iloop = 1; iloop <= 3; iloop++)
-            {
-                intTot = intTot + Strings.Asc(Strings.Mid(strDate, iloop, 1));
-            }
-            intTot = int.Parse((int.Parse(intTot.ToString()) + Conversion.Val(strDemoPass)).ToString());
-            for (iloop = 1; iloop <= 2; iloop++)
-            {
-                strHeader = strHeader + Strings.Chr(Strings.Asc(Strings.Mid(Strings.Mid(strDate, 3, 2), iloop, 1)) - 1);
-            }
-            for (iloop = 1; iloop <= 2; iloop++)
-            {
-                strTrailor = strTrailor + Strings.Chr(Strings.Asc(Strings.Mid(Strings.Mid(strDate, 2, 2), iloop, 1)) + 1);
-            }
-            strDemoPass = strHeader + intTot + strTrailor;
-            return Strings.LCase(strDemoPass);
-        }
         public string mfnGetDemoMonthpwd()
         {
             string strHeader = null;
@@ -1866,113 +500,7 @@ namespace TradeWeb.API.Repository
             }
             return Strings.LCase(strHeader);
         }
-        public void PrVisit(string datafield, string ClientId)
-        {
-            string strsql = string.Empty;
-            string strReturn = string.Empty;
-            int cnt = 0;
-            strsql = "Select " + datafield + " From User_Visit Where uv_cd='" + ClientId + "'";// and uv_date='20090227'";
-            DataSet ObjDataset = new DataSet();
-            ObjDataset = OpenDataSet(strsql);
 
-            if (ObjDataset.Tables[0].Rows.Count > 0)
-            {
-                strReturn = ObjDataset.Tables[0].Rows[0][0].ToString();
-                if (strReturn.Trim() == "")
-                {
-                    cnt++;
-                }
-                else
-                {
-                    cnt = Convert.ToInt32(strReturn.Trim()) + 1;
-                }
-                strsql = "Update User_visit set " + datafield + "='" + cnt + "' where uv_cd='" + ClientId + "'";
-                ExecuteSQL(strsql);//,uv_date='" + objUtilitydtos(System.DateTime.Today.Date.ToString()) +"'
-            }
-        }
-
-        public DataSet ConvertJsonToDatatable(string jsonString, string strdeccol)
-        {
-            DataTable dt = new DataTable();
-            DataSet ds = new DataSet();
-            jsonString = jsonString.Replace("{\"Data\" : ", "");
-            string[] jsonParts = Regex.Split(jsonString.Replace("[", "").Replace("]", ""), "},{");
-            List<string> dtColumns = new List<string>();
-            //get columns
-            foreach (string jp in jsonParts)
-            {
-                string[] propData = Regex.Split(jp.Replace("{", "").Replace("}", ""), ",");
-                foreach (string rowData in propData)
-                {
-                    try
-                    {
-                        int idx = rowData.IndexOf(":");
-                        var n = rowData.Substring(0, idx - 1);
-                        var v = rowData.Substring(idx + 1);
-                        if (!dtColumns.Contains(n))
-                        {
-                            dtColumns.Add(n.Replace("\"", ""));
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        throw new Exception(string.Format("Error Parsing Column Name : {0}", rowData));
-                    }
-
-                }
-                break;
-            }
-
-            foreach (var c in dtColumns)
-            {
-                if (strdeccol.Contains(c))
-                { dt.Columns.Add(c, typeof(decimal)); }
-                else
-                { dt.Columns.Add(c, typeof(System.String)); }
-
-            }
-            //get table data
-            foreach (string jp in jsonParts)
-            {
-                string[] propData = Regex.Split(jp.Replace("{", "").Replace("}", ""), ",");
-                DataRow nr = dt.NewRow();
-                foreach (string rowData in propData)
-                {
-                    try
-                    {
-                        int idx = rowData.IndexOf(":");
-                        string n = rowData.Substring(0, idx - 1).Replace("\"", "");
-                        string v = rowData.Substring(idx + 1).Replace("\"", "");
-                        nr[n] = v;
-                    }
-                    catch (Exception ex)
-                    {
-                        continue;
-                    }
-                }
-                dt.Rows.Add(nr);
-            }
-            ds.Tables.Add(dt);
-            return ds;
-        }
-
-        public bool WebRequestTest(string strurl)
-        {
-            string url = strurl;
-
-            if (string.IsNullOrEmpty(strurl))
-                return false;
-            try
-            {
-                System.Net.WebRequest myRequest = System.Net.WebRequest.Create(url);
-                System.Net.WebResponse myResponse = myRequest.GetResponse();
-            }
-            catch (System.Net.WebException)
-            {
-                return false;
-            }
-            return true;
-        }
         public string mfnReplaceForSQLInjection(string strParms)
         {
             if (!string.IsNullOrEmpty(strParms))
@@ -1982,1113 +510,18 @@ namespace TradeWeb.API.Repository
             return "";
         }
 
-        public void Changetheme(string struserid, string strcolor)
-        {
-            DataSet Dschktable = new DataSet();
-            string strsql = string.Empty;
-            Dschktable = OpenDataSet("select * from SysObjects where name= 'Custom_themes'");
-            if (Dschktable.Tables[0].Rows.Count == 0)
-            {
-                strsql = " create table  Custom_themes ( ";
-                strsql += " ct_cd char(16) not null  constraint pk_Customtheme primary key ,";
-                strsql += "  ct_color varchar(50) not null,ct_filler1 char(10) not null, ct_filler2 char(10) not null,ct_filler3 char(10)not null )";
-                ExecuteSQL(strsql);
-            }
-
-            strsql = " IF EXISTS(select * from Custom_themes where ct_cd ='" + struserid + "') ";
-            strsql += " update Custom_themes set ct_color='" + strcolor + "' where ct_cd ='" + struserid + "'";
-            strsql += "  ELSE";
-            strsql += "  insert into Custom_themes values('" + struserid + "','" + strcolor + "','','','');";
-            ExecuteSQL(strsql);
-
-
-        }
-
-        public DataTable OpendatatableXml(string strDataXml, string strtblname)
-        {
-            DataTable ObjDataTable = new DataTable();
-            DataSet dsData = new DataSet();
-            XmlDocument doc = new XmlDocument();
-            doc.LoadXml(strDataXml);
-            using (XmlNodeReader nodereader = new XmlNodeReader(doc))
-            {
-                dsData.ReadXml(nodereader);
-                ObjDataTable = dsData.Tables[strtblname];
-            }
-            return ObjDataTable;
-        }
-        public DateTime ConvertDT(string Date)
-        {
-            int Year = int.Parse(Date.Substring(0, 4));
-            int Month = int.Parse(Date.Substring(4, 2));
-            int Day = int.Parse(Date.Substring(6, 2));
-            return new DateTime(Year, Month, Day);
-        }
-        public void prCreateTempTable(bool blnCollExcessOppExch, SqlConnection objConnectionTmp)
-        {
-            string strsql;
-            strTempRMSSummary = "#TmpRMSSummaryReport";
-            strTempRMSDetail = "#TmpRMSDetailReport";
-
-            try
-            {
-                strsql = "Drop Table " + strTempRMSSummary;
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-
-                strsql = "Create Table " + strTempRMSSummary + " (";
-                strsql += " Tmp_Clientcd VarChar(8),";
-                strsql += " Tmp_Limit Money,";
-                strsql += " Tmp_TplusBal Money,";
-                strsql += " Tmp_LoanBal Money,";
-                strsql += " Tmp_FundedAmount Money,";
-                strsql += " Tmp_FundedMrgReq Money,";
-                strsql += " Tmp_CollateralFund Money,";
-                strsql += " Tmp_CollateralValue Money,";
-                strsql += " Tmp_ShortFallExcess Money,";
-                strsql += " Tmp_TradeValue Money,";
-                strsql += " Tmp_M2MLoss Money)";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-            catch
-            {
-                strsql = "Create Table " + strTempRMSSummary + " (";
-                strsql += " Tmp_Clientcd VarChar(8),";
-                strsql += " Tmp_Limit Money,";
-                strsql += " Tmp_TplusBal Money,";
-                strsql += " Tmp_LoanBal Money,";
-                strsql += " Tmp_FundedAmount Money,";
-                strsql += " Tmp_FundedMrgReq Money,";
-                strsql += " Tmp_CollateralFund Money,";
-                strsql += " Tmp_CollateralValue Money,";
-                strsql += " Tmp_ShortFallExcess Money,";
-                strsql += " Tmp_TradeValue Money,";
-                strsql += " Tmp_M2MLoss Money)";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-            try
-            {
-                strsql = "Drop Table " + strTempRMSDetail;
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-
-                strsql = "Create Table " + strTempRMSDetail + " (";
-                strsql += " Tmp_Type Char(1),";
-                strsql += " Tmp_Exchange Char(1),";
-                strsql += " Tmp_Clientcd VarChar(8),";
-                strsql += " Tmp_Scripcd VarChar(6),";
-                strsql += " Tmp_RegForFO VarChar(1),";
-                strsql += " Tmp_Qty Numeric,";
-                strsql += " Tmp_Rate Money,";
-                strsql += " Tmp_MarketRate Money,";
-                strsql += " Tmp_Value Money,";
-                strsql += " Tmp_MrgHairCut Money,";
-                strsql += " Tmp_NetValue Money)";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-            catch
-            {
-                strsql = "Create Table " + strTempRMSDetail + " (";
-                strsql += " Tmp_Type Char(1),";
-                strsql += " Tmp_Exchange Char(1),";
-                strsql += " Tmp_Clientcd VarChar(8),";
-                strsql += " Tmp_Scripcd VarChar(6),";
-                strsql += " Tmp_RegForFO VarChar(1),";
-                strsql += " Tmp_Qty Numeric,";
-                strsql += " Tmp_Rate Money,";
-                strsql += " Tmp_MarketRate Money,";
-                strsql += " Tmp_Value Money,";
-                strsql += " Tmp_MrgHairCut Money,";
-                strsql += " Tmp_NetValue Money)";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-        }
         public Boolean fnchkTable(string strTable)
         {
             DataTable dtChk = OpenDataSet("select count(*) from sysobjects where name ='" + strTable + "'").Tables[0];
             return Conversion.Val(dtChk.Rows[0][0].ToString()) > 0;
         }
+
         public Boolean fnchkTable(string strTable, SqlConnection sqlConnection)
         {
             DataTable dtChk = OpenDataTable("select count(*) from sysobjects where name ='" + strTable + "'", sqlConnection);
             return Conversion.Val(dtChk.Rows[0][0].ToString()) > 0;
         }
-        public void prCreateTableHolding(SqlConnection objConnectionTmp)
-        {
-            string strSql = "";
-            try
-            {
-                strSql = "Drop table #tmpHoldingrepM";
-                ExecuteSQLTmp(strSql, objConnectionTmp);
 
-            }
-            catch
-            {
-                strSql = "Create table  #tmpHoldingrepM (";
-                strSql += " dm_Type Varchar(9),";
-                strSql += " dm_clientcd char(8),";
-                strSql += " dm_ActNo char(16),";
-                strSql += " dm_scripcd char(6),";
-                strSql += " dm_ISIN char(12),";
-                strSql += " dm_bcqty Numeric,";
-                strSql += " dm_lastprice money,";
-                strSql += " dm_approved Varchar(20),";
-                strSql += " dm_grossvalue money,";
-                strSql += " dm_haircut money,";
-                strSql += " dm_haircutvalue money,";
-                strSql += " dm_netvalue money) ";
-                ExecuteSQLTmp(strSql, objConnectionTmp);
-            }
-
-
-
-        }
-        public void prPledgeProcess(string strDT, string strExchange, string strWhere, bool blnCollExcessOppExch, bool blnisFundTransfer, bool blnIncludeUNDEL, SqlConnection objConnectionTmp, string sessionCompanyCode)
-        {
-
-            Boolean blnVarHairCut = true;
-            double dblHairCut = Conversion.Val(GetSysParmSt("MTFP_HAIRCUT", ""));
-            string strT2Date = "";
-            string strsql;
-            if (!fnchkTable("FMargins_MTF") && GetSysParmSt("MTFPLDCOLLAT", "") == "N")
-            {
-                strsql = "Create Table FMargins_MTF (";
-                strsql += "Fmt_Companycode char(1) Not Null,  ";
-                strsql += "Fmt_Dt varchar(8) Not Null,  ";
-                strsql += "Fmt_Exchange char(1) Not Null,  ";
-                strsql += "Fmt_Clientcd varchar(8) Not Null,  ";
-                strsql += "Fmt_scripcd varchar(6) Not Null,  ";
-                strsql += "Fmt_qty Numeric Not Null,  ";
-                strsql += "Fmt_Rate Money Not Null,  ";
-                strsql += "Fmt_Value Money Not Null,  ";
-                strsql += "Fmt_HairCut Money Not Null,  ";
-                strsql += "Fmt_HairCutValue Money Not Null,  ";
-                strsql += "Fmt_NetValue Money Not Null,  ";
-                strsql += "Fmt_Type Char(1) Not Null,  ";
-                strsql += "Fmt_Filler1 varchar(1) Not Null,  ";
-                strsql += "Fmt_Filler2 varchar(1) Not Null,  ";
-                strsql += "Fmt_Filler3 varchar(1) Not Null,  ";
-                strsql += "Fmt_NFiller1 Numeric Not Null,  ";
-                strsql += "Fmt_NFiller2 Numeric Not Null,  ";
-                strsql += "Fmt_NFiller3 Numeric Not Null,  ";
-                strsql += "CONSTRAINT [PK_FMargins_MTF] PRIMARY KEY CLUSTERED (";
-                strsql += "[Fmt_Companycode] ASC,";
-                strsql += "[Fmt_Dt] ASC,";
-                strsql += "[Fmt_Exchange] ASC,";
-                strsql += "[Fmt_Clientcd] ASC,";
-                strsql += "[Fmt_scripcd] ASC,";
-                strsql += "[Fmt_Type] ASC)";
-                strsql += ")";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-
-            dblHairCut = 0;
-            Boolean blnBSE = false;
-            Boolean blnNSE = false;
-            string strDMTBSE = "";
-            string strDMTNSE = "";
-            string strDMTColBSE = "";
-            string strDMTColNSE = "";
-            blnBSE = (GetSysParmSt("MTFP_LICBSE", "") == "Y");
-            blnNSE = (GetSysParmSt("MTFP_LICNSE", "") == "Y");
-            strDMTBSE = GetSysParmSt("MTFP_DMTBSEP", "");
-            strDMTNSE = GetSysParmSt("MTFP_DMTNSEP", "");
-            strDMTColBSE = "";
-            strDMTColNSE = "";
-            strDMTColBSE = GetSysParmSt("MTFP_DMBSECP", "");
-            strDMTColNSE = GetSysParmSt("MTFP_DMNSECP", "");
-
-            prCreateTableHolding(objConnectionTmp);
-            prCreateTempTable(blnCollExcessOppExch, objConnectionTmp);
-
-            strsql = "Insert into " + strTempRMSSummary;
-            strsql += " select MTFC_CMcd,MTFC_AllowLimit,0,0,0,0,0,0,0,0,0";
-            strsql += " from MrgTdgFin_Clients,Client_master ";
-            strsql += " Where MTFC_CMcd = cm_cd and (MTFC_Status='A' or (MTFC_Status='I' and MTFC_FillerA >'" + strDT + "'))  and MTFC_RegDt<='" + strDT + "'" + strWhere;
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary;
-            strsql += " set Tmp_TplusBAL = A.ld_amount ";
-            strsql += " from (select MTFC_CMcd,Sum(ld_amount) ld_amount ";
-            strsql += " from Ledger,MrgTdgFin_Clients,Client_master";
-            strsql += " Where cm_cd = MTFC_CMcd and (ld_clientcd = cm_cd " + ((GetSysParmSt("MTFP_MRGNBAL", "").Trim()) == "Y" ? " or ld_clientcd= cm_brkggroup" : "") + ")";
-            strsql += " and ld_dt <='" + strDT + "'";
-            strsql += " Group By MTFC_CMcd ) a ";
-            strsql += " Where MTFC_CMcd = Tmp_Clientcd ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strT2Date = mfnGetT2Dt(strExchange, strDT);
-            strsql = "Update " + strTempRMSSummary;
-            strsql += " set Tmp_LoanBal = A.ld_amount ";
-            strsql += " from (select MTFC_CMcd,Sum(ld_amount) ld_amount ";
-            strsql += " from Ledger,MrgTdgFin_Clients,Client_master ";
-            strsql += " Where MTFC_CMcd = cm_Cd and ld_clientcd = Rtrim(MTFC_FillerB) ";
-            strsql += " and ld_dt <= '" + strT2Date + "' ";
-
-            if (strExchange != "")
-                strsql += " and left(ld_DPID,2) = '" + Convert.ToString(sessionCompanyCode) + strExchange + "'";
-            else
-                strsql += " and left(ld_DPID,1) = '" + Convert.ToString(sessionCompanyCode) + "'";
-
-            strsql += " Group By MTFC_CMcd ) a ";
-            strsql += " Where MTFC_CMcd = Tmp_Clientcd ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary;
-            strsql += " set Tmp_CollateralFund = A.ld_amount ";
-            strsql += " from (select MTFC_CMcd,Sum(-ld_amount) ld_amount ";
-            strsql += " from Ledger,MrgTdgFin_Clients,Client_master";
-            strsql += " Where MTFC_CMcd = cm_Cd and ld_clientcd = Rtrim(MTFC_FillerB) and ld_documentType in ('P','R') ";
-            strsql += " and ld_dt <='" + strDT + "'";
-            if (strExchange != "")
-                strsql += " and left(ld_DPID,2) = '" + Convert.ToString(sessionCompanyCode) + strExchange + "'";
-            else
-                strsql += " and left(ld_DPID,1) = '" + Convert.ToString(sessionCompanyCode) + "'";
-
-            strsql += " Group By MTFC_CMcd Having Sum(-ld_amount) >  0 ) a ";
-            strsql += " Where MTFC_CMcd = Tmp_Clientcd ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary;
-            strsql += " set Tmp_TradeValue = A.TradeValue ";
-            strsql += " from (select MTtd_clientcd, Round(Sum((MTtd_bqty-MTtd_sqty)*MTtd_Rate),2) TradeValue ";
-            strsql += " from MrgTdgFin_TRX,Settlements,Client_master ";
-            strsql += " Where MTtd_clientcd = cm_Cd and MTtd_companycode = '" + Convert.ToString(sessionCompanyCode) + "' and MTTd_stlmnt = se_stlmnt and se_shpayoutdt ='" + strDT + "' and MTtd_TrxFlag <> 'X'";
-            strsql += " Group By MTtd_clientcd ) a ";
-            strsql += " Where MTtd_clientcd = Tmp_Clientcd ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = " Insert into " + strTempRMSDetail;
-            strsql += " select 'M' type,MTtd_Exchange,";
-            strsql += " MTtd_clientcd,MTtd_scripcd,'N',Sum(MTtd_bqty-MTtd_sqty),Round(Sum((MTtd_bqty-MTtd_sqty)*MTtd_rate)/Sum(MTtd_bqty-MTtd_sqty),2),0,0,0,0 ";
-            strsql += " from MrgTdgFin_TRX,Client_master ";
-            strsql += " Where MTtd_clientcd = cm_Cd and MTtd_companycode = '" + Convert.ToString(sessionCompanyCode) + "'";
-            strsql += " and MTtd_dt <='" + strDT + "' and MTtd_TrxFlag <> 'X'" + strWhere;
-            if (strExchange != "")
-                strsql += " and MTtd_Exchange = '" + strExchange + "'";
-
-            strsql += " Group by MTtd_clientcd,MTtd_scripcd,MTtd_Exchange,MTtd_CntStlmnt";
-            strsql += " Having Sum(MTtd_bqty-MTtd_sqty) > 0 ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-
-            if (GetSysParmSt("MTFPLDCOLLAT", "") == "N" && Conversion.Val(strDT) >= Conversion.Val("20200901"))
-            {
-                string strLastCollatDT = fnFireQueryTradeWeb("Fmargins_MTF", "isNull(max(Fmt_Dt),'')", "Fmt_Dt <='" + strDT + "' and Fmt_Companycode", Convert.ToString(sessionCompanyCode), true);
-
-                strsql = " Insert into " + strTempRMSDetail;
-                strsql += " select 'C' type,Fmt_Exchange,";
-                strsql += " Fmt_Clientcd,Fmt_scripcd,'N',Sum(Fmt_qty),0,0,0,0,0 ";
-                strsql += " from Fmargins_MTF,Client_master ";
-                strsql += " Where Fmt_Clientcd = cm_Cd and Fmt_Companycode = '" + Convert.ToString(sessionCompanyCode) + "'";
-                strsql += " and Fmt_Dt = '" + strLastCollatDT + "'" + strWhere;
-                if (strExchange != "")
-                    strsql += " and Fmt_Exchange = '" + strExchange + "'";
-
-                strsql += " Group by Fmt_Clientcd,Fmt_scripcd,Fmt_Exchange,Fmt_Type";
-                strsql += " Having Sum(Fmt_qty) > 0 ";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-            else
-            {
-                strsql = " Insert into " + strTempRMSDetail;
-                strsql += " select 'C' type,case MPT_OurDP When '" + strDMTColBSE + "' Then 'B' When '" + strDMTColNSE + "' Then 'N' else '' end MPT_Exchange,";
-                strsql += " MPT_clientcd,MPT_scripcd,'N',Sum(case MPT_DRCR When 'C' Then MPT_Qty else -MPT_Qty end),0,0,0,0,0 ";
-                strsql += " from MrgTdgFin_Pledge,Client_master,OurDPS ";
-                strsql += " Where MPT_clientcd = cm_Cd and MPT_companycode = '" + Convert.ToString(sessionCompanyCode) + "'";
-                strsql += " and MPT_dt <= '" + strDT + "' and MPT_TrxFlag = 'P'" + strWhere;
-                if (strExchange != "")
-                    strsql += " and MPT_OurDP = '" + (strExchange == "B" ? strDMTColBSE : strDMTColNSE) + "'";
-
-                strsql += " and od_cd = MPT_OurDP and od_ActType = 'H' ";
-                strsql += " Group by MPT_clientcd,MPT_scripcd,MPT_OurDP";
-                strsql += " Having Sum(case MPT_DRCR When 'C' Then MPT_Qty else -MPT_Qty end) > 0 ";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-
-            if (strExchange == "")
-            {
-                strsql = "Delete " + strTempRMSDetail + " Where Tmp_Type = 'C' and Tmp_Scripcd not in (select MTFD_SecCD from MrgTdgFin_SecuritiesDt ";
-                strsql += " Where MTFD_SecDt = (Select max(MTFD_SecDt) from MrgTdgFin_SecuritiesDt where MTFD_SecDt <= '" + strDT + "') and (MTFD_BSE = 'Y' Or MTFD_NSE = 'Y'))";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-            else
-            {
-                strsql = "Delete " + strTempRMSDetail + " Where Tmp_Type = 'C' and Tmp_Scripcd not in (select MTFD_SecCD from MrgTdgFin_SecuritiesDt ";
-                strsql += " Where MTFD_SecDt = (Select max(MTFD_SecDt) from MrgTdgFin_SecuritiesDt where MTFD_SecDt <= '" + strDT + "') and MTFD_" + strExchange + "SE = 'Y')";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-
-            char[] ArrSeparators = new char[1];
-            ArrSeparators[0] = '/';
-            string strExch = ((blnBSE == true ? "B/" : "") + (blnNSE == true ? "N/" : ""));
-            strExch = strExch.Trim() != "" ? Strings.Left(strExch, strExch.Length - 1) : "";
-            string[] arrExch = strExch.Split(ArrSeparators);
-
-
-
-            strsql = "Update " + strTempRMSDetail;
-            strsql += " Set Tmp_RegForFO = 'Y'  ";
-            strsql += " From Product_master, Securities  ";
-            strsql += " Where pm_assetcd = Case pm_Exchange When 'B' Then ss_Bsymbol Else ss_nsymbol End and pm_segment = 'F' ";
-            strsql += " and Tmp_Scripcd  = ss_cd ";
-            strsql += " and exists ( select pe_assetcd from Product_Expiry Where pe_assetcd = pm_assetcd and pe_exchange = pm_exchange and pe_segment = 'F' and pe_expirydt >= '" + strDT + "')";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-            string strLastRateDt = "";
-
-            for (int i = 0; i <= arrExch.Length - 1; i++)
-            {
-                strLastRateDt = strDT;
-                if (Conversion.Val(fnFireQueryTradeWeb("market_rates", "Count(0)", "mk_exchange = '" + arrExch[i] + "' and mk_dt", strLastRateDt, true)) == 0)
-                    strLastRateDt = GetTMinusPlusdt(strLastRateDt, -1, arrExch[i]);
-
-
-                strsql = "Update " + strTempRMSDetail;
-                strsql += " set Tmp_MarketRate = mk_closerate from market_rates a with (nolock) where mk_exchange = '" + arrExch[i] + "' and mk_scripcd=Tmp_Scripcd ";
-                strsql += " and mk_dt= (select max(mk_dt) from market_rates with(nolock) where mk_exchange = '" + arrExch[i] + "'";
-                strsql += " and mk_dt <='" + strLastRateDt + "') ";
-                strsql += " and Tmp_Type= 'M' and Tmp_Exchange = '" + arrExch[i] + "'";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-
-                strsql = "Update " + strTempRMSDetail;
-                strsql += " set Tmp_MarketRate = mk_closerate from market_rates a with (nolock) where mk_exchange = '" + arrExch[i] + "' and mk_scripcd=Tmp_Scripcd ";
-                strsql += " and mk_dt= (select max(mk_dt) from market_rates with(nolock) where mk_exchange = '" + arrExch[i] + "'";
-                strsql += " and mk_dt <= '" + GetTMinusPlusdt(strLastRateDt, -1, arrExch[i]) + "') ";
-                strsql += " and Tmp_Type <> 'M' and Tmp_Exchange = '" + arrExch[i] + "'";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-
-                strsql = "update " + strTempRMSDetail;
-                strsql += " set Tmp_MrgHairCut = ";
-                strsql += " case Tmp_Type When 'C' Then Case When vm_exchange = 'N' then vm_applicable_var else vm_margin_rate end else (Case When vm_exchange = 'N' then vm_applicable_var else vm_margin_rate end * " + GetSysParmSt("MTFP_VARMAR", "") + " ) + (vm_max_loss * case Tmp_RegForFO When 'Y' Then " + GetSysParmSt("MTFP_ELMRGFO", "") + " else " + GetSysParmSt("MTFP_ELMNTFO", "") + " end ) end ";
-                strsql += " from VarMargin  ";
-                strsql += " where vm_scripcd = Tmp_Scripcd and vm_exchange = '" + arrExch[i] + "'";
-                strsql += " and vm_dt =(select max(vm_dt) from VarMargin ";
-                strsql += " Where vm_exchange = '" + arrExch[i] + "' ";
-                strsql += " and vm_dt <= '" + GetTMinusPlusdt(strLastRateDt, -1, arrExch[i]) + "')";
-                strsql += " and Tmp_Exchange = '" + arrExch[i] + "'";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-
-            strsql = "update " + strTempRMSDetail + "  set Tmp_MrgHairCut = " + dblHairCut + " Where Tmp_MrgHairCut < " + dblHairCut;
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "update " + strTempRMSDetail + "  set Tmp_MrgHairCut = 100 Where Tmp_MrgHairCut > 100 ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            ExecuteSQLTmp("Alter Table " + strTempRMSDetail + " Add Tmp_NonAppoved varchar(1) ", objConnectionTmp);
-            ExecuteSQLTmp("Update " + strTempRMSDetail + " Set Tmp_NonAppoved = '' ", objConnectionTmp);
-
-            strsql = "Update " + strTempRMSDetail;
-            strsql += " set Tmp_NonAppoved = 'Y' ";
-            strsql += " Where Tmp_Type = 'M' and Tmp_Scripcd not in (select MTFD_SecCD from MrgTdgFin_SecuritiesDt ";
-            strsql += " Where MTFD_SecDt = (Select max(MTFD_SecDt) from MrgTdgFin_SecuritiesDt where MTFD_SecDt <= '" + strDT + "') ";
-            if (strExchange == "")
-                strsql += " and (MTFD_BSE = 'Y' Or MTFD_NSE = 'Y')) ";
-            else
-                strsql += " and MTFD_" + strExchange + "SE = 'Y') ";
-
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSDetail;
-            strsql += " set Tmp_NonAppoved = 'Y', Tmp_MrgHairCut = 0, Tmp_MarketRate = 0 ";
-            strsql += " Where Tmp_Type = 'C' and Tmp_Scripcd not in (select MTFD_SecCD from MrgTdgFin_SecuritiesDt ";
-            strsql += " Where MTFD_SecDt = (Select max(MTFD_SecDt) from MrgTdgFin_SecuritiesDt where MTFD_SecDt <= '" + strDT + "') ";
-            if (strExchange == "")
-                strsql += " and (MTFD_BSE = 'Y' Or MTFD_NSE = 'Y')) ";
-            else
-                strsql += " and MTFD_" + strExchange + "SE = 'Y') ";
-
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "update " + strTempRMSDetail + "  set Tmp_Value = Round(Tmp_Qty*Tmp_Rate,2) Where Tmp_Type= 'M' ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "update " + strTempRMSDetail + "  set Tmp_Value = Round(Tmp_Qty*Tmp_MarketRate,2) Where Tmp_Type <> 'M' ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "update " + strTempRMSDetail + "  set Tmp_NetValue = Round(Tmp_Value*((Tmp_MrgHairCut)/100),2) Where Tmp_Type = 'M' ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "update " + strTempRMSDetail + "  set Tmp_NetValue = Round(Tmp_Value*((100-Tmp_MrgHairCut)/100),2) Where Tmp_Type <> 'M' ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary + "  set Tmp_FundedAmount = A.Tmp_FundedAmount, Tmp_FundedMrgReq  = A.Tmp_FundedMrgReq, ";
-            strsql += " Tmp_CollateralValue = A.Tmp_CollateralValue ";
-            strsql += " from (select Tmp_Clientcd Clientcd,";
-            strsql += " Round(Sum(case Tmp_Type When 'M' Then Tmp_Value else 0 end),2) Tmp_FundedAmount, ";
-            strsql += " Round(Sum(case Tmp_Type When 'M' Then Tmp_NetValue else 0 end),2) Tmp_FundedMrgReq , ";
-            strsql += " Round(Sum(case Tmp_Type When 'C' Then Tmp_NetValue else 0 end),2) Tmp_CollateralValue ";
-            strsql += " from " + strTempRMSDetail;
-            strsql += " Group By Tmp_Clientcd ) a ";
-            strsql += " Where Clientcd = Tmp_Clientcd ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary + "  set Tmp_M2MLoss = b.M2MLoss From ( ";
-            strsql += " select Tmpclientcd,Sum(M2MLoss) M2MLoss from ( ";
-            strsql += " select Tmp_clientcd Tmpclientcd,Tmp_Scripcd,Round(Sum((Tmp_Rate-Tmp_MarketRate)*Tmp_Qty),2) M2MLoss ";
-            strsql += " From " + strTempRMSDetail;
-            strsql += " Where Tmp_type = 'M' ";
-            strsql += " Group By Tmp_clientcd,Tmp_Scripcd Having Round(Sum((Tmp_Rate-Tmp_MarketRate)*Tmp_Qty),2)  > 0 ) A Group By Tmpclientcd ) b ";
-            strsql += " Where Tmp_Clientcd = Tmpclientcd ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary + "  set Tmp_ShortFallExcess = (Tmp_CollateralFund+Tmp_CollateralValue)-(Tmp_FundedMrgReq+Tmp_M2MLoss) ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-        }
-        public void prProcess(string strDT, string strExchange, string strWhere, bool blnCollExcessOppExch, bool blnisFundTransfer, bool blnIncludeUNDEL, SqlConnection objConnectionTmp)
-        {
-            string strsql;
-            double dblHairCut = Conversion.Val(GetSysParmSt("MTFP_HAIRCUT", ""));
-            string strT2Date = string.Empty;
-
-            bool blnBSE;
-            bool blnNSE;
-            blnBSE = (fnFireQueryTradeWeb("Sysparameter", "sp_sysvalue", "sp_parmcd", "MTFP_LICBSE", true) == "Y");
-            blnNSE = (fnFireQueryTradeWeb("Sysparameter", "sp_sysvalue", "sp_parmcd", "MTFP_LICNSE", true) == "Y");
-
-            dblHairCut = 0;
-
-            prCreateTempTable(blnCollExcessOppExch, objConnectionTmp);
-
-            strsql = "Insert into " + strTempRMSSummary;
-            strsql += " select MTFC_CMcd,MTFC_AllowLimit,0,0,0,0,0,0,0,0,0";
-            strsql += " from MrgTdgFin_Clients,Client_master ";
-            strsql += " Where cm_cd = MTFC_CMcd and MTFC_Status='A' and MTFC_RegDt<='" + strDT + "'" + strWhere;
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary;
-            strsql += " set Tmp_TplusBAL = A.ld_amount ";
-            strsql += " from (select MTFC_CMcd,Sum(ld_amount) ld_amount ";
-            strsql += " from Ledger,MrgTdgFin_Clients,Client_master";
-            strsql += " Where cm_cd = MTFC_CMcd and (ld_clientcd = cm_cd " + (GetSysParmSt("MTFP_MRGNBAL", "") == "Y" ? " or ld_clientcd= cm_brkggroup" : "") + ")";
-            strsql += " and ld_dt <='" + strDT + "' "; // and " & mfnGetLedType(cmbTPLedgerBal)
-            strsql += " Group By MTFC_CMcd ) a ";
-            strsql += " Where MTFC_CMcd = Tmp_Clientcd ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            string strT2 = mfnGetT2Dt(strExchange, strDT);
-
-            strsql = "Update " + strTempRMSSummary + Constants.vbNewLine;
-            strsql += " set Tmp_LoanBal = A.ld_amount " + Constants.vbNewLine;
-            strsql += " from (select MTFC_CMcd,Sum(ld_amount) ld_amount " + Constants.vbNewLine;
-            strsql += " from Ledger,MrgTdgFin_Clients" + Constants.vbNewLine;
-            strsql += " Where ld_clientcd = Rtrim(MTFC_CMcd) + '" + GetSysParmSt("MTFP_SUFFIX", "") + "' and ld_documentType not in ('P','R') ";
-            strsql += " and ld_dt <= '" + strT2 + "' " + Constants.vbNewLine;
-            strsql += " Group By MTFC_CMcd ) a " + Constants.vbNewLine;
-            strsql += " Where MTFC_CMcd = Tmp_Clientcd " + Constants.vbNewLine;
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary;
-            strsql += " set Tmp_CollateralFund = A.ld_amount ";
-            strsql += " from (select MTFC_CMcd,Sum(-ld_amount) ld_amount ";
-            strsql += " from Ledger,MrgTdgFin_Clients";
-            strsql += " Where ld_clientcd = Rtrim(MTFC_CMcd) + '" + GetSysParmSt("MTFP_SUFFIX", "") + "' and ld_documentType in ('P','R') ";
-            strsql += " and ld_dt <='" + strDT + "'";
-            strsql += " Group By MTFC_CMcd Having Sum(-ld_amount) >  0 ) a ";
-            strsql += " Where MTFC_CMcd = Tmp_Clientcd ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary;
-            strsql += " set Tmp_TradeValue = A.TradeValue ";
-            strsql += " from (select MTtd_clientcd, Round(Sum((MTtd_bqty-MTtd_sqty)*MTtd_Rate),2) TradeValue ";
-            strsql += " from MrgTdgFin_TRX,Settlements ";
-            strsql += " Where MTTd_stlmnt = se_stlmnt and se_shpayoutdt ='" + strDT + "'";
-            strsql += " Group By MTtd_clientcd ) a ";
-            strsql += " Where MTtd_clientcd = Tmp_Clientcd ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            string strSelectedOurDPS = "";
-            string strOurDPSWhere = "";
-            if (!blnisFundTransfer)
-            {
-                if (strExchange != "")
-                {
-                    if (strExchange == "B")
-                    {
-                        strSelectedOurDPS += GetSysParmSt("MTFP_DMTBSE", "");
-                        strSelectedOurDPS += "," + GetSysParmSt("MTFP_DMTBSEC", "");
-                    }
-                    else
-                    {
-                        strSelectedOurDPS += GetSysParmSt("MTFP_DMTNSE", "");
-                        strSelectedOurDPS += "," + GetSysParmSt("MTFP_DMTNSEC", "");
-                    }
-                }
-                else
-                {
-                    strSelectedOurDPS += GetSysParmSt("MTFP_DMTBSE", "") + "," + GetSysParmSt("MTFP_DMTNSE", "");
-                    strSelectedOurDPS += "," + GetSysParmSt("MTFP_DMTBSEC", "") + "," + GetSysParmSt("MTFP_DMTNSEC", "");
-                }
-                string[] OurDPS = strSelectedOurDPS.Split(',');
-
-                for (int i = 0; i <= OurDPS.Length - 1; i++)
-                {
-                    if (OurDPS[i] != "")
-                        strOurDPSWhere += "'" + OurDPS[i] + "',";
-                }
-            }
-
-            if (strOurDPSWhere.Length > 0)
-            {
-                strOurDPSWhere = Strings.Left(strOurDPSWhere, (strOurDPSWhere.Length) - 1);
-                strOurDPSWhere = " and dm_ourDP in (" + strOurDPSWhere + ")";
-            }
-
-            strsql = " Insert into " + strTempRMSDetail;
-            strsql += " select case When od_actType = 'C' Then 'C' else 'X' End type,";
-            strsql += " case dm_OurDP When '" + GetSysParmSt("MTFP_DMTBSE", "").Trim().Trim() + "' Then 'B' When '" + GetSysParmSt("MTFP_DMTNSE", "").Trim().Trim() + "' Then 'N'";
-            strsql += " When '" + GetSysParmSt("MTFP_DMTBSEC", "").Trim().Trim() + "' Then 'B' When '" + GetSysParmSt("MTFP_DMTNSEC", "").Trim().Trim() + "' Then 'N' else '' end,";
-            strsql += " dm_clientcd,dm_Scripcd,'N',Sum(Qty),0,0,0,0,0 from ( ";
-            strsql += " select 'X' type,dm_OurDP,dm_clientcd,dm_Scripcd,Sum(-dm_qty) Qty";
-            strsql += " from Demat,Settlements,Client_master";
-            strsql += " Where dm_clientcd = cm_cd and dm_stlmnt=se_stlmnt ";
-            strsql += " and se_shpayoutdt <='" + strDT + "'";
-            strsql += " and dm_Dt <='" + strDT + "'" + strOurDPSWhere;
-            strsql += " and dm_type ='BC' and dm_locked ='N' and dm_transfered = 'N'";
-            strsql += " Group By dm_OurDP,dm_clientcd,dm_Scripcd";
-
-            //Future Date Payout to Client & Benf to Pool
-            strsql += " union all ";
-            strsql += " select 'X' type,dm_OurDP,dm_clientcd,dm_Scripcd,Sum(-dm_qty) Qty";
-            strsql += " from Demat,Settlements,Client_master";
-            strsql += " Where dm_clientcd = cm_cd and dm_stlmnt=se_stlmnt ";
-            strsql += " and se_shpayoutdt <='" + strDT + "'";
-            strsql += " and dm_Dt <='" + strDT + "'";
-            strsql += " and dm_execdt > '" + strDT + "'" + strOurDPSWhere;
-            strsql += " and dm_type ='BC' and (dm_locked <>'N' Or dm_transfered <> 'N') ";
-            strsql += " Group By dm_OurDP,dm_clientcd,dm_Scripcd";
-
-            //Expected
-            strsql += " union all ";
-            strsql += " select 'X',dm_OurDP,dm_clientcd,dm_Scripcd,Sum(-dm_qty)";
-            strsql += " from Demat,Settlements,Client_master";
-            strsql += " Where dm_stlmnt=se_stlmnt and dm_clientcd = cm_cd " + strWhere;
-            strsql += " and se_stdt <= '" + strDT + "'";
-            strsql += " and se_shpayoutdt > '" + strDT + "'";
-            strsql += " and exists ( select MTtd_Stlmnt,MTtd_dt,MTtd_TrxFlag,MTtd_clientcd,MTtd_scripcd,MTtd_bsflag from MrgTdgFin_TRX,Settlements ";
-            strsql += " Where MTtd_Stlmnt=se_stlmnt and se_stdt <= '" + strDT + "' and se_shpayoutdt > '" + strDT + "' ";
-            strsql += " and MTtd_Stlmnt = dm_stlmnt and MTtd_TrxFlag = 'N' and MTtd_bsflag = 'B' and MTtd_clientcd = dm_clientcd and MTtd_scripcd = dm_scripcd  and MTtd_bsflag = case When dm_type = 'BC' Then 'B' else 'S' end ) " + strOurDPSWhere;
-            strsql += " and dm_type ='BC'";
-            strsql += " Group By dm_OurDP,dm_clientcd,dm_Scripcd";
-            strsql += " ) a,ourDPS Where dm_OurDP = od_cd Group By type,dm_OurDP,dm_clientcd,dm_Scripcd,od_actType";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            if (GetSysParmSt("MTFP_COLLAT", "") == "Y")
-            {
-                strsql = " Delete " + strTempRMSDetail + " Where Tmp_Type = 'X' ";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-
-            strsql = "Insert into " + strTempRMSDetail;
-            strsql += " select 'M',MTtd_Exchange,MTtd_clientcd,MTtd_scripcd,'N',Sum(MTtd_bqty-MTtd_sqty),Round(Sum((MTtd_bqty-MTtd_sqty)*MTtd_rate)/Sum(MTtd_bqty-MTtd_sqty),2),0,0,0,0";
-            strsql += " from MrgTdgFin_TRX,client_master ";
-            strsql += " Where MTtd_clientcd=cm_cd and MTtd_dt <= '" + strDT + "'" + strWhere;
-            if (strExchange != "")
-                strsql += " and MTtd_Exchange = '" + strExchange + "'";
-            strsql += " Group By MTtd_Exchange,MTtd_clientcd,MTtd_scripcd";   // ,MTtd_CntStlmnt
-            strsql += " Having Sum(MTtd_bqty-MTtd_sqty) <> 0 ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Insert into " + strTempRMSDetail;
-            strsql += " select 'C',Tmp_Exchange,Tmp_Clientcd,Tmp_Scripcd,'N',Sum(case Tmp_Type When 'X' Then Tmp_Qty else -Tmp_Qty end),0,0,0,0,0";
-            strsql += " from " + strTempRMSDetail;
-            strsql += " Group By Tmp_Exchange,Tmp_Clientcd,Tmp_Scripcd ";
-            strsql += " Having Sum(case Tmp_Type When 'X' Then Tmp_Qty else -Tmp_Qty end) > 0 ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = " Delete " + strTempRMSDetail + " where Tmp_Type = 'X' ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            if (strExchange == "")
-            {
-                strsql = "Delete " + strTempRMSDetail + Constants.vbNewLine + " Where Tmp_Type = 'C' and Tmp_Scripcd not in (select MTFD_SecCD from MrgTdgFin_SecuritiesDt ";
-                strsql += " Where MTFD_SecDt = (Select max(MTFD_SecDt) from MrgTdgFin_SecuritiesDt where MTFD_SecDt <= '" + strDT + "') and (MTFD_BSE = 'Y' Or MTFD_NSE = 'Y'))";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-            else
-            {
-                strsql = "Delete " + strTempRMSDetail + Constants.vbNewLine + " Where Tmp_Type = 'C' and Tmp_Scripcd not in (select MTFD_SecCD from MrgTdgFin_SecuritiesDt ";
-                strsql += " Where MTFD_SecDt = (Select max(MTFD_SecDt) from MrgTdgFin_SecuritiesDt where MTFD_SecDt <= '" + strDT + "') and MTFD_" + strExchange + "SE = 'Y')";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-
-            if (blnIncludeUNDEL)
-            {
-                strsql = "Insert into " + strTempRMSDetail;
-                strsql += "  select 'U' type,left(dm_tstlmnt,1) ,dm_clientcd,dm_Scripcd,'N',sum(dm_qty)  ,0,0,0,0,0 ";
-                strsql += "  From Demat, OurDps, Settlements, Client_master ";
-                strsql += " Where dm_clientcd = cm_cd And dm_ourdp = od_cd  And dm_tstlmnt = se_stlmnt and dm_type = 'BC' ";
-                strsql += " and od_acttype = 'T' and dm_locked = 'B' and se_stdt <= '" + strDT + "' and se_shpayindt >= '" + strDT + "'" + strWhere;
-                strsql += " and dm_execdt > '" + strDT + "' and dm_execdt <= se_shpayindt Group By left(dm_tstlmnt,1),dm_clientcd,dm_Scripcd";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-
-            char[] ArrSeparators = new char[1];
-            ArrSeparators[0] = '/';
-            string strExch = ((blnBSE == true ? "B/" : "") + (blnNSE == true ? "N/" : ""));
-            strExch = strExch.Trim() != "" ? Strings.Left(strExch, strExch.Length - 1) : "";
-            string[] arrExch = strExch.Split(ArrSeparators);
-
-            for (int i = 0; i <= arrExch.Length - 1; i++)
-            {
-                strsql = "Update " + strTempRMSDetail;
-                strsql += " set Tmp_MarketRate = mk_closerate from market_rates a with (nolock) where mk_exchange = '" + arrExch[i] + "' and mk_scripcd=Tmp_Scripcd ";
-                strsql += " and mk_dt= (select max(mk_dt) from market_rates with(nolock) where mk_exchange = '" + arrExch[i] + "'";
-                strsql += " and mk_dt <='" + strDT + "') ";
-                strsql += " and Tmp_Type= 'M' and Tmp_Exchange = '" + arrExch[i] + "'";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-
-                strsql = "Update " + strTempRMSDetail;
-                strsql += " set Tmp_MarketRate = mk_closerate from market_rates a with (nolock) where mk_exchange = '" + arrExch[i] + "' and mk_scripcd=Tmp_Scripcd ";
-                strsql += " and mk_dt= (select max(mk_dt) from market_rates with(nolock) where mk_exchange = '" + arrExch[i] + "'";
-                strsql += " and mk_dt <'" + strDT + "') ";
-                strsql += " and Tmp_Type <> 'M' and Tmp_Exchange = '" + arrExch[i] + "'";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-
-                strsql = "Update " + strTempRMSDetail;
-                strsql += " Set Tmp_RegForFO = 'Y'  ";
-                strsql += " From Product_master, Securities  ";
-                strsql += " Where pm_Exchange = '" + arrExch[i] + "' and pm_assetcd = " + Interaction.IIf(arrExch[i] == "B", "ss_Bsymbol", "ss_nsymbol");
-                strsql += " and Tmp_Scripcd  = ss_cd and Tmp_Exchange = '" + arrExch[i] + "'";
-                if (Convert.ToInt32(fnFireQueryTradeWeb("Product_Expiry", "Count(0)", "pe_expirydt >= '" + strDT + "' and pe_exchange", arrExch[i], true)) > 0)
-                    strsql += " and pm_assetcd in ( select pe_assetcd from Product_Expiry Where pe_exchange = '" + arrExch[i] + "' and pe_expirydt >= '" + strDT + "')";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-
-                strsql = "update " + strTempRMSDetail;
-                strsql += " set Tmp_MrgHairCut = ";
-                strsql += " case Tmp_Type When 'C' Then Case When vm_exchange = 'N' then vm_applicable_var else vm_margin_rate end else (Case When vm_exchange = 'N' then vm_applicable_var else vm_margin_rate end * " + GetSysParmSt("MTFP_VARMAR", "") + " ) + (vm_max_loss * case Tmp_RegForFO When 'Y' Then " + GetSysParmSt("MTFP_ELMRGFO", "") + " else " + GetSysParmSt("MTFP_ELMNTFO", "") + " end ) end ";
-                strsql += " from VarMargin  ";
-                strsql += " where vm_scripcd = Tmp_Scripcd and vm_exchange = '" + arrExch[i] + "'";
-                strsql += " and vm_dt =(select max(vm_dt) from VarMargin ";
-                strsql += " Where vm_exchange = '" + arrExch[i] + "' ";
-                strsql += " and vm_dt <'" + strDT + "')";
-                strsql += " and Tmp_Exchange = '" + arrExch[i] + "'";
-                ExecuteSQLTmp(strsql, objConnectionTmp);
-            }
-
-            strsql = "update " + strTempRMSDetail + "  set Tmp_MrgHairCut = " + dblHairCut + " Where Tmp_MrgHairCut < " + dblHairCut;
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "update " + strTempRMSDetail + "  set Tmp_Value = Round(Tmp_Qty*Tmp_Rate,2) Where Tmp_Type= 'M' ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "update " + strTempRMSDetail + "  set Tmp_Value = Round(Tmp_Qty*Tmp_MarketRate,2) Where Tmp_Type <> 'M' ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "update " + strTempRMSDetail + "  set Tmp_NetValue = Round(Tmp_Value*((Tmp_MrgHairCut)/100),2) Where Tmp_Type = 'M' ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "update " + strTempRMSDetail + "  set Tmp_NetValue = Round(Tmp_Value*((100-Tmp_MrgHairCut)/100),2) Where Tmp_Type <> 'M' ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary + "  set Tmp_FundedAmount = A.Tmp_FundedAmount, Tmp_FundedMrgReq  = A.Tmp_FundedMrgReq, ";
-            strsql += " Tmp_CollateralValue = A.Tmp_CollateralValue ";
-            strsql += " from (select Tmp_Clientcd Clientcd,";
-            strsql += " Round(Sum(case Tmp_Type When 'M' Then Tmp_Value else 0 end),2) Tmp_FundedAmount, ";
-            strsql += " Round(Sum(case Tmp_Type When 'M' Then Tmp_NetValue else 0 end),2) Tmp_FundedMrgReq , ";
-            strsql += " Round(Sum(case Tmp_Type When 'C' Then Tmp_NetValue else 0 end),2) Tmp_CollateralValue ";
-            strsql += " from " + strTempRMSDetail;
-            strsql += " Group By Tmp_Clientcd ) a ";
-            strsql += " Where Clientcd = Tmp_Clientcd ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary + "  set Tmp_M2MLoss = A.M2MLoss ";
-            strsql += " From ( select Tmp_clientcd Tmpclientcd, Round(Sum((Tmp_Rate-Tmp_MarketRate)*Tmp_Qty),2) M2MLoss ";
-            strsql += " From " + strTempRMSDetail;
-            strsql += " Where Tmp_type = 'M' and Tmp_Rate > Tmp_MarketRate  ";
-            strsql += " Group By Tmp_clientcd) A ";
-            strsql += " Where Tmp_Clientcd = Tmpclientcd ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-
-            strsql = "Update " + strTempRMSSummary + "  set Tmp_ShortFallExcess = (Tmp_CollateralFund+Tmp_CollateralValue)-(Tmp_FundedMrgReq+Tmp_M2MLoss) ";
-            ExecuteSQLTmp(strsql, objConnectionTmp);
-        }
-        public string GetTMinusPlusdt(string strDate, int intDay, string strExch)
-        {
-            string strDate1 = strDate;
-            for (int intCnt = 0; intCnt < Math.Abs(intDay); intCnt++)
-            {
-                Againdt:
-                strDate1 = ConvertDT(strDate1).AddDays(intDay).ToString("yyyyMMdd");
-                if (Conversion.Val(fnFireQueryTradeWeb("THoliday_master", "count(0)", "hm_exchange = '" + strExch + "' and hm_dt", strDate1, true)) > 0)
-                    goto Againdt;
-            }
-            return strDate1;
-        }
-        public string mfnGetT2Dt(string strExchange, string strDT)
-        {
-            string strT2 = strDT;
-            string strSql = string.Empty;
-            for (int i = 0; i < 2; i++)
-            {
-                strT2 = ConvertDT(strT2).AddDays(1).ToString("yyyyMMdd");
-                AgaindtT2:
-                strSql = "select * from Tholiday_master";
-                strSql += " where Replace(hm_dt,'BH','20') = '" + strT2 + "'";
-                if (strExchange != "")
-                    strSql += " and  hm_exchange = '" + strExchange + "'";
-                DataTable dstemp = new DataTable();
-                dstemp = OpenDataTable(strSql);
-                if (dstemp.Rows.Count > 0)
-                {
-                    strT2 = ConvertDT(strT2).AddDays(1).ToString("yyyyMMdd");
-                    goto AgaindtT2;
-                }
-            }
-            return strT2;
-        }
-        public string GetCommExch(string strExch)
-        {
-            string Exch = "";
-            switch (strExch)
-            {
-                case "MCX":
-                    Exch = "M";
-                    break;
-                case "NCDEX":
-                    Exch = "N";
-                    break;
-                case "ICEX":
-                    Exch = "C";
-                    break;
-                case "NCME":
-                    Exch = "A";
-                    break;
-                case "NSEL":
-                    Exch = "S";
-                    break;
-                case "NSX":
-                    Exch = "D";
-                    break;
-            }
-            return Exch;
-        }
-        public string GetSlashDateNew(string Date)
-        {
-            if (Date.ToString().Trim() == "")
-                return string.Empty;
-            int Year = int.Parse(Date.Substring(0, 4));
-            int Month = int.Parse(Date.Substring(4, 2));
-            int Day = int.Parse(Date.Substring(6, 2));
-            return new DateTime(Year, Month, Day).ToString("dd/MM/yyyy", new System.Globalization.CultureInfo("en-GB"));
-        }
-
-        public string fnGetClearingHouse(string strDate, string strSegment, string strCompCd)
-        {
-            DataTable dtInterOP = new DataTable();
-            string StrSql;
-            string strClgH;
-            StrSql = " select * from ClearingHouse " + " Where CH_CompanyCode = '" + strCompCd + "' and CH_Segment = '" + strSegment + "'" + " and CH_EffDt = (Select max(CH_EffDt) from ClearingHouse " + " Where CH_CompanyCode = '" + strCompCd + "' and CH_Segment = '" + strSegment + "' and CH_EffDt <='" + strDate + "')";
-            dtInterOP = OpenDataTable(StrSql);
-            if (dtInterOP.Rows.Count > 0)
-            {
-                strClgH = dtInterOP.Rows[0]["CH_ClgHs"].ToString().Trim();
-            }
-            else
-            {
-                strClgH = "";
-            }
-            return strClgH;
-        }
-
-        public string fnCheckInterOperability(string strDate, string strSegment)
-        {
-            DataSet DsInterOP;
-            string StrSql;
-
-            if (Convert.ToInt16(fnFireQueryTradeWeb("sysobjects", "count(0)", "name", "ClearingHouse", true)) == 0)
-            {
-                return "";
-            }
-
-            StrSql = " select ClearingHouse.* from ClearingHouse ";
-            StrSql += " Where CH_CompanyCode = ";
-            if (ConfigurationManager["IsTradeWeb"] == "O")//live database
-            {
-                StrSql += "'A'"; // "'" + Convert.ToString(sessionCompanyCode) + "'";
-            }
-            else
-            {
-                StrSql += " (select min(em_cd) from Entity_master Where Len(Ltrim(Rtrim(em_cd))) = 1) ";
-            }
-            StrSql += "and CH_Segment = '" + strSegment + "'";
-            StrSql += " and CH_EffDt = (Select max(CH_EffDt) from ClearingHouse ";
-            StrSql += " Where CH_Segment = '" + strSegment + "' and CH_EffDt <='" + strDate + "')";
-            DsInterOP = OpenDataSet(StrSql);
-
-            if (DsInterOP.Tables[0].Rows.Count == 0)
-            {
-                return "";
-            }
-            else
-            {
-                if (DsInterOP.Tables[0].Rows[0]["CH_ClgHs"].ToString().Trim() == "")
-                {
-                    return "";
-                }
-                else
-                    return "TRUE";
-            }
-        }
-        public string fnGetInterOpStlmnts(string strStlmnt, string StrDate, Boolean blnIncludeT2T)
-        {
-            // Dim RsInterOP As New ADODB.Recordset, rstemp As New ADODB.Recordset, RsAucStlmnt As New ADODB.Recordset
-            DataSet DsInterOP;
-            DataSet DsAucStlmnt;
-            DataSet DsStlmnt1;
-            DataSet DsStlmnt2;
-            string strData;
-            string strSTDt = StrDate.Trim();
-            bool blnInteOP;
-            string StrSql;
-            int j;
-            DsInterOP = null/* TODO Change to default(_) if this is not a reference type */;
-
-            if (",BR,BW,BC,NA,NN,NZ,MA,MN,MZ,BQ,BU,NQ,NU,".Contains("," + Strings.Left(strStlmnt, 2) + ","))
-            {
-                strData = "";
-                string strClgHs = fnGetClgHouse(StrDate, "C");
-
-                StrSql = " select * from SEttlements Where se_stdt = '" + strSTDt + "'";
-                if (",BW,NN,MN,".Contains("," + Strings.Left(strStlmnt, 2) + ","))
-                    StrSql = StrSql + " and left(se_stlmnt,2) in ('BW','NN','MN')";
-                else if (",BC,NZ,MZ,".Contains("," + Strings.Left(strStlmnt, 2) + ","))
-                    StrSql = StrSql + " and left(se_stlmnt,2) in ('BC','NZ','MZ')";
-                else if (",BQ,NQ,".Contains("," + Strings.Left(strStlmnt, 2) + ","))
-                    StrSql = StrSql + " and left(se_stlmnt,2) in ('BQ','NQ')";
-                else if (",BU,NU,".Contains("," + Strings.Left(strStlmnt, 2) + ","))
-                    StrSql = StrSql + " and left(se_stlmnt,2) in ('BU','NU')";
-                else
-                    StrSql = StrSql + " and left(se_stlmnt,2) in ('BR','NA','MA')";
-                if (strClgHs == "I")
-                {
-                    StrSql += " order by Case left(se_stlmnt,1) when 'B' then 0 else 1 end";
-                }
-                else if (strClgHs == "N")
-                {
-                    StrSql += " order by Case left(se_stlmnt,1) when 'N' then 0 else 1 end";
-                }
-                DsInterOP = OpenDataSet(StrSql);
-                if (DsInterOP.Tables[0].Rows.Count == 0)
-                    strData = strStlmnt + ",";
-                else
-                {
-                    strData = "";
-                    if (",BR,NA,MA,".Contains("," + Strings.Left(strStlmnt, 2) + ","))
-                    {
-                        StrSql = " select isNull(Sum(case Left(se_stlmnt,2) When 'BR' Then 1 else 0 end),0) BR,  ";
-                        StrSql = StrSql + " isNull(Sum(case Left(se_stlmnt,2) When 'NA' Then 1 else 0 end),0) NA  ";
-                        StrSql = StrSql + " from Settlements Where se_stdt = '" + strSTDt + "'";
-                        DsAucStlmnt = OpenDataSet(StrSql);
-                        int intBR;
-                        int intNA;
-                        intBR = DsAucStlmnt.Tables[0].Rows.Count;
-                        intNA = DsAucStlmnt.Tables[0].Rows.Count;
-                        if (intBR > 1 | intNA > 1)
-                        {
-                            if (intBR == intNA)
-                            {
-                                string[] ArrExch;
-                                ArrExch = (Strings.Left(strStlmnt, 1) == "B" ? "B,N" : "N,B").Split(',');
-
-                                StrSql = " select * from SEttlements Where se_stdt = '" + strSTDt + "'";
-                                StrSql = StrSql + " and left(se_stlmnt,2) in ('BR','NA','MA') and se_exchange = '" + ArrExch[0] + "'";
-                                StrSql = StrSql + " Order by se_No ";
-                                DsStlmnt1 = OpenDataSet(StrSql);
-
-                                StrSql = " select * from SEttlements Where se_stdt = '" + strSTDt + "'";
-                                StrSql = StrSql + " and left(se_stlmnt,2) in ('BR','NA','MA') and se_exchange = '" + ArrExch[1] + "'";
-                                StrSql = StrSql + " Order by se_No ";
-                                DsStlmnt2 = OpenDataSet(StrSql);
-                                j = 0;
-                                while (j < DsStlmnt1.Tables[0].Rows.Count)
-                                {
-                                    if (DsStlmnt1.Tables[0].Rows[j]["se_stlmnt"].ToString() == strStlmnt)
-                                    {
-                                        strData = strData + DsStlmnt1.Tables[0].Rows[j]["se_stlmnt"].ToString() + ",";
-                                        strData = strData + DsStlmnt2.Tables[0].Rows[j]["se_stlmnt"].ToString() + ",";
-                                        break;
-                                    }
-                                    j = j + 1;
-                                }
-                                DsStlmnt1 = null/* TODO Change to default(_) if this is not a reference type */;
-                                DsStlmnt2 = null/* TODO Change to default(_) if this is not a reference type */;
-                            }
-                            else
-                                strData = strStlmnt + ",";
-                        }
-                        else
-                        {
-                            j = 0;
-                            while (j < DsInterOP.Tables[0].Rows.Count)
-                            {
-                                strData = strData + DsInterOP.Tables[0].Rows[j]["se_stlmnt"].ToString().Trim() + ",";
-                                j = j + 1;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        j = 0;
-                        while (j < DsInterOP.Tables[0].Rows.Count)
-                        {
-                            strData = strData + DsInterOP.Tables[0].Rows[j]["se_stlmnt"].ToString().Trim() + ",";
-                            j = j + 1;
-                        }
-                    }
-                }
-                DsInterOP = null/* TODO Change to default(_) if this is not a reference type */;
-                j = 0;
-                if (blnIncludeT2T)
-                {
-                    StrSql = " select * from SEttlements Where se_stdt = '" + strSTDt + "'";
-                    if (",BW,NN,MN,".Contains("," + Strings.Left(strStlmnt, 2) + ","))
-                    {
-                        StrSql = StrSql + " and left(se_stlmnt,2) in ('BC','NZ','MZ')";
-                    }
-                    else
-                    {
-                        StrSql = StrSql + " and left(se_stlmnt,2) in ('BU','NU')";
-                    }
-                    DsInterOP = OpenDataSet(StrSql);
-                    if (DsInterOP.Tables[0].Rows.Count == 0)
-                        strData = strStlmnt + ",";
-                    else
-                        while (j < DsInterOP.Tables[0].Rows.Count)
-                        {
-                            strData = strData + DsInterOP.Tables[0].Rows[j]["se_stlmnt"].ToString() + ",";
-                            j = j + 1;
-                        }
-                    DsInterOP = null/* TODO Change to default(_) if this is not a reference type */;
-                }
-                strData = Strings.Left(strData, Strings.Len(strData) - 1);
-                return strData;
-            }
-            else if (Convert.ToInt16(fnFireQueryTradeWeb("settlements,settlement_type", "count(0)", "se_exchange=sy_exchange and se_type=sy_type and sy_maptype in ('O','P') and se_stdt >= '20200801' and se_stlmnt", strStlmnt, true)) > 0)
-            {
-
-                StrSql = " select * from SEttlements,settlement_type Where se_stdt = '" + strSTDt + "'";
-                StrSql += " and se_exchange=sy_exchange and se_type=sy_type ";
-                StrSql += " and sy_maptype = '" + fnFireQueryTradeWeb("settlements,settlement_type", "sy_maptype", "se_exchange=sy_exchange and se_type=sy_type and se_stlmnt", strStlmnt, true) + "'";
-                DsInterOP = null;
-                strData = "";
-                DsInterOP = OpenDataSet(StrSql);
-                if (DsInterOP.Tables[0].Rows.Count == 0)
-                {
-                    strData = strStlmnt + ",";
-                }
-                else
-                {
-                    j = 0;
-
-                    while (j < DsInterOP.Tables[0].Rows.Count)
-                    {
-                        strData = strData + DsInterOP.Tables[0].Rows[j]["se_stlmnt"].ToString() + ",";
-                        j = j + 1;
-                    }
-                }
-                DsInterOP = null;
-                strData = Strings.Left(strData, Strings.Len(strData) - 1);
-                return strData;
-            }
-            else
-                return strStlmnt;
-        }
-
-        public string fnGetInterOpExchange(string strSegment)
-        {
-            DataSet DsInterOP;
-            string strSQL;
-            string strData;
-
-            strSQL = " select substring(CES_Cd,2,1) as CES_Cd from CompanyExchangeSegments Where CES_CompanyCd = 'A'  and substring(CES_Cd,2,1) in ('B','N') and Right(CES_Cd,1) = '" + strSegment + "'";
-            DsInterOP = OpenDataSet(strSQL);
-            if (DsInterOP.Tables[0].Rows.Count == 0)
-            {
-                strData = "";
-            }
-            else
-            {
-                strData = "";
-
-                for (int j = 0; j < DsInterOP.Tables[0].Rows.Count; j++)
-                {
-                    strData += DsInterOP.Tables[0].Rows[j]["CES_Cd"].ToString().Trim() + ",";
-                }
-            }
-            strData = Strings.Left(strData, Strings.Len(strData) - 1);
-            return strData;
-        }
-        public string mfnGetSegmentCode2Desc(string strSegment)
-        {
-
-            strSegment = strSegment.Trim().ToUpper();
-            if (strSegment == "K")
-            {
-                return "FX";
-            }
-            else if (strSegment == "C")
-            {
-                return "CASH";
-            }
-            else if (strSegment == "X")
-            {
-                return "COMM";
-            }
-            else if (strSegment == "M")
-            {
-                return "MF";
-            }
-            else
-            {
-                return "F&O";
-            }
-        }
-
-        public string mfnGetSegmentDesc2Code(string strSegment)
-        {
-            strSegment = strSegment.Trim().ToUpper();
-            if (strSegment == "FX")
-            {
-                return "K";
-            }
-            else if (strSegment == "CASH")
-            {
-                return "C";
-            }
-            else if (strSegment == "COMMEX" || strSegment == "COMM")
-            {
-                return "X";
-            }
-            else if (strSegment == "MF")
-            {
-                return "M";
-            }
-            else
-            {
-                return "F";
-            }
-        }
-        public string GetCommexConnectionNew(string Commex)
-        {
-            string StrCommexConn = "";
-            if (Commex != null && Commex != string.Empty)
-            {
-                char[] ArrSeparators = new char[1];
-                ArrSeparators[0] = '/';
-                string[] ArrCommex = Commex.Split(ArrSeparators);
-                Connection con = new Connection();
-                var csb = con.GetDataSource();
-                // var csb = new SqlConnectionStringBuilder(ConfigurationManager.ConnectionStrings["TradeWebConnectionString"].ConnectionString);
-                string StrServer = csb.DataSource.ToUpper().ToString().Trim();
-                StrServer = "[" + StrServer + "]";
-                if (StrServer.Trim() == ArrCommex[0].ToUpper().Trim())
-                {
-                    StrCommexConn = ArrCommex[1].Trim() + "." + ArrCommex[2].Trim();
-                }
-                else
-                { StrCommexConn = ArrCommex[0].Trim() + "." + ArrCommex[1].Trim() + "." + ArrCommex[2].Trim(); }
-            }
-            return StrCommexConn;
-        }
         public string GetCommexConnection()
         {
             string StrCommexConn = "";
@@ -3097,9 +530,11 @@ namespace TradeWeb.API.Repository
                 char[] ArrSeparators = new char[1];
                 ArrSeparators[0] = '/';
                 string[] ArrCommex = GetWebParameter("Commex").Split(ArrSeparators);
-                var con = new Connection();//new SqlConnectionStringBuilder(ConfigurationManager.ConnectionStrings["TradeWebConnectionString"].ConnectionString);
-                var csb = con.GetDataSource();
-                string StrServer = csb.DataSource.ToUpper().ToString().Trim();
+                //var con = new Connection();//new SqlConnectionStringBuilder(ConfigurationManager.ConnectionStrings["TradeWebConnectionString"].ConnectionString);
+                var con = new SqlConnectionStringBuilder(_connStr);
+                //var csb = con.GetDataSource();
+                //string StrServer = csb.DataSource.ToUpper().ToString().Trim();
+                string StrServer = (con.DataSource ?? "").ToUpper().Trim();
                 // StrServer = "[" + StrServer + "]";
                 if (StrServer.Trim() == ArrCommex[0].ToUpper().Trim())
                 {
@@ -3109,26 +544,6 @@ namespace TradeWeb.API.Repository
                 { StrCommexConn = ArrCommex[0].Trim() + "." + ArrCommex[1].Trim() + "." + ArrCommex[2].Trim(); }
             }
             return StrCommexConn;
-        }
-        public string GetSysParmStComm(string strParmcd, string strTableName)//GetSysParmSt("ACREPORT", "Stationary");
-        {
-            string strsql = string.Empty;
-            string strReturn = string.Empty;
-            if (strTableName == "" || strTableName == null)
-            {
-                strsql = "Select sp_sysvalue from " + GetCommexConnection() + ".Sysparameter where sp_parmcd= '" + strParmcd + "'";
-                DataSet ObjDataset = OpenDataSet(strsql);
-                if (ObjDataset.Tables[0].Rows.Count > 0)
-                {
-                    strReturn = ObjDataset.Tables[0].Rows[0]["sp_sysvalue"].ToString().Trim();
-                    return strReturn;
-                }
-                else
-                {
-                    return strReturn;
-                }
-            }
-            return strReturn;
         }
 
         public DataSet OpenDataSetTmp(string strFireQry, SqlConnection objConnection)
@@ -3147,22 +562,7 @@ namespace TradeWeb.API.Repository
                 }
             }
         }
-        public DataTable OpenNewDataTableTmp(string strFireQry, SqlConnection objConnection)
-        {
-            using (SqlCommand objSqlCommand = new SqlCommand(strFireQry, objConnection))
-            {
-                objSqlCommand.Connection = objConnection;
-                objSqlCommand.CommandText = strFireQry;
-                objSqlCommand.CommandTimeout = 5000;
-                using (SqlDataAdapter MyAdapter = new SqlDataAdapter(objSqlCommand))
-                {
-                    DataTable MyDataTable = new DataTable();
-                    MyAdapter.Fill(MyDataTable);
-                    MyAdapter.Dispose();
-                    return MyDataTable;
-                }
-            }
-        }
+
         public void ExecuteSQLTmp(string Str_Qry, SqlConnection objConnection)
         {
             using (SqlCommand MyCmd = new SqlCommand())
@@ -3174,6 +574,7 @@ namespace TradeWeb.API.Repository
                 MyCmd.Dispose();
             }
         }
+
         public DataTable OpenDataTableTmp(string strFireQry, SqlConnection objConnection)
         {
             using (SqlCommand objSqlCommand = new SqlCommand(strFireQry, objConnection))
@@ -3194,25 +595,11 @@ namespace TradeWeb.API.Repository
         public DataTable OpenDataTable(string strFireQry)
         {
             DataSet ds = new DataSet();
-            try
+            using (SqlConnection con = new SqlConnection(_connStr))
             {
-                Connection con = new Connection();
-                try
-                {
-                    con.OpenConection();
-                    ds = con.ReturnDataSet(strFireQry);
-                    con.CloseConnection();
-                    return ds.Tables[0];
-                }
-                catch (Exception e)
-                {
-                    con.DisposeConnection();
-                    throw e;
-                }
-            }
-            catch (Exception ex)
-            {
-                throw ex;
+                SqlDataAdapter dr = new SqlDataAdapter(strFireQry, con);
+                dr.Fill(ds);
+                return ds.Tables[0];
             }
             //using (SqlConnection ObjConnection = new SqlConnection(StrConn))
             //{
@@ -3233,152 +620,22 @@ namespace TradeWeb.API.Repository
             //}
         }
 
-        public dynamic OpenDataTableExcReader(string strFireQry)
-        {
-            DataSet ds = new DataSet();
-            try
-            {
-                Connection con = new Connection();
-                string base64String = "";
-                string connetionString = GetConnectionStr();
-                using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                {
-                    conn.Open();
-                    try
-                    {
-                        using (SqlCommand command = new SqlCommand(strFireQry, conn))
-                        {
-
-                            using (SqlDataReader sdr = command.ExecuteReader())
-                            {
-                                sdr.Read();
-                                byte[] bytes = (byte[])sdr["ma_proof"];
-                                base64String = Convert.ToBase64String(bytes);
-                            }
-                            conn.Close();
-
-                            // Retrieve the binary data from the database
-                            byte[] pdfData = command.ExecuteScalar() as byte[];
-
-                            if (pdfData != null)
-                            {
-                                // Convert the byte array to a Base64 string
-                                base64String = Convert.ToBase64String(pdfData);
-                            }
-                            else
-                            {
-                                throw new Exception("No data found in the database.");
-                            }
-                        }
-                        conn.Close();
-                        return base64String;
-                    }
-                    catch (Exception e)
-                    {
-                        conn.Close();
-                        throw e;
-                    }
-                }
-
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
-
-        }
-
-        public dynamic SP_DataTable(string strFireQry)
-        {
-            SqlConnection con = new SqlConnection();
-            try
-            {
-                using (var db = new DataContext())
-                {
-                    con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-                }
-
-                using (SqlCommand cmd = new SqlCommand(strFireQry, con))
-                {
-                    cmd.CommandTimeout = 0;
-                    cmd.CommandType = CommandType.StoredProcedure;
-                    using (SqlDataAdapter da = new SqlDataAdapter(cmd))
-                    {
-                        DataSet ds = new DataSet();
-                        da.Fill(ds);
-                        return ds;
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                throw e;
-            }
-        }
-
         public dynamic Execute_SP(string strFireQry, SqlParameter[] sqlPrm)
         {
-            SqlConnection con = new SqlConnection();
-            try
+            //SqlConnection con = new SqlConnection();
+            using SqlConnection con = new SqlConnection(_connStr);
+            con.Open();
+            using SqlCommand cmd = new SqlCommand(strFireQry, con);
+            cmd.CommandType = CommandType.StoredProcedure;
+            //cmd.Parameters.Clear();
+            foreach (var param in sqlPrm)
             {
-                using (var db = new DataContext())
-                {
-                    con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-                }
-                if (con.State != ConnectionState.Open)
-                    con.Open();
-                using (SqlCommand cmd = new SqlCommand(strFireQry, con))
-                {
-                    cmd.CommandType = CommandType.StoredProcedure;
-                    cmd.Parameters.Clear();
-                    foreach (var param in sqlPrm)
-                    {
-                        cmd.Parameters.Add(param);
-                    }
-                    cmd.CommandTimeout = 0;
-                    var rtnVal = cmd.ExecuteScalar();
-                    con.Close();
-                    return rtnVal;
-                }
+                cmd.Parameters.Add(param);
             }
-            catch (Exception e)
-            {
-                throw e;
-            }
-        }
-
-        public dynamic Execute_SP_DataTable(string spName, SqlParameter[] sqlPrm)
-        {
-            SqlConnection con = new SqlConnection();
-            DataTable dt = new DataTable();
-            try
-            {
-                using (var db = new DataContext())
-                {
-                    con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-                }
-                using (SqlCommand cmd = new SqlCommand(spName, con))
-                {
-                    cmd.CommandType = CommandType.StoredProcedure;
-                    cmd.CommandTimeout = 0;
-                    cmd.Parameters.Clear();
-                    using (SqlDataAdapter da = new SqlDataAdapter(cmd))
-                    {
-                        foreach (var param in sqlPrm)
-                        {
-                            cmd.Parameters.Add(param);
-                        }
-                        da.Fill(dt);
-                        cmd.Dispose();
-                        da.Dispose();
-                        return dt;
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                throw e;
-            }
+            cmd.CommandTimeout = 0;
+            var rtnVal = cmd.ExecuteScalar();
+            //con.Close();
+            return rtnVal;
         }
 
         public dynamic Execute_SP_DataSet(string strFireQry, SqlParameter[] sqlPrm, DataSet ds)
@@ -3386,142 +643,70 @@ namespace TradeWeb.API.Repository
             SqlConnection con = new SqlConnection();
             try
             {
-                using (var db = new DataContext())
+                con = new SqlConnection(_connStr);
+                con.Open();
+                using SqlCommand cmd = new SqlCommand(strFireQry, con);
+                cmd.CommandType = CommandType.StoredProcedure;
+                cmd.CommandTimeout = 0;
+                cmd.Parameters.Clear();
+                using (SqlDataAdapter da = new SqlDataAdapter(cmd))
                 {
-                    con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-                }
-                using (SqlCommand cmd = new SqlCommand(strFireQry, con))
-                {
-                    cmd.CommandType = CommandType.StoredProcedure;
-                    cmd.CommandTimeout = 0;
-                    cmd.Parameters.Clear();
-                    using (SqlDataAdapter da = new SqlDataAdapter(cmd))
+                    foreach (var param in sqlPrm)
                     {
-                        foreach (var param in sqlPrm)
-                        {
-                            cmd.Parameters.Add(param);
-                        }
-                        da.Fill(ds);
-                        cmd.Dispose();
-                        da.Dispose();
-                        return ds;
+                        cmd.Parameters.Add(param);
                     }
+                    da.Fill(ds);
+                    cmd.Dispose();
+                    da.Dispose();
+                    return ds;
                 }
             }
             catch (Exception e)
             {
-                throw e;
+                throw;
             }
         }
 
         public dynamic Execute_SP_OuputParam(string strFireQry, SqlParameter[] sqlPrm, List<OutputParamSP> outputParam)
         {
-            SqlConnection con = new SqlConnection();
+            //SqlConnection con = new SqlConnection();
             try
             {
-                using (var db = new DataContext())
+                /*using (var db = new DataContext())
                 {
                     con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
                 }
                 if (con.State != ConnectionState.Open)
+                    con.Open();*/
+                using (SqlConnection con = new SqlConnection(_connStr))
+                {
                     con.Open();
-                using (SqlCommand cmd = new SqlCommand(strFireQry, con))
-                {
-                    cmd.CommandType = CommandType.StoredProcedure;
-                    cmd.Parameters.Clear();
-                    foreach (var param in sqlPrm)
+                    using (SqlCommand cmd = new SqlCommand(strFireQry, con))
                     {
-                        cmd.Parameters.Add(param);
-                    }
-                    int i = 0;
-                    foreach (var opValue in outputParam)
-                    {
-                        cmd.Parameters.Add(opValue.ParamValue, opValue.DbType, opValue.Length).Direction = ParameterDirection.Output;
-                        i++;
-                    }
-                    cmd.CommandTimeout = 0;
-                    cmd.ExecuteNonQuery();
-
-                    var rtnVal = i < 1 ? "" : (cmd.Parameters[outputParam[0].ParamValue].Value + (i < 2 ? "" : "$" + cmd.Parameters[outputParam[1].ParamValue].Value + (i < 3 ? "" : "$" + cmd.Parameters[outputParam[2].ParamValue].Value)));
-                    con.Close();
-                    return rtnVal;
-                }
-            }
-            catch (Exception e)
-            {
-                throw e;
-            }
-        }
-
-        public dynamic Execute_SP_CommonOuput(string strFireQry, SqlParameter[] sqlPrm, List<OutputParamSP> outputParam)
-        {
-            SqlConnection con = new SqlConnection();
-            try
-            {
-                using (var db = new DataContext())
-                {
-                    con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-                }
-                if (con.State != ConnectionState.Open)
-                    con.Open();
-                using (SqlCommand cmd = new SqlCommand(strFireQry, con))
-                {
-                    cmd.CommandType = CommandType.StoredProcedure;
-                    cmd.Parameters.Clear();
-                    foreach (var param in sqlPrm)
-                    {
-                        cmd.Parameters.Add(param);
-                    }
-                    int i = 0;
-                    foreach (var opValue in outputParam)
-                    {
-                        cmd.Parameters.Add(opValue.ParamValue, opValue.DbType, opValue.Length).Direction = ParameterDirection.Output;
-                        i++;
-                    }
-                    cmd.CommandTimeout = 0;
-                    cmd.ExecuteNonQuery();
-                    var rtnVal = cmd.Parameters[outputParam[0].ParamValue].Value;
-                    con.Close();
-                    return rtnVal;
-                }
-            }
-            catch (Exception e)
-            {
-                throw e;
-            }
-        }
-
-
-        public dynamic Execute_SP_DataSet_Output(string strFireQry, SqlParameter[] sqlPrm, DataSet ds, string outputParam)
-        {
-            SqlConnection con = new SqlConnection();
-            try
-            {
-                using (var db = new DataContext())
-                {
-                    con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-                }
-                using (SqlCommand cmd = new SqlCommand(strFireQry, con))
-                {
-                    cmd.CommandType = CommandType.StoredProcedure;
-                    cmd.Parameters.Clear();
-                    using (SqlDataAdapter da = new SqlDataAdapter(cmd))
-                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.Clear();
                         foreach (var param in sqlPrm)
                         {
                             cmd.Parameters.Add(param);
                         }
-                        cmd.Parameters.Add(outputParam, SqlDbType.NVarChar, 4000).Direction = ParameterDirection.Output;
-                        da.Fill(ds);
-                        cmd.Dispose();
-                        da.Dispose();
-                        return ds;
+                        int i = 0;
+                        foreach (var opValue in outputParam)
+                        {
+                            cmd.Parameters.Add(opValue.ParamValue, opValue.DbType, opValue.Length).Direction = ParameterDirection.Output;
+                            i++;
+                        }
+                        cmd.CommandTimeout = 0;
+                        cmd.ExecuteNonQuery();
+
+                        var rtnVal = i < 1 ? "" : (cmd.Parameters[outputParam[0].ParamValue].Value + (i < 2 ? "" : "$" + cmd.Parameters[outputParam[1].ParamValue].Value + (i < 3 ? "" : "$" + cmd.Parameters[outputParam[2].ParamValue].Value)));
+                        con.Close();
+                        return rtnVal;
                     }
                 }
             }
-            catch (Exception e)
+            catch (Exception)
             {
-                throw e;
+                throw;
             }
         }
 
@@ -3529,7 +714,7 @@ namespace TradeWeb.API.Repository
         {
             try
             {
-                SqlConnection con = new SqlConnection();
+                /*SqlConnection con = new SqlConnection();
                 using (var db = new DataContext())
                 {
                     con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
@@ -3537,339 +722,88 @@ namespace TradeWeb.API.Repository
                     {
                         con.Open();
                     }
-                }
+                }*/
                 SqlCommand MyCmd = new SqlCommand();
                 SqlDataAdapter MyAdapter = new SqlDataAdapter();
                 DataSet MyDataSet = new DataSet();
-                MyCmd.Connection = con;
-                MyCmd.CommandTimeout = 0;
-                MyCmd.CommandText = Str_SPname;
-                MyCmd.CommandType = CommandType.StoredProcedure;
-                foreach (KeyValuePair<string, string> pair in dict_Param)
+                using (SqlConnection con = new SqlConnection(_connStr))
                 {
-                    MyCmd.Parameters.AddWithValue(pair.Key, pair.Value);
-                }
-                if (!(myTrans == null))
-                    MyCmd.Transaction = myTrans;
+                    con.Open();
 
-                MyAdapter.SelectCommand = MyCmd;
-                MyAdapter.Fill(MyDataSet);
-                //MyCmd.ExecuteNonQuery();
-                MyCmd.Dispose();
-                MyAdapter.Dispose();
+                    MyCmd.Connection = con;
+                    MyCmd.CommandTimeout = 0;
+                    MyCmd.CommandText = Str_SPname;
+                    MyCmd.CommandType = CommandType.StoredProcedure;
+                    foreach (KeyValuePair<string, string> pair in dict_Param)
+                    {
+                        MyCmd.Parameters.AddWithValue(pair.Key, pair.Value);
+                    }
+                    if (!(myTrans == null))
+                        MyCmd.Transaction = myTrans;
+
+                    MyAdapter.SelectCommand = MyCmd;
+                    MyAdapter.Fill(MyDataSet);
+                    MyCmd.ExecuteNonQuery();
+                    MyCmd.Dispose();
+                    MyAdapter.Dispose();
+                }
                 return MyDataSet;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                throw ex;
+                throw;
             }
-            return null;
         }
+
         public DataTable OpenDataTable(string strFireQry, SqlConnection myConnection, SqlTransaction sqlTrans)
         {
             DataSet ds = new DataSet();
-            try
-            {
-                SqlDataAdapter sqlAdp = new SqlDataAdapter();
-                SqlCommand sqlCmd = new SqlCommand();
-                sqlCmd.Connection = myConnection;
-                sqlCmd.CommandTimeout = 0;
-                sqlCmd.CommandText = strFireQry;
-                sqlCmd.Transaction = sqlTrans;
-                sqlAdp.SelectCommand = sqlCmd;
-                sqlAdp.Fill(ds, "Table");
-                sqlCmd.Dispose();
-                sqlAdp.Dispose();
-                return ds.Tables[0];
-
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
+            SqlDataAdapter sqlAdp = new SqlDataAdapter();
+            SqlCommand sqlCmd = new SqlCommand();
+            sqlCmd.Connection = myConnection;
+            sqlCmd.CommandTimeout = 0;
+            sqlCmd.CommandText = strFireQry;
+            sqlCmd.Transaction = sqlTrans;
+            sqlAdp.SelectCommand = sqlCmd;
+            sqlAdp.Fill(ds, "Table");
+            sqlCmd.Dispose();
+            sqlAdp.Dispose();
+            return ds.Tables[0];
         }
 
         public DataTable OpenDataTable(string strFireQry, SqlConnection myConnection)
         {
             DataSet ds = new DataSet();
-            try
-            {
-                SqlDataAdapter sqlAdp = new SqlDataAdapter();
-                SqlCommand sqlCmd = new SqlCommand();
-                sqlCmd.Connection = myConnection;
-                sqlCmd.CommandTimeout = 0;
-                sqlCmd.CommandText = strFireQry;
-                sqlAdp.SelectCommand = sqlCmd;
-                sqlAdp.Fill(ds, "Table");
-                sqlCmd.Dispose();
-                sqlAdp.Dispose();
-                return ds.Tables[0];
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
+            SqlDataAdapter sqlAdp = new SqlDataAdapter();
+            SqlCommand sqlCmd = new SqlCommand();
+            sqlCmd.Connection = myConnection;
+            sqlCmd.CommandTimeout = 0;
+            sqlCmd.CommandText = strFireQry;
+            sqlAdp.SelectCommand = sqlCmd;
+            sqlAdp.Fill(ds, "Table");
+            sqlCmd.Dispose();
+            sqlAdp.Dispose();
+            return ds.Tables[0];
         }
 
         public DataSet OpenDataSet(SqlDataAdapter ObjDA, string strFireQry, SqlConnection myConnection, SqlTransaction myTrans = null)
         {
             DataSet ds = new DataSet();
-            try
+            using (SqlCommand cmd = new SqlCommand())
             {
-                using (SqlCommand cmd = new SqlCommand())
+                cmd.Connection = myConnection;
+                cmd.CommandTimeout = 0;
+                cmd.CommandText = strFireQry;
+                if (myTrans != null)
                 {
-                    cmd.Connection = myConnection;
-                    cmd.CommandTimeout = 0;
-                    cmd.CommandText = strFireQry;
-                    if (myTrans != null)
-                    {
-                        cmd.Transaction = myTrans;
-                    }
-                    ObjDA.SelectCommand = cmd;
-                    ObjDA.Fill(ds, "Table");
-                    return ds;
+                    cmd.Transaction = myTrans;
                 }
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
-        }
-
-        public dynamic GetDPProduct()
-        {
-            var query = "select Left(OP_Product, 1) from other_Products where op_product in ('Cross','Estro') and op_status='A'";
-            try
-            {
-                var dt = OpenDataTable(query);
-                if (dt.Rows.Count > 0)
-                {
-                    return dt.Rows[0][0].ToString().Trim();
-                }
-                return null;
-            }
-            catch (Exception ex)
-            {
-                throw ex;
+                ObjDA.SelectCommand = cmd;
+                ObjDA.Fill(ds, "Table");
+                return ds;
             }
         }
 
-        public dynamic GetDPConn(string strProduct)
-        {
-            if (!fnchkTable("other_Products"))
-            {
-                return null;
-            }
-            var query = "select OP_Server, OP_Database, OP_User, OP_PWD from other_Products where op_product='" + (strProduct == "C" ? "Cross" : "Estro") + "' and op_status='A'";
-            try
-            {
-                var dt = OpenDataTable(query);
-                if (dt.Rows.Count > 0)
-                {
-                    string strConn = "server=" + dt.Rows[0]["OP_Server"].ToString().Trim() + ";Database=" + dt.Rows[0]["OP_Database"].ToString().Trim() + ";Uid=" + dt.Rows[0]["OP_User"].ToString().Trim() + ";Pwd=" + dt.Rows[0]["OP_PWD"].ToString().Trim() + ";Max Pool Size=200;Connect Timeout=20000;pooling='true';";
-                    return strConn;
-                }
-                return null;
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
-        }
-
-        public DataTable OpenNewDataTable(string strFireQry)
-        {
-            DataTable ds = new DataTable();
-            try
-            {
-                Connection con = new Connection();
-                try
-                {
-                    con.OpenConection();
-                    ds = con.ReturnNewDataTable(strFireQry);
-                    con.CloseConnection();
-                    return ds;
-                }
-                catch (Exception e)
-                {
-                    con.DisposeConnection();
-                    throw e;
-                }
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
-        }
-
-        //// 13-Sep-22
-        public string OpenStringVal(string strFireQry)
-        {
-            try
-            {
-                Connection con = new Connection();
-                try
-                {
-                    con.OpenConection();
-                    var retVal = con.ExecuteQuery(strFireQry);
-                    con.CloseConnection();
-                    return retVal;
-                }
-                catch (Exception e)
-                {
-                    con.DisposeConnection();
-                    throw e;
-                }
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
-        }
-
-        public void ReportLog(string StrDescription, string StrFromDt, string StrToDt, string StrBOID, string StrClientCD)
-        {
-            string strsql = "";
-            strsql = "Insert Into process_log";
-            strsql += " select convert(char(8),getdate(),112) pr_dt,'REPORTLOG' pr_process,'" + StrDescription.Trim() + "' pr_description,";
-            strsql += " convert(char(8),getdate(),112)+ ' ' + LEFT(convert(char(8),getdate(),108),8) pr_starttime,convert(char(8),getdate(),112)+ ' ' + LEFT(convert(char(8),getdate(),108),8) pr_endtime,'" + Strings.Left(ReturnsHost().ToString(), 30) + "' pr_computername,'S' pr_status,";
-            strsql += " '" + StrBOID + "' pr_filler1,'" + StrFromDt.Trim() + "' pr_filler2,'" + StrToDt.Trim() + "' pr_filler3,'" + StrClientCD + "' mkrid,convert(char(8),getdate(),112) mkrdt";
-            ExecuteSQL(strsql);
-        }
-        private string ReturnsHost()
-        {
-            string strHost = string.Empty;
-            try
-            {
-                strHost = "";// System.Net.Dns.GetHostEntry(HttpContext.Current.Request.ServerVariables["remote_addr"]).HostName.Trim().ToUpper();
-
-            }
-            catch (Exception ex)
-            {
-                strHost = "";// HttpContext.Current.Request.ServerVariables["remote_Addr"].ToString();
-            }
-            return strHost;
-        }
-        public string FnCheckDt(string StrID)
-        {
-            string strDate = "20201101";
-            return strDate;
-        }
-        public void prCreateTempSecTable(SqlConnection objConnectionTmp)
-        {
-            string strSql = "";
-            try
-            {
-                strSql = "Drop Table #TmpSecurity";
-                ExecuteSQLTmp(strSql, objConnectionTmp);
-            }
-            catch
-            {
-                strSql = "Create Table #TmpSecurity (";
-                strSql += " Tmp_Scripcd Char(6),";
-                strSql += " Tmp_BSE VarChar(3),";
-                strSql += " Tmp_NSE VarChar(3),";
-                strSql += " Tmp_MSEI VarChar(3),";
-                strSql += " Tmp_RegForFO VarChar(1),";
-                strSql += " Tmp_VarMarginBSE Money,";
-                strSql += " Tmp_ELMBSE Money,";
-                strSql += " Tmp_VarMarginNSE Money,";
-                strSql += " Tmp_ELMNSE Money )";
-                ExecuteSQLTmp(strSql, objConnectionTmp);
-            }
-        }
-        public DataSet prSecurityListRpt(string StrfrDt, Boolean blnBSE, Boolean blnNSE)
-        {
-            string strSql = "";
-            Connection con = new Connection();
-            var db = new DataContext();
-
-            SqlConnection objConnectionTmp = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-            objConnectionTmp.Open();
-            prCreateTempSecTable(objConnectionTmp);
-
-            strSql = "Insert Into #TmpSecurity ";
-            strSql += " select MTFD_SecCD,";
-            strSql += " Case MTFD_BSE When 'Y' then 'Yes' else 'No' end , ";
-            strSql += " Case MTFD_NSE When 'Y' then 'Yes' else 'No' end , ";
-            strSql += " Case MTFD_MSEI When 'Y' then 'Yes' else 'No' end ,'', 0, 0,0,0 ";
-            strSql += " From MrgTdgFin_SecuritiesDt";
-            strSql += " Where MTFD_SecDt = (Select max(MTFD_SecDt) from MrgTdgFin_SecuritiesDt where MTFD_SecDt <= '" + StrfrDt.Trim() + "') ";
-            strSql += " and (MTFD_BSE= 'Y' or MTFD_NSE='Y' or MTFD_MSEI= 'Y')";
-            ExecuteSQLTmp(strSql, objConnectionTmp);
-
-            strSql = "Update #TmpSecurity";
-            strSql += " Set Tmp_RegForFO = 'Y'  ";
-            strSql += " From Product_master, Securities  ";
-            strSql += " Where pm_assetcd = Case pm_Exchange When 'B' Then ss_Bsymbol Else ss_nsymbol End and pm_segment = 'F' ";
-            strSql += " and Tmp_Scripcd  = ss_cd ";
-            strSql += " and exists ( select pe_assetcd from Product_Expiry Where pe_assetcd = pm_assetcd and pe_exchange = pm_exchange and pe_segment = 'F' and pe_expirydt >= '" + StrfrDt.Trim() + "')";
-            ExecuteSQLTmp(strSql, objConnectionTmp);
-
-            char[] ArrSeparators = new char[1];
-            ArrSeparators[0] = '/';
-            string strExch = ((blnBSE == true ? "B/" : "") + (blnNSE == true ? "N/" : ""));
-            strExch = strExch.Trim() != "" ? Strings.Left(strExch, strExch.Length - 1) : "";
-            string[] arrExch = strExch.Split(ArrSeparators);
-
-            for (int i = 0; i <= arrExch.Length - 1; i++)
-            {
-                strSql = "Update #TmpSecurity  ";
-                strSql += " Set Tmp_VarMargin" + arrExch[i] + "SE=";
-                strSql += " (Case When vm_exchange = 'N' then vm_applicable_var else vm_margin_rate end * " + GetSysParmSt("MTFP_VARMAR", "") + " )";
-                strSql += " From VarMargin  ";
-                strSql += " where vm_scripcd = Tmp_Scripcd and vm_exchange = '" + arrExch[i] + "'";
-                strSql += " and vm_dt =(select max(vm_dt) from VarMargin ";
-                strSql += " Where vm_exchange = '" + arrExch[i] + "' ";
-                strSql += " and vm_dt <='" + StrfrDt.Trim() + "')";
-                ExecuteSQLTmp(strSql, objConnectionTmp);
-
-                strSql = "Update #TmpSecurity  ";
-                strSql += "Set Tmp_ELM" + arrExch[i] + "SE=";
-                strSql += " (vm_max_loss * case Tmp_RegForFO When 'Y' Then " + GetSysParmSt("MTFP_ELMRGFO", "") + " else " + GetSysParmSt("MTFP_ELMNTFO", "") + "  end ) ";
-                strSql += " From VarMargin  ";
-                strSql += " where vm_scripcd = Tmp_Scripcd and vm_exchange = '" + arrExch[i] + "'";
-                strSql += " and vm_dt =(select max(vm_dt) from VarMargin ";
-                strSql += " Where vm_exchange = '" + arrExch[i] + "' ";
-                strSql += " and vm_dt <='" + StrfrDt.Trim() + "')";
-                ExecuteSQLTmp(strSql, objConnectionTmp);
-            }
-
-            strSql = "Select MTFS_SecCD as ScripCode, MTFS_Lname as ScripName,MTFS_NSymbol as NSESymbol, Tmp_BSE as BSE , Tmp_NSE as NSE , ";
-            strSql += " Case Tmp_RegForFO When 'Y' then 'Yes' else 'No' end Traded_FO ,";
-            strSql += " cast(Tmp_VarMarginBSE as decimal(15,2)) VarMargin_BSE ,cast(Tmp_ELMBSE as decimal(15,2)) ELM_BSE,cast ((Tmp_VarMarginBSE + Tmp_ELMBSE) as decimal(15,2)) TotalMargin_BSE,case when (Tmp_VarMarginBSE + Tmp_ELMBSE)>0 then cast((100/(Tmp_VarMarginBSE + Tmp_ELMBSE))as decimal(15,2)) else 0 end Expoure_BSE, ";
-            strSql += " cast(Tmp_VarMarginNSE as decimal(15,2)) VarMargin_NSE, cast(Tmp_ELMNSE as decimal(15,2)) ELM_NSE,cast ((Tmp_VarMarginNSE + Tmp_ELMNSE) as decimal(15,2)) TotalMargin_NSE,case when (Tmp_VarMarginNSE + Tmp_ELMNSE)>0 then cast((100/(Tmp_VarMarginNSE + Tmp_ELMNSE))as decimal(15,2)) else 0 end Exposure_NSE ";
-            strSql += " From #TmpSecurity, MrgTdgFin_Securities";
-            strSql += " Where Tmp_Scripcd = MTFS_SecCD ";
-            strSql += " Order by MTFS_Lname,MTFS_SecCD";
-            #region Old Code
-            //strSql = "Select MTFS_SecCD, MTFS_Lname,MTFS_NSymbol, Tmp_BSE , Tmp_NSE , Tmp_MSEI , ";
-            //strSql += " Case Tmp_RegForFO When 'Y' then 'Yes' else 'No' end Tmp_RegForFO ,";
-            //strSql += " cast(Tmp_VarMarginBSE as decimal(15,2)) Tmp_VarMarginBSE ,cast(Tmp_ELMBSE as decimal(15,2)) Tmp_ELMBSE,cast ((Tmp_VarMarginBSE + Tmp_ELMBSE) as decimal(15,2)) TotalBSE,case when (Tmp_VarMarginBSE + Tmp_ELMBSE)>0 then cast((100/(Tmp_VarMarginBSE + Tmp_ELMBSE))as decimal(15,2)) else 0 end TotalBSE1, ";
-            //strSql += " cast(Tmp_VarMarginNSE as decimal(15,2)) Tmp_VarMarginNSE, cast(Tmp_ELMNSE as decimal(15,2)) Tmp_ELMNSE,cast ((Tmp_VarMarginNSE + Tmp_ELMNSE) as decimal(15,2)) TotalNSE,case when (Tmp_VarMarginNSE + Tmp_ELMNSE)>0 then cast((100/(Tmp_VarMarginNSE + Tmp_ELMNSE))as decimal(15,2)) else 0 end TotalNSE1 ";
-            //strSql += " From #TmpSecurity, MrgTdgFin_Securities";
-            //strSql += " Where Tmp_Scripcd = MTFS_SecCD ";
-            //strSql += " Order by MTFS_Lname,MTFS_SecCD";
-            #endregion
-            DataSet dtSec = new DataSet();
-            dtSec = OpenDataSetTmp(strSql, objConnectionTmp);
-            return dtSec;
-        }
-        public double fnPeakFactor(string strForDate)
-        {
-            double dblPeakFactor = 25;
-            if (Conversion.Val(strForDate) >= 20210901)
-                dblPeakFactor = 100;
-            else if (Conversion.Val(strForDate) >= 20210601)
-                dblPeakFactor = 75;
-            else if (Conversion.Val(strForDate) >= 20210301)
-                dblPeakFactor = 50;
-            else if (Conversion.Val(strForDate) >= 20201201)
-                dblPeakFactor = 25;
-            return dblPeakFactor;
-        }
-
-        //// Added new methods
         public string AddBracket(string strparm)
         {
             string temp = "";
@@ -3890,7 +824,7 @@ namespace TradeWeb.API.Repository
             }
             return temp;
         }
-        // Added new methods for TradeMobileWebService
+
         public string fnFireQuery(string strTable, string strSelect, string strParam1, string strParam2, bool blnconn)
         {
             DataSet ds = new DataSet();
@@ -3902,6 +836,7 @@ namespace TradeWeb.API.Repository
             else
                 return "";
         }
+
         public string fnFireQuery(string strTable, string strSelect, string strParam1, string strParam2)
         {
             DataSet ds = new DataSet();
@@ -3913,6 +848,7 @@ namespace TradeWeb.API.Repository
             else
                 return "";
         }
+
         public string fnFireQuery(string strTable, string strSelect, string strParam1, string strParam2, bool strInt, SqlConnection mySQLcon, SqlTransaction myTrans = null)
         {
             string strReturn = string.Empty;
@@ -3941,32 +877,7 @@ namespace TradeWeb.API.Repository
             }
             return strReturn;
         }
-        public string mfnGetTPlusDt(string strExchange, string strDT, int intDays)
-        {
-            string strSQL = "";
-            string strT2 = strDT;
 
-            string strCompanyCode = OpenDataSet("select min(em_cd) from Entity_master").Tables[0].Rows[0][0].ToString().Trim();
-
-            for (int intLoop = 1; intLoop <= intDays; intLoop++)
-            {
-                strT2 = Strings.Format(ctod(strT2).AddDays(1), "yyyyMMdd");
-                AgaindtT2:
-                ;
-                strSQL = "select * from Tholiday_master ";
-                strSQL += " where hm_companycode = '" + strCompanyCode + "' ";
-                if (strExchange != "")
-                    strSQL += " and hm_exchange = '" + strExchange + "' ";
-                strSQL += " and Replace(hm_dt,'BH','20') = '" + strT2 + "'";
-                DataTable dtT2 = OpenDataTable(strSQL);
-                if (dtT2.Rows.Count > 0)
-                {
-                    strT2 = Strings.Format(ctod(strT2).AddDays(1), "yyyyMMdd");
-                    goto AgaindtT2;
-                }
-            }
-            return strT2;
-        }
         public DateTime ctod(string strDate)
         {
             var rtnDate = default(DateTime);
@@ -3987,6 +898,7 @@ namespace TradeWeb.API.Repository
             }
             return rtnDate;
         }
+
         public double fnAlpha2Num(string strAlph)
         {
             double dblRtn;
@@ -4007,135 +919,6 @@ namespace TradeWeb.API.Repository
                 dblTmp = dblTmp * 36;
             }
             return dblRtn;
-        }
-        public string fnAlpha2Alpha(string strStr)
-        {
-            string strSql = "";
-            string rtnStg;
-            string strTmp;
-            int intTmp;
-            rtnStg = "";
-
-            for (int i = 1; i <= Strings.Len(strStr); i++)
-            {
-                intTmp = Strings.Asc(Strings.Mid(strStr, i, 1));
-                if (intTmp > 64 && intTmp < 86)
-                {
-                    rtnStg = rtnStg + (intTmp - 64 < 10 ? "0" : "") + Convert.ToString(intTmp - 64);
-                }
-            }
-            strSql = "";
-            while (Strings.Len(rtnStg) > 0)
-            {
-                strSql = strSql + fnNum2Alpha(Convert.ToDouble(Strings.Left(rtnStg, 10))) + "-";
-                rtnStg = Strings.Mid(rtnStg, 11);
-            }
-            return Strings.Left(strSql, Strings.Len(strSql) - 1);
-        }
-        public string fnNum2Alpha(double dblNum)
-        {
-            string rtnStg;
-            double dblTmp;
-            int intRem;
-            dblTmp = dblNum;
-            rtnStg = "";
-
-            while (dblTmp > 36)
-            {
-                intRem = Convert.ToInt32(dblTmp % 36);
-                rtnStg = rtnStg + Strings.Chr(55 + intRem);
-                dblTmp = (dblTmp - intRem) / (double)36;
-            }
-            rtnStg = rtnStg + Strings.Chr(Convert.ToInt32(55 + dblTmp));
-            for (int i = 1; i <= Strings.Len(rtnStg); i++)
-            {
-                if (Strings.Asc(Strings.Mid(rtnStg, i, 1)) < 65)
-                {
-                    rtnStg = Strings.Left(rtnStg, i - 1) + Strings.Chr(Strings.Asc(Strings.Mid(rtnStg, i, 1)) - 8) + Strings.Mid(rtnStg, i + 1);
-                }
-            }
-            return rtnStg;
-        }
-
-        public partial struct urdata
-        {
-            public string bprole;
-            public string bpname;
-        }
-
-        public urdata fnFindBpName(string strDPID, SqlConnection myConnection)
-        {
-            urdata fnFindBpNameRet = default(urdata);
-
-            var GBp = default(urdata);
-            DataTable rsbpname = new DataTable();
-            string strsql;
-            strsql = "select bp_name,bp_role from Bpmaster where bp_id = '" + strDPID + "'";
-
-            rsbpname = OpenDataTable(strsql, myConnection);
-            if (rsbpname.Rows.Count > 0)
-            {
-                GBp.bpname = rsbpname.Rows[0]["bp_name"].ToString();
-                GBp.bprole = rsbpname.Rows[0]["bp_role"].ToString();
-                fnFindBpNameRet = GBp;
-            }
-            else
-            {
-                fnFindBpNameRet = default(urdata);
-            }
-
-            return fnFindBpNameRet;
-        }
-
-        public string mfnFindCorporateAction(string strISin, string strNarration, string strMkttype, string strSettlement, string strExecdt, string strDrCr, string strDMOrderNo, SqlConnection myConnection)
-        {
-            string strSql = "select cr_desc from CorporateAction_master where cr_isin = '" + strISin + "' and cr_execdt = '" + strExecdt + "' and cr_dmorderno ='" + strDMOrderNo + "'";
-            strSql += " and cr_drcrind = '" + strDrCr + "'";
-            DataTable dt = OpenDataTable(strSql, myConnection);
-
-            if (dt.Rows.Count > 0)
-            {
-                return dt.Rows[0]["cr_desc"].ToString().Trim();
-            }
-            else
-            {
-                strSql = "select cr_desc from CorporateAction_master where cr_isin = '" + strISin + "' and cr_execdt = '" + strExecdt + "'";
-                strSql += " and cr_drcrind = 'S' ";
-                dt = OpenDataTable(strSql, myConnection);
-                if (dt.Rows.Count > 0)
-                {
-                    return dt.Rows[0]["cr_desc"].ToString().Trim();
-                }
-                else
-                {
-                    strSql = "select cr_description from Corporate_master where cr_isin = '" + strISin + "' and cr_date = '" + strExecdt + "'";
-                    dt = OpenDataTable(strSql, myConnection);
-                    if (dt.Rows.Count > 0)
-                    {
-                        return dt.Rows[0]["cr_description"].ToString().Trim();
-                    }
-                    else
-                    {
-                        if (strNarration == "082" || strNarration == "088")
-                        {
-                            strSql = "Select ac_desc from Auto_corporate where ac_creditisin = '" + strISin + "' and ac_executiondt = '" + strExecdt + "'";
-                        }
-                        else
-                        {
-                            strSql = "Select ac_desc from Auto_corporate where ac_debitisin = '" + strISin + "'  and ac_executiondt = '" + strExecdt + "'";
-                        }
-                        dt = OpenDataTable(strSql, myConnection);
-                        if (dt.Rows.Count > 0)
-                        {
-                            return dt.Rows[0]["ac_desc"].ToString().Trim();
-                        }
-                        else
-                        {
-                            return "Corporate Action";
-                        }
-                    }
-                }
-            }
         }
 
         public string mfnFormatdate(string strDate, eNewDateformat eFormat)
@@ -4550,69 +1333,19 @@ namespace TradeWeb.API.Repository
 
         public DataTable OpenDataTableTrans(string Str_Qry, SqlTransaction MyTrans, bool blnEsign = false)
         {
-            try
-            {
-                //SqlConnection sqlCon = new SqlConnection(StrConn);
-                SqlDataAdapter MyAdapter = new SqlDataAdapter();
-                SqlCommand MyCmd = new SqlCommand();
-                DataSet MyDataSet = new DataSet();
-                MyCmd.Connection = MyTrans.Connection;
-                MyCmd.CommandTimeout = 0;
-                MyCmd.CommandText = Str_Qry;
-                MyCmd.Transaction = MyTrans;
-                MyAdapter.SelectCommand = MyCmd;
-                MyAdapter.Fill(MyDataSet, "Table");
-                MyCmd.Dispose();
-                MyAdapter.Dispose();
-                return MyDataSet.Tables[0];
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
-        }
-
-        public enum eRetTimeType
-        {
-            eHH = 1,
-            eMM = 2,
-            eSS = 3,
-            eHHMM = 4,
-            eHHMMSS = 5
-        }
-
-        public string mfnGettime(SqlTransaction MyTrans, int etime = 0)
-        {
-            string strTime = "";
-            string strResult = "";
-            DataTable dtTime = OpenDataTableTrans("Select convert(char,getdate(),108) ", MyTrans);
-            strTime = dtTime.Rows[0][0].ToString().Replace(":", "").Trim();
-
-            switch (etime)
-            {
-                case 0:
-                    strResult = dtTime.Rows[0][0].ToString().Trim();
-                    break;
-                case 1:
-                    strResult = Strings.Left(strTime, 2);
-                    break;
-                case 2:
-                    strResult = Strings.Mid(strTime, 3, 2);
-                    break;
-                case 3:
-                    strResult = Strings.Right(strTime, 2);
-                    break;
-                case 4:
-                    strResult = Strings.Left(strTime, 4);
-                    break;
-                case 5:
-                    strResult = Strings.Left(strTime, 4) + Strings.Right(strTime, 2);
-                    break;
-                default:
-                    strResult = dtTime.Rows[0][0].ToString().Trim();
-                    break;
-            }
-            return strResult;
+            //SqlConnection sqlCon = new SqlConnection(StrConn);
+            SqlDataAdapter MyAdapter = new SqlDataAdapter();
+            SqlCommand MyCmd = new SqlCommand();
+            DataSet MyDataSet = new DataSet();
+            MyCmd.Connection = MyTrans.Connection;
+            MyCmd.CommandTimeout = 0;
+            MyCmd.CommandText = Str_Qry;
+            MyCmd.Transaction = MyTrans;
+            MyAdapter.SelectCommand = MyCmd;
+            MyAdapter.Fill(MyDataSet, "Table");
+            MyCmd.Dispose();
+            MyAdapter.Dispose();
+            return MyDataSet.Tables[0];
         }
 
         public enum eMode_acc
@@ -4621,162 +1354,6 @@ namespace TradeWeb.API.Repository
             geDelete = 2,
             geEntry = 3,
             geBillGen = 4
-        }
-
-        public bool fnAllowEntry_Acc(string strDate, eMode_acc intmode, bool blnisExpense = false)
-        {
-            string strAct = "";
-            if (intmode == eMode_acc.geDelete)
-            {
-                strAct = ", so entry cannot be deleted";
-            }
-            else if (intmode == eMode_acc.geEdit)
-            {
-                strAct = ", so entry cannot be edited";
-            }
-            else if (intmode == eMode_acc.geBillGen)
-            {
-                strAct = ", so cannot Process Bills";
-            }
-
-            //strDate = Strings.Format(strDate, "yyyyMMdd");
-
-            bool blnAllowEntry_Acc = false;
-
-            if (Conversion.Val(strDate) < Conversion.Val(GetSysParmSt("ACFROMDT", "")))
-            {
-                //return "Date Cannot be prior to " + Strings.Format(ctod(GetSysParmSt("", "ACFROMDT")), "dd/MM/yyyy") + strAct + "Parameter: ACFROMDT";
-                return false;
-            }
-            else if (Conversion.Val(strDate) > Conversion.Val(GetSysParmSt("ACTODT", "")))
-            {
-                return false;
-            }
-            else if (blnisExpense == false)
-            {
-                if (Conversion.Val(strDate) < Conversion.Val(GetSysParmSt("LOCKDATA", "")))
-                {
-                    return false;
-                }
-                else
-                {
-                    return true;
-                }
-            }
-            else
-            {
-                return true;
-            }
-        }
-        public void ExecuteSQLTrans(string Str_Qry, SqlTransaction myTrans, bool blnShowMsg = true, SqlConnection oConnection = null, bool blnEsign = false, bool blnSkipOnError = true)
-        {
-            SqlCommand MyCmd = new SqlCommand();
-            if (oConnection != null)
-            {
-                if (oConnection.State != ConnectionState.Open)
-                {
-                    oConnection.Open();
-                }
-                MyCmd.Connection = oConnection;
-            }
-            else
-            {
-                SqlConnection con;
-                using (var db = new DataContext())
-                {
-                    con = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-                }
-                if (con.State != ConnectionState.Open)
-                {
-                    con.Open();
-                }
-                MyCmd.Connection = con;
-            }
-            MyCmd.CommandTimeout = 5000;
-            MyCmd.CommandText = Str_Qry;
-            MyCmd.Transaction = myTrans;
-            MyCmd.ExecuteNonQuery();
-            MyCmd.Dispose();
-        }
-        public string mfnGetAccstartdatefromdate(string strDate, eNewDateformat eDateFormat)
-        {
-            string strYear;
-            string straccdate;
-            strYear = mfnGetAccYearFromDate(strDate);
-            if (Convert.ToInt32(Strings.Left(strYear, 2)) < 90)
-            {
-                straccdate = "20" + Strings.Left(strYear, 2) + Strings.Mid(strYear, 3, 2) + "01";
-            }
-            else
-            {
-                straccdate = "19" + Strings.Left(strYear, 2) + Strings.Mid(strYear, 3, 2) + "01";
-            }
-            if (eDateFormat == eNewDateformat.EDATABASE)
-            {
-                straccdate = Strings.Format(ctod(straccdate), "yyyyMMdd");
-            }
-            else
-            {
-                straccdate = Strings.Format(ctod(straccdate), "dd/MM/yyyy");
-            }
-            return straccdate;
-        }
-        public string mfnGetAccenddatefromdate(string strDate, eNewDateformat eDateFormat)
-        {
-            // for getting the last date of an accounting year from combo
-            string strYear;
-            string straccdate;
-            strYear = mfnGetAccYearFromDate(ctod(strDate).ToString());
-            if (Convert.ToInt16(Strings.Mid(strYear, 5, 2)) < 90)
-            {
-                straccdate = "20" + Strings.Mid(strYear, 5, 2) + Strings.Right(strYear, 2) + "31";
-            }
-            else
-            {
-                straccdate = "19" + Strings.Mid(strYear, 5, 2) + Strings.Right(strYear, 2) + "31";
-            }
-            if (eDateFormat == eNewDateformat.EDATABASE)
-            {
-                straccdate = Strings.Format(ctod(straccdate), "yyyyMMdd");
-            }
-            else
-            {
-                straccdate = Strings.Format(ctod(straccdate), "dd/MM/yyyy");
-            }
-            return straccdate;
-        }
-        public bool fnIsFirstDayLastDay(string FirstDt, string LastDt)
-        {
-            if (Strings.Trim(FirstDt) == "" | Strings.Trim(LastDt) == "" | Strings.Right(FirstDt, 2) != "01")
-            {
-                return false;
-            }
-
-            DateTime Date2;
-            string MonthLastDt;
-            Date2 = Convert.ToDateTime(Strings.Format(ctod(LastDt), "dd/MM/yyyy"));
-            MonthLastDt = DateAndTime.DateSerial(DateAndTime.Year(Date2), DateAndTime.Month(Date2) + 1, 0).ToString();
-            return (LastDt == Strings.Format(ctod(MonthLastDt), "yyyyMMdd"));
-        }
-
-        public bool validateDt(string strDate, string strFormat)
-        {
-            try
-            {
-                DateTime dt;
-                if (DateTime.TryParseExact(strDate, strFormat, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out dt))
-                {
-                    return true;
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            catch (Exception ex)
-            {
-                return false;
-            }
         }
 
         public bool isBPT()
@@ -4842,1416 +1419,1190 @@ namespace TradeWeb.API.Repository
             return false;
         }
 
-        public string Transaction_Detail_Query(string strClientWhere, string exch, string seg, int type, string fromdate, string todate, string scripcode, string loginAccess, string isTradeWeb)
-        {
-            string Strsql = "";
-            string StrTRXIndex = string.Empty;
-            if (Convert.ToInt16(fnFireQueryTradeWeb("sysobjects a, sysindexes b", "COUNT(0)", "a.id = b.id and a.name = 'Trx' and b.name", "idx_Trx_Clientcd", true)) == 1)
-            { StrTRXIndex = "index(idx_trx_clientcd),"; }
-
-            string StrTradesIndex;
-            if (Convert.ToInt16(fnFireQueryTradeWeb("sysobjects a, sysindexes b", "COUNT(0)", "a.id = b.id and a.name = 'trades' and b.name", "idx_trades_clientcd", true)) == 1)
-            { StrTradesIndex = "index(idx_trades_clientcd),"; }
-
-            if (seg.ToUpper() == "C")
-            {
-                if (isTradeWeb == "O")
-                {
-                    if (type == 0 || type == 1)
-                    {
-                        Strsql = " Select rtrim(cm_cd) as ClientCode, rtrim(cm_name) as ClientName,cm_brboffcode as 'BranchCode',bm_branchname as 'BranchName', 1 as SortOrder,'Equity' as type, td_stlmnt as stlmnt, Case Left(td_stlmnt,1) when 'B' then 'BSE' when 'N' then 'NSE' when 'M' then 'MCX' when 'F' then 'NCDEX' else '' end as 'Exch', 'Cash' as 'Seg', td_scripcd scripcd ,rtrim(ss_Name)+' ('+td_scripcd+')' scripname, ";
-                        Strsql = Strsql + " sum(td_bqty) 'BuyQty',case when sum(td_bqty) > 0 Then round(sum(td_bqty * td_rate)/sum(td_bqty),4) else 0 end BuyRate,sum(round(convert(money,td_bqty * td_rate),4)) 'BuyAmount', ";
-                        Strsql = Strsql + " sum(td_sqty) 'SellQty',case when sum(td_sqty) > 0 Then round(sum(td_sqty * td_rate)/sum(td_sqty),4) else 0 end SellRate, sum(round(convert(money,td_sqty * td_rate),4)) 'SellAmount', ";
-                        Strsql = Strsql + " sum(td_bqty - td_sqty) 'NetQty', sum(round(convert(money,(td_sqty - td_bqty)*td_rate),4)) 'NetAmount', ";
-                        Strsql = Strsql + " cast(convert(money,case when sum(td_bqty - td_sqty)=0 then 0 else sum((td_bqty-td_sqty)*td_rate)/sum(td_bqty-td_sqty) ";
-                        Strsql = Strsql + " end) as decimal(15,2)) 'AvgRate', cast(sum(td_brokerage*(td_bqty+td_sqty)) as decimal(15,4)) Brokerage, ";
-                        Strsql = Strsql + " td_orderid orderid, td_tradeid tradeid, td_dt trdDate , td_time trdtime , cast(convert(money,td_marketrate) as decimal(15,4)) td_marketrate ";
-                        Strsql = Strsql + " from Trx with (nolock), securities with (nolock), Settlements with (nolock), Client_master, Branch_master ";
-                        Strsql = Strsql + " where td_stlmnt = se_stlmnt " + strClientWhere + " and td_scripcd = ss_cd and cm_brboffcode = bm_branchcd and cm_cd = td_clientcd ";
-                        if (exch != "" && exch != null)
-                        { Strsql = Strsql + " and left(td_stlmnt,1) = '" + exch + "'"; }
-                        Strsql = Strsql + " and td_dt between '" + fromdate + "' and '" + todate + "' " + loginAccess;
-                        if (scripcode != "" && scripcode != null)
-                        { Strsql += " and td_scripcd = '" + scripcode.Trim() + "'"; }
-                        Strsql = Strsql + " group by cm_cd,cm_name,cm_brboffcode,bm_branchname,td_stlmnt,td_scripcd,ss_Name ,td_dt,td_tradeid,td_time,Trx.td_orderid,td_marketrate";
-                    }
-                    else if (type == 2)
-                    {
-                        // Strsql = TransactionDateWiseDetails(userId, exch, seg, type, fromdate, todate, scripcode);
-                        Strsql = " Select rtrim(cm_cd) as ClientCode, rtrim(cm_name) as ClientName,cm_brboffcode as 'BranchCode',bm_branchname as 'BranchName', 1 as SortOrder,'Equity' as type, td_stlmnt as stlmnt, Case Left(td_stlmnt,1) when 'B' then 'BSE' when 'N' then 'NSE' when 'M' then 'MCX' when 'F' then 'NCDEX' else '' end as 'Exch', 'Cash' as 'Seg', td_scripcd scripcd ,rtrim(ss_Name)+' ('+td_scripcd+')' scripname, ";
-                        Strsql = Strsql + " sum(td_bqty) 'BuyQty',case when sum(td_bqty) > 0 Then round(sum(td_bqty * td_rate)/sum(td_bqty),4) else 0 end BuyRate,sum(round(convert(money,td_bqty * td_rate),4)) 'BuyAmount', ";
-                        Strsql = Strsql + " sum(td_sqty) 'SellQty',case when sum(td_sqty) > 0 Then round(sum(td_sqty * td_rate)/sum(td_sqty),4) else 0 end SellRate, sum(round(convert(money,td_sqty * td_rate),4)) 'SellAmount', ";
-                        Strsql = Strsql + " sum(td_bqty - td_sqty) 'NetQty', sum(round(convert(money,(td_sqty - td_bqty)*td_rate),4)) 'NetAmount', ";
-                        Strsql = Strsql + " cast(convert(money,case when sum(td_bqty - td_sqty)=0 then 0 else sum((td_bqty-td_sqty)*td_rate)/sum(td_bqty-td_sqty) ";
-                        Strsql = Strsql + " end) as decimal(15,2)) 'AvgRate', cast(sum(td_brokerage*(td_bqty+td_sqty)) as decimal(15,4)) Brokerage, ";
-                        Strsql = Strsql + " td_orderid orderid, td_tradeid tradeid, td_dt trdDate , td_time trdtime ";
-                        Strsql = Strsql + " from Trx with (nolock), securities with (nolock), Settlements with (nolock), Client_master, Branch_master ";
-                        Strsql = Strsql + " where td_stlmnt = se_stlmnt " + strClientWhere + " and td_scripcd = ss_cd and cm_brboffcode = bm_branchcd and cm_cd = td_clientcd ";
-                        if (exch != "" && exch != null)
-                        { Strsql = Strsql + " and left(td_stlmnt,1) = '" + exch + "'"; }
-                        Strsql = Strsql + " and td_dt between '" + fromdate + "' and '" + todate + "' " + loginAccess;
-                        if (scripcode != "" && scripcode != null)
-                        { Strsql += " and td_scripcd = '" + scripcode.Trim() + "'"; }
-                        Strsql = Strsql + " group by cm_cd,cm_name,cm_brboffcode,bm_branchname,td_stlmnt,td_scripcd,ss_Name ,td_dt,td_tradeid,td_time,Trx.td_orderid";
-                    }
-                }
-                else
-                {
-                    Strsql = "select cm_cd ClientCode, cm_name ClientName, 1 as SortOrder,'Equity' as type, td_stlmnt as stlmnt, Rtrim(CES_Exchange) as 'Exch', Rtrim(CES_Segment) as 'Seg', td_scripcd scripcd ,'' scripname, ";
-                    Strsql += " td_bqty 'BuyQty', case when td_bqty > 0 Then round((td_bqty * td_rate)/(td_bqty),4) else 0 end BuyRate, round(convert(money,td_bqty * td_rate),4) 'BuyAmount', ";
-                    Strsql += " td_sqty 'SellQty',case when td_sqty > 0 Then round((td_sqty * td_rate)/(td_sqty),4) else 0 end SellRate, round(convert(money,td_sqty * td_rate),4) 'SellAmount', ";
-                    Strsql += " td_bqty - td_sqty 'NetQty', round(convert(money,(td_sqty - td_bqty)*td_rate),4) 'NetAmount',convert(decimal(15,4),td_rate) AvgRate, cast(td_brokerage as decimal(15,4)) Brokerage, ";
-                    Strsql += " td_orderid orderid, td_tradeid tradeid, td_dt trdDate, td_time trdtime, cast(convert(money,td_marketrate) as decimal(15,4)) td_marketrate ";
-                    Strsql += " from trx with (index(idx_trx_clientcd),nolock), Client_master with (nolock), CompanyExchangeSegments with (nolock) ";
-                    Strsql += " where td_clientcd = cm_cd and td_companycode+left(td_stlmnt,1)+'C' = CES_Cd  and left(td_stlmnt,1) = '" + exch + "' " + strClientWhere + " and td_dt between '" + fromdate + "' and '" + todate + "' and td_scripcd='" + scripcode.Trim() + "' ";
-                }
-            }
-            else if (seg.ToUpper() == "F" || seg.ToUpper() == "K")
-            {
-                if (isTradeWeb == "O")
-                {
-                    if (type == 0 || type == 1)
-                    {
-                        if (Strsql.Length > 0)
-                        { Strsql = Strsql + " union all "; }
-                        Strsql += "select rtrim(cm_cd) as ClientCode, rtrim(cm_name) ClientName,cm_brboffcode as 'BranchCode',bm_branchname as 'BranchName',case right(sm_prodtype,1) when 'F' then 2 else 3 end SortOrder, case td_Segment When 'F' Then 'Equity ' else 'Currency ' end + case right(sm_prodtype,1) ";
-                        Strsql = Strsql + " when 'F' then 'Future' else 'Option' end type, 'Exp: '+ convert(char(10),convert(datetime,sm_expirydt),105) as stlmnt, Case left(td_exchange,1) when 'B' then 'BSE' when 'N' then 'NSE' else 'MCX' end as 'Exch', case left(td_Segment,1) when 'F' Then 'FO' else 'Currency' end as 'Seg', case right(sm_prodtype,1) ";
-                        //Strsql = Strsql + " when 'F' then '' else ltrim(convert(char(8),sm_strikeprice))+sm_callput end scripcode,rtrim(sm_symbol)+case right(sm_prodtype,1)  when 'F' then ''  else ' ('+ltrim(convert(char(8),sm_strikeprice))+sm_callput+')' end as scripname,sum(td_bqty) 'buy',  ";
-                        Strsql = Strsql + " when 'F' then '' else ltrim(convert(char(8),sm_strikeprice))+sm_callput end scripcode,sm_sname as scripname,sum(td_bqty) 'buy',  ";
-                        Strsql = Strsql + " sum(round(convert(money,td_bqty * td_rate * sm_multiplier ),4)) 'BuyAmount', sum(td_sqty) 'Sell',";
-                        Strsql = Strsql + " sum(round(convert(money,td_sqty * td_rate * sm_multiplier ),4)) 'SellAmount', sum(td_bqty - td_sqty) 'NetQty',   sum(round(convert(money,(td_sqty - td_bqty)*td_rate*sm_multiplier),4)) 'NetAmount', ";
-                        Strsql = Strsql + " cast(convert(money,case when sum(td_bqty - td_sqty)=0 then 0 else  sum((td_bqty-td_sqty)*td_rate)/sum(td_bqty-td_sqty) end) as decimal(15,2)) 'AvgRate' , ";
-                        Strsql = Strsql + " cast(td_brokerage as decimal(15,4)) Brokerage,td_orderid orderid,td_tradeid tradeid,td_dt trdDate, td_time trdtime,";
-                        Strsql = Strsql + " case when sum(td_bqty) > 0 Then round(sum(td_bqty * td_rate)/sum(td_bqty),4) else 0 end BuyRate,";
-                        Strsql = Strsql + " case when sum(td_sqty) > 0 Then round(sum(td_sqty * td_rate)/sum(td_sqty),4) else 0 end SellRate , cast(convert(money,td_marketrate) as decimal(15,4)) td_marketrate ";
-                        Strsql = Strsql + " from trades with (nolock) , series_master with (nolock), Client_master, Branch_master ";
-                        Strsql = Strsql + " where td_segment = sm_segment and td_exchange = sm_exchange and td_segment = '" + seg + "'";
-                        if (exch != "" && exch != null)
-                        { Strsql = Strsql + " and  td_exchange='" + exch + "'"; }
-                        Strsql = Strsql + " and td_seriesid=sm_seriesid " + strClientWhere + " and cm_brboffcode = bm_branchcd and cm_cd = td_clientcd and td_trxFlag = 'N' ";
-                        Strsql = Strsql + " and td_dt between '" + fromdate + "' and '" + todate + "' " + loginAccess;
-                        if (scripcode != "" && scripcode != null)
-                        { Strsql = Strsql + "and td_seriesid = " + scripcode + ""; }
-                        Strsql = Strsql + " group by cm_cd,cm_name,cm_brboffcode,bm_branchname,td_exchange,td_Segment,sm_prodtype,sm_symbol,sm_desc, sm_expirydt, sm_strikeprice, sm_callput,td_dt,td_orderid,td_tradeid,td_time, td_marketrate,sm_sname,td_brokerage";
-                    }
-                    else if (type == 0 || type == 2)
-                    {
-                        if (Strsql.Length > 0)
-                        { Strsql = Strsql + " union all "; }
-                        Strsql += " select rtrim(cm_cd) as ClientCode, rtrim(cm_name) ClientName, cm_brboffcode as 'BranchCode',bm_branchname as 'BranchName', case ex_eaflag when 'E' then 4 else 5 end SortOrder ,case ex_Segment When 'F' Then 'Equity ' else 'Currency ' end +  case ex_eaflag when 'E' then 'Exercise' else 'Assignment'  end type, 'Exp: ' +convert(char(10), ";
-                        Strsql = Strsql + " convert(datetime,sm_expirydt),105) stlmnt, Case left(ex_exchange,1) when 'B' then 'BSE' when 'N' then 'NSE' else 'MCX' end as 'Exch', case left(ex_Segment,1) when 'F' Then 'FO' else 'Currency' end as 'Seg', ltrim( convert(char(8),sm_strikeprice))+sm_callput scripcode,   sm_sname scripname, sum(ex_aqty) Buy, ";
-                        Strsql = Strsql + " sum(ex_aqty*ex_diffrate) BuyAmount , sum(ex_eqty) Sell, sum(ex_eqty*ex_diffrate) SellAmount, sum(ex_aqty-ex_eqty) NetQty,   sum((ex_aqty-ex_eqty)*ex_diffrate) NetAmount, ";
-                        Strsql = Strsql + " cast(convert(money,case when sum(ex_aqty-ex_eqty)=0 then 0  else sum((ex_aqty-ex_eqty)*ex_diffrate)/sum(ex_aqty-ex_eqty) end) as decimal(15,2)) 'AvgRate', ";
-                        Strsql = Strsql + " cast(sum(ex_brokerage*(ex_eqty+ex_aqty)) as decimal(15,4)) Brokerage,";
-                        Strsql = Strsql + " 0 orderid, 0 tradeid, ex_dt trdDate, '' trdtime,";
-                        Strsql = Strsql + " case when sum(ex_aqty) > 0 Then round(sum(ex_aqty*ex_diffrate)/sum(ex_aqty),4) else 0 end BuyRate,";
-                        Strsql = Strsql + " case when sum(ex_eqty) > 0 Then round(sum(ex_eqty*ex_diffrate)/sum(ex_eqty),4) else 0 end SellRate";
-                        Strsql = Strsql + " from exercise with (nolock), series_master with (nolock), Client_master, Branch_master where ";
-                        Strsql = Strsql + " ex_exchange=sm_exchange " + strClientWhere + " and cm_cd = ex_clientcd and cm_brboffcode = bm_branchcd and ex_Segment=sm_Segment and ex_seriesid=sm_seriesid ";
-                        if (exch != "" && exch != null)
-                        { Strsql = Strsql + " and ex_exchange='" + exch + "'"; }
-                        Strsql = Strsql + " and ex_Segment = '" + seg + "' and ex_dt='" + fromdate + "' " + loginAccess;
-                        if (scripcode != "" && scripcode != null)
-                            Strsql = Strsql + " and ex_seriesid = " + scripcode;
-                        Strsql = Strsql + " group by cm_cd,cm_name,cm_brboffcode,bm_branchname,ex_exchange,ex_Segment,ex_eaflag, sm_symbol,sm_desc, sm_expirydt, sm_strikeprice, sm_callput,ex_exchange,ex_Segment,ex_dt,sm_prodtype,sm_sname";
-                    }
-                }
-                else
-                {
-                    Strsql = "select rtrim(cm_cd) as ClientCode, rtrim(cm_name) ClientName,case right(sm_prodtype,1) when 'F' then 2 else 3 end SortOrder,case td_Segment When 'F' Then 'Equity ' else 'Currency ' end + case right(sm_prodtype,1) when 'F' then 'Future' else 'Option' end type, ";
-                    Strsql += " 'Exp: '+ convert(char(10),convert(datetime,sm_expirydt),105) as stlmnt, CES_Exchange as 'Exch', CES_Segment as 'Seg', case right(sm_prodtype,1) when 'F' then '' else ltrim(convert(char(8),sm_strikeprice))+sm_callput end scripcode,";
-                    Strsql += " rtrim(sm_symbol)+case right(sm_prodtype,1)  when 'F' then ''  else ' ('+ltrim(convert(char(8),sm_strikeprice))+sm_callput+')' end as scripname, td_bqty 'BuyQty', round(convert(money,td_bqty * td_rate * sm_multiplier ),4) 'BuyAmount', td_sqty 'SellQty', ";
-                    Strsql += " round(convert(money,td_sqty * td_rate * sm_multiplier ),4) 'SellAmount', td_bqty - td_sqty 'NetQty', round(convert(money,td_rate*(td_bqty-td_sqty)),4) 'NetAmount', ";
-                    Strsql += " td_rate 'AvgRate' ,cast((td_brokerage*(td_bqty+td_sqty))as decimal(15,4)) Brokerage, td_orderid orderid,  td_tradeid tradeid, td_dt trdDate, td_time trdtime, case when td_bqty > 0 Then round((td_bqty * td_rate)/(td_bqty),4) else 0 end BuyRate, ";
-                    Strsql += " case when td_sqty > 0 Then round((td_sqty * td_rate)/(td_sqty),4) else 0 end SellRate, cast(convert(money,td_marketrate) as decimal(15,4)) td_marketrate ";
-                    Strsql += " from trades with (index(idx_trades_clientcd),nolock), series_master with (nolock) , Client_master with (nolock), CompanyExchangeSegments with (nolock) ";
-                    Strsql += " where td_clientcd = cm_cd and sm_seriesid=td_seriesid and sm_exchange=td_exchange and sm_Segment=td_segment and td_companycode+td_exchange+td_segment = ces_cd ";
-                    Strsql += strClientWhere + " and td_segment = '" + seg + "' and  td_exchange='" + exch + "' ";
-                    Strsql += " and td_dt between '" + fromdate + "' and '" + todate + "' and td_seriesid = " + scripcode;
-                }
-            }
-            else if (seg.ToUpper() == "X")
-            {
-                if (type == 1 || type == 2)
-                {
-                    if (Strsql.Length > 0)
-                    { Strsql = Strsql + " union all "; }
-                    Strsql += "select rtrim(cm_cd) as ClientCode, rtrim(cm_name) as ClientName,cm_brboffcode as 'BranchCode',bm_branchname as 'BranchName', case right(sm_prodtype,1) when 'F' then 2 else 3 end SortOrder, 'Commodity '+  case right(sm_prodtype,1) ";
-                    Strsql = Strsql + " when 'F' then 'Future' else 'Option' end type, 'Exp: '+ convert(char(10),convert(datetime,sm_expirydt),105) as stlmnt, case LEFT(td_exchange,1) when 'M' then 'MCX' when 'N' then 'NCDEX' when 'C' then 'ICEX' when 'A' then 'NCME' when 'S' then 'NSEL' when 'D' then 'NSX' else '' end as 'Exch', 'Commodity' as 'Seg', case right(sm_prodtype,1) ";
-                    Strsql = Strsql + " when 'F' then '' else ltrim(convert(char(8),sm_strikeprice))+sm_callput end scripcode,rtrim(sm_symbol)+case right(sm_prodtype,1)  when 'F' then ''  else ' ('+ltrim(convert(char(8),sm_strikeprice))+sm_callput+')' end as scripname,sum(td_bqty) 'buy',  ";
-                    Strsql = Strsql + " sum(round(convert(money,td_bqty * td_rate * sm_multiplier ),4)) 'BuyAmount', sum(td_sqty) 'Sell',";
-                    Strsql = Strsql + " sum(round(convert(money,td_sqty * td_rate * sm_multiplier ),4)) 'SellAmount', sum(td_bqty - td_sqty) 'NetQty',   sum(round(convert(money,(td_sqty - td_bqty)*td_rate* sm_multiplier ),4)) 'NetAmount', ";
-                    Strsql = Strsql + " cast(convert(money,case when sum(td_bqty - td_sqty)=0 then 0 else  sum((td_bqty-td_sqty)*td_rate)/sum(td_bqty-td_sqty) end) as decimal(15,2)) 'AvgRate' , ";
-                    Strsql = Strsql + " cast(sum(td_brokerage*(td_bqty*td_sqty)) as decimal(15,4)) Brokerage,td_orderid orderid,td_tradeid tradeid,td_time trdtime,";
-                    Strsql = Strsql + " case when sum(td_bqty) > 0 Then round(sum(td_bqty * td_rate)/sum(td_bqty),4) else 0 end BuyRate,";
-                    Strsql = Strsql + " case when sum(td_sqty) > 0 Then round(sum(td_sqty * td_rate)/sum(td_sqty),4) else 0 end SellRate";
-                    if (isTradeWeb == "O")
-                    {
-                        if (GetWebParameter("Commex") != null && GetWebParameter("Commex") != string.Empty)
-                        {
-                            string StrCommexConn = "";
-                            StrCommexConn = GetCommexConnection();
-                            Strsql = Strsql + " from " + StrCommexConn + ".Trades," + StrCommexConn + ".Series_master," + StrCommexConn + ".Client_master, " + StrCommexConn + ".Branch_master ";
-                        }
-                    }
-                    else
-                    {
-                        Strsql = Strsql + " from Ctrades with (nolock) , Cseries_master with (nolock), Client_master with (nolock), Branch_master with (nolock) ";
-                    }
-                    Strsql = Strsql + " where  td_seriesid=sm_seriesid and cm_cd = td_clientcd and cm_brboffcode = bm_branchcd ";
-                    if (exch != "" && exch != null)
-                    { Strsql = Strsql + " and  td_exchange='" + exch + "'"; }
-                    Strsql = Strsql + " " + strClientWhere + " and td_trxFlag = 'N' ";
-                    Strsql = Strsql + " and td_dt between '" + fromdate + "' and '" + todate + "' " + loginAccess;
-                    if (scripcode != "" && scripcode != null)
-                    { Strsql = Strsql + " and td_seriesid = " + scripcode + ""; }
-                    Strsql = Strsql + " group by cm_cd,cm_name,cm_brboffcode,bm_branchname,sm_prodtype,sm_symbol,sm_desc, sm_expirydt, sm_strikeprice, sm_callput,td_dt,td_exchange,td_orderid,td_tradeid,td_time";
-                }
-            }
-
-            return Strsql;
-        }
-
-        public DateTime AddDayDT(string Date, int Dayvalue)
-        {
-
-            int Year = int.Parse(Date.Substring(0, 4));
-            int Month = int.Parse(Date.Substring(4, 2));
-            int Day = int.Parse(Date.Substring(6, 2));
-            return new DateTime(Year, Month, Day).AddDays(Dayvalue);
-        }
-
-        public string mfnDistProcess(string strStlmnt, string compCode)
-        {
-            string _Process = "N";
-
-            if (GetSysParmSt("DistProcess", "").Trim() == "Y")
-            {
-                string strSQL = "";
-                strSQL = " Select Count(0) From Company_settlement With (nolock) ";
-                strSQL += " Where cs_companyCode = '" + compCode + "'";
-                strSQL += " and cs_stlmnt = '" + strStlmnt + "'";
-                strSQL += " and cs_lockflag = 'D' ";
-                if (Convert.ToInt32(OpenDataTable(strSQL).Rows[0][0]) > 0)
-                {
-                    _Process = "Y";
-                }
-            }
-
-            return _Process;
-        }
-
-        public string fnGetClgHouse(string strDate, string strSegment)
-        {
-            string StrSql;
-            StrSql = "select ClearingHouse.* from ClearingHouse ,Entity_master  Where CH_CompanyCode = em_cd  ";
-            StrSql += " and CH_Segment = '" + strSegment + "' and CH_EffDt = (Select max(CH_EffDt) from ClearingHouse Where CH_Segment = 'C' and CH_EffDt <= '" + strDate + "')";
-            DataTable dtClng = OpenDataTable(StrSql);
-
-            if (dtClng.Rows.Count > 0)
-            {
-                return dtClng.Rows[0]["CH_ClgHs"].ToString().Trim();
-            }
-            else
-            {
-                return "";
-            }
-        }
-
-        public JwtSecurityToken GetToken()
-        {
-            var handler = new JwtSecurityTokenHandler();
-            string authHeader = _httpContextAccessor.HttpContext.Request.Headers["Authorization"];
-            authHeader = authHeader.Replace("Bearer ", "");
-            var token = handler.ReadToken(authHeader) as JwtSecurityToken;
-            return token;
-        }
-
         public void CreateReKYCTables()
         {
-            try
+            string strsql = "";
+            /*var db = new DataContext();
+            SqlConnection sqlCon = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);*/
+            using SqlConnection sqlCon = new(_connStr);
+            sqlCon.Open();
+            DataTable dtCount = new DataTable();
+
+            if (mfnGetSysSplFeature("TPI") || mfnGetSysSplFeature("RKC") || mfnGetSysSplFeature("RKM"))
             {
-                string strsql = "";
-                var db = new DataContext();
-                SqlConnection sqlCon = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
-                sqlCon.Open();
-                DataTable dtCount = new DataTable();
-
-                if (mfnGetSysSplFeature("TPI") || mfnGetSysSplFeature("RKC") || mfnGetSysSplFeature("RKM"))
+                if (!fnchkTable("tbl_ReKycAuditColumnMapping_new", sqlCon))
                 {
-                    if (!fnchkTable("tbl_ReKycAuditColumnMapping_new", sqlCon))
-                    {
-                        strsql = "CREATE TABLE tbl_ReKycAuditColumnMapping_new( " +
-                            " [SerialNo] [int] IDENTITY(1,1) NOT NULL, " +
-                            " [FieldName] [varchar](50) NOT NULL, " +
-                            " [FieldDescp] [varchar](100) NOT NULL, " +
-                            " [MasterJsonTag] [varchar](100) NOT NULL, " +
-                            " [JsonKey] [varchar](100) NOT NULL, " +
-                            " [UserCode] [varchar](50) NOT NULL, " +
-                            " [UpdateTimeStamp] [datetime] NOT NULL, " +
-                            " [TableName] [varchar](50) NOT NULL, " +
-                            " [RequireTag] [varchar](1) NOT NULL, " +
-                            " [RecordType] [varchar](1) NOT NULL, " +
-                            " [DefaultValuetag] [varchar](1) NOT NULL, " +
-                            " [DefaultValue] [varchar](max) NOT NULL, " +
-                            " [MandatoryTag] [varchar](max) NOT NULL, " +
-                            " [ValidationValue] [varchar](max) NOT NULL, " +
-                            " [ValidationMessage] [varchar](max) NOT NULL, " +
-                            " [ValidationQuery] [varchar](max) NOT NULL, " +
-                            " [TemplateCode] [varchar](max) NOT NULL " +
-                            " ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY] ";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    dtCount = OpenDataTable("select count(*) from tbl_ReKycAuditColumnMapping_new with (NoLock)");
-                    if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
-                    {
-                        strsql = "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_actno', N'Account No.', N'BankDetails', N'BankAccNo', N'SA', GETDATE(), N'Bankact', N'2', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_acttype', N'Account Type', N'BankDetails', N'AccountType', N'SA', GETDATE(), N'Bankact', N'2', N'M', N'B', N'', N'Y', N'SB|CA|CC|OD|NE|NO', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_default', N'Default Bank', N'BankDetails', N'IsDefault', N'SA', GETDATE(), N'Bankact', N'2', N'M', N'B', N'', N'Y', N'Y|N', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_ifsccode', N'IFSC Code', N'BankDetails', N'BankIFSC', N'SA', GETDATE(), N'Bankact', N'2', N'M', N'B', N'', N'Y', N'', N'', N'select 1 from bank_master(NOLOCK) WHERE bk_IFCCode = ''<<ba_ifsccode>>'' AND bk_micr = ''<<ba_micr>>''', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_micr', N'MICR', N'BankDetails', N'BankMICR', N'SA', GETDATE(), N'Bankact', N'2', N'M', N'B', N'', N'Y', N'', N'', N'select 1 from bank_master(NOLOCK) WHERE bk_IFCCode = ''<<ba_ifsccode>>'' AND bk_micr = ''<<ba_micr>>''', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_RelationEmail', N'Email Relation', N'ContactDetails', N'EmailRelation', N'SA', GETDATE(), N'Common_Contacts', N'', N'S', N'U', N'', N'N', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_RelationMobile', N'Mobile Relation', N'ContactDetails', N'MobileRelation', N'SA', GETDATE(), N'Common_Contacts', N'', N'S', N'U', N'', N'N', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ce_companycode', N'Segment Details', N'SegmentDetails', N'SegmentDetails', N'SA', GETDATE(), N'Client_details', N'', N'S', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM(SELECT COUNT(*) AS X FROM(SELECT VALUE AS EXC FROM dbo.ReturnTable(''<<ce_companycode>>'','','')) X1 WHERE NOT EXISTS(SELECT 1 FROM CompanyExchangeSegments(NOLOCK) WHERE CES_CD = EXC))X2 WHERE X2.X = 0', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add1', N'Address Address1', N'PersonalDetails', N'CorrAddress1', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add2', N'Address Address2', N'PersonalDetails', N'CorrAddress2', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add3', N'Address Address3', N'PersonalDetails', N'CorrAddress3', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add4', N'Address City/add4', N'PersonalDetails', N'CorrCity', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_bankactno', N'Address Country', N'PersonalDetails', N'CorrCountry', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_email', N'Email', N'PersonalDetails', N'Email', N'SA', GETDATE(), N'Client_master', N'', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_grossincome', N'Income', N'PersonalDetails', N'IncomeValue', N'SA', GETDATE(), N'Client_Info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_grossincomedt', N'Income Date', N'PersonalDetails', N'IncomeDate', N'SA', GETDATE(), N'Client_Info', N'', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_mobile', N'Mobile', N'PersonalDetails', N'Mobile', N'SA', GETDATE(), N'Client_master', N'', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pcountry', N'Address Country', N'PersonalDetails', N'CorrCountry', N'SA', GETDATE(), N'Client_Info', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pincode', N'Address PinCode', N'PersonalDetails', N'CorrPincode', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_state', N'Address State', N'PersonalDetails', N'CorrState', N'SA', GETDATE(), N'Client_Info', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add1', N'Nominee Add1', N'NomineeDetails', N'NomAddress1', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add2', N'Nominee Add2', N'NomineeDetails', N'NomAddress2', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add3', N'Nominee Add3', N'NomineeDetails', N'NomAddress3', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_city', N'Nominee City', N'NomineeDetails', N'NomAddressCity', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_country', N'Nominee Country', N'NomineeDetails', N'NomAddressCountry', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_dob', N'Nominee Date of Birth', N'NomineeDetails', N'NomineeDOB', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'Nominee First Name', N'NomineeDetails', N'NomFirstName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'Nominee Last Name', N'NomineeDetails', N'NomLastName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'Nominee Middle Name', N'NomineeDetails', N'NomMiddleName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_pan', N'Nominee PAN', N'NomineeDetails', N'NomineePan', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_pin', N'Nominee PinCode', N'NomineeDetails', N'NomPincode', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_relation', N'Nominee Relation', N'NomineeDetails', N'NomRelation', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_NomPershare', N'Nominee Percentage', N'NomineeDetails', N'NomPercentage', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_state', N'Nominee State', N'NomineeDetails', N'NomAddressState', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_tel', N'Nominee Mobile', N'NomineeDetails', N'NomMobile', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_uid', N'Nominee UID', N'NomineeDetails', N'NomineeUID', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_actno', N'Demat A/c no', N'DematDetails', N'DPAcNo', N'SA', GETDATE(), N'Dematact', N'4', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_defaultyn', N'Default Demat', N'DematDetails', N'IsDefault', N'SA', GETDATE(), N'Dematact', N'4', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_dpid', N'Demat A/c DPID', N'DematDetails', N'DPID', N'SA', GETDATE(), N'Dematact', N'4', N'M', N'B', N'', N'Y', N'', N'', N'SELECT 1 FROM DPS(NOLOCK) WHERE dp_dpid = ''<<da_dpid>>'' ', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_type', N'Demat A/c Type', N'DematDetails', N'DematAccountType', N'SA', GETDATE(), N'Dematact', N'4', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add1', N'Nominee Guardian Address1', N'GuardianDetails', N'NomGuardianAddress1', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add2', N'Nominee Guardian Address2', N'GuardianDetails', N'NomGuardianAddress2', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add3', N'Nominee Guardian Address3', N'GuardianDetails', N'NomGuardianAddress3', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_city', N'Nominee Guardian City', N'GuardianDetails', N'NomGuardianCity', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_dob', N'Nominee Guardian Dob', N'GuardianDetails', N'NomGuardianDob', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'Nominee Guardian First Name', N'GuardianDetails', N'NomGuardianFirstName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'Nominee Guardian Last Name', N'GuardianDetails', N'NomGuardianLastName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_email', N'Nominee Guardian Email', N'GuardianDetails', N'NomGuardianEmail', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'Nominee Guardian Middle Name', N'GuardianDetails', N'NomGuardianMiddleName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_pan', N'Nominee Guardian PAN/UID', N'GuardianDetails', N'NomGuardianPAN', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_pin', N'Nominee Guardian Pincode', N'GuardianDetails', N'NomGuardianPincode', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_relation', N'Nominee Guardian Relation', N'GuardianDetails', N'NomGuardianRelation', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_state', N'Nominee Guardian State', N'GuardianDetails', N'NomGuardianState', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_tel', N'Nominee Guardian Mobile', N'GuardianDetails', N'NomGuardianMobile', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_uid', N'Nominee Guardian PAN/UID', N'GuardianDetails', N'NomGuardianUID', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_groupcd', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'ZZZ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_familycd', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'ZZZ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_cfstdratesyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_marginyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_billflag', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_contractflag', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_contractprint', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_bankacttype', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'C ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_confirmemailyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_confirmwebyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_confirmtelyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_billroff', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'2', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_netrate', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'1222222', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_marketrate', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'1222222', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_brokerage', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'1222222', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_currencycd', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'INR ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_schedule', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'49843750', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_servicetax', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'5', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pwd', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'76065', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_directpayout', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_transfertoac', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'A       ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_specialyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezeyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezedt', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'CURRDATE', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_stampdutyyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_dematchargeyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_brboffcode', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'000001', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_poa', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_filler2', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'COURIER 1      ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_digitalcontract', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_digitaldispatch', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'1010', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_focashmargin', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'50', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fosharemargin', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'50', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_stpexport', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_filler3', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N         ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_sttprintYn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ce_companycode', N'Segment Details', N'PersonalDetails', N'SegmentDetails', N'SA', GETDATE(), N'Client_details', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'SELECT 1 FROM(SELECT COUNT(*) AS X FROM(SELECT VALUE AS EXC FROM dbo.ReturnTable(''<<ce_companycode>>'','','')) X1 WHERE NOT EXISTS(SELECT 1 FROM CompanyExchangeSegments(NOLOCK) WHERE CES_CD = EXC))X2 WHERE X2.X = 0', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_contractcopies', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'1', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_brokerageroff', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'R', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_STP', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fundpayout', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'A', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_deliveryPriority', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'A', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_interestRate', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_stt', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_activeCoExSg', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'ABC,ABF,ABM,ABX,AMC,AMF,AMK,ANC,ANF,ANK', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerA0', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'L', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerA1', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N' ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerA2', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN0', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN1', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN2', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN3', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN4', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN5', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN6', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'1', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN7', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN8', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN9', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_flag', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_panexempt', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_longname', N'', N'PersonalDetails', N'CustomerName', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_chequename', N'', N'PersonalDetails', N'CustomerName', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd1', N'', N'PersonalDetails', N'PerAddress1', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd2', N'', N'PersonalDetails', N'PerAddress2', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd3', N'', N'PersonalDetails', N'PerAddress3', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd4', N'', N'PersonalDetails', N'PerCity', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_ppincode', N'', N'PersonalDetails', N'PerPincode', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pstate', N'', N'PersonalDetails', N'PerState', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_maritalstatus', N'', N'PersonalDetails', N'MaritalStatus', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'S|M|W|D|NA', N'\"S = Single M = Married W = Widow\\Widower D = Divorce NA = Not Applicable\"', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_nationalcode', N'', N'PersonalDetails', N'Nationality', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'0|1|2', N'\"0 = Blank 1 = Indian 2 = Other\"', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_uid', N'', N'PersonalDetails', N'UID', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_faherhusguar', N'', N'PersonalDetails', N'FatherName', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_occup', N'', N'PersonalDetails', N'Occupation', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'', N'Y', N'Business|Farmer|House Wife|Others|Professional|Retired|Service|Student|Private Sector|Public Sector|Govt Services', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_dob', N'', N'PersonalDetails', N'DateOfBirth', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_sex', N'', N'PersonalDetails', N'Gender', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'', N'Y', N'M|F|N', N'\"M = Male F = Female N = NA\"', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_panno', N'', N'PersonalDetails', N'PAN', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_grossincome', N'Income', N'PersonalDetails', N'Income', N'SA', GETDATE(), N'Client_Info', N'', N'S', N'I', N'', N'Y', N'1|2|3|4|5|6', N'\"1 = Below Rs. 1  Lac 2 = Btw Rs. 1 to Rs. 5 Lacs 3 = Btw Rs. 5 to Rs. 10 Lacs 4 = Btw Rs. 10 to Rs. 25 Lacs 5 = Btw Rs. 25 Lacs to Rs. 1 Crore 6 = More than Rs. 1 Crore\"', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_name', N'', N'PersonalDetails', N'CustomerName', N'SA', GETDATE(), N'client_MASTER', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_prefix', N'', N'PersonalDetails', N'ClientsNamePrefix', N'SA', GETDATE(), N'client_MASTER', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ci_Fyear', N'', N'IncomeDetail', N'Fyear', N'SA', GETDATE(), N'client_income', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ci_income', N'', N'IncomeDetail', N'IncomeFy', N'SA', GETDATE(), N'client_income', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ci_networth', N'', N'IncomeDetail', N'NetWorth', N'SA', GETDATE(), N'client_income', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_name', N'Nominee Name', N'GuardianDetails', N'NomGuardianName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_name', N'Nominee Name', N'NomineeDetails', N'NomName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ce_brkscheme', N'Segment Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_details', N'', N'S', N'I', N'DEFAULT', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_constitution', N'', N'PersonalDetails', N'Constitution', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44', N'\"1 = Individual 2 = Mutual Fund 3 = Body Corporate 4 = Non - Tax Paying Entity 5 = Others 6 = Hindu Undivided Family 7 = Oversees Corporate Body 8 = Partnership Firm 9 = Merchant Banker 10 = Foreign Institutional Investor 11 = Indian Financial Instituion 12 = Banks 13 = Company 14 = Trust 15 = Financial Institution 16 = NBFC 17 = Society 18 = NRI 19 = Statutory Bodies 20 = Insurance Companies 21 = Proprietor 22 = National Pension Scheme 23 = Depository Receipts 24 = Foreign Direct Investments 25 = Foreign Venture Capital Funds 26 = Non Govt.Organisation 27 = PMS IND 28 = PMS NON - IND 29 = QFI IND 30 = QFI Others 31 = LIMITED LIABILITY PARTNERSHIPS 32 = Non - Banking Financial Company(NBFC) 33 = Alternate Investment Fund 34 = Foreign National 35 = Domestic Venture Capital Fund 36 = FPI 1(INS) 37 = FPI 2(INS) 38 = FPI 3(INS) 39 = FPI 1(I) 40 = FPI 2(I) 41 = FPI 3(I) 42 = FPI 1(NI) 43 = FPI 2(NI) 44 = FPI 3(NI)\"', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_residentialstatus', N'', N'PersonalDetails', N'ResidentialStatus', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'I|NA', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_KRAStatus', N'Client Other Details', N'PersonalDetails', N'KRAStatus', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'', N'Y', N'Y|N', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_KRADate', N'Client Other Details', N'PersonalDetails', N'KRAAddressUpdate', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'        ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_smsalert', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_emailalert', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN0', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'2', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN1', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN2', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN3', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN4', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'1', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN5', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'1', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN6', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN7', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN8', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN9', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_PANNo', N'Client Other Details', N'PersonalDetails', N'PAN', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_BSECashUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_NSECashUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_NSEFNoUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_BSEFNoUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_IdentityProofYN', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_IdentityProof', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'PC', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_AddressProofYN', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_AddressProof', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'AC', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_PANCardYN', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_PANVerifyYN', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_SignaturesYN', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Remarks', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Status', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'C', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Fname', N'Client Other Details', N'PersonalDetails', N'FirstName', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Middlename', N'Client Other Details', N'PersonalDetails', N'MiddleName', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Lname', N'Client Other Details', N'PersonalDetails', N'LastName', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_UCCstatus', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_BSEFXUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_NSEFXUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_MCXFXUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_MCXCASHUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_MCXFOUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_opendt', N'Opening Date', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'CURRDATE', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CM_BANKNAME', N'Front Office File Type', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Cname', N'Director Details', N'DirectorDetails', N'DName', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Cdesignation', N'Director Details', N'DirectorDetails', N'Designation', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Cpanno', N'Director Details', N'DirectorDetails', N'DPAN', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Caddress', N'Director Details', N'DirectorDetails', N'Daddress', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Contact', N'Director Details', N'DirectorDetails', N'DMOBILE', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_DIN', N'Director Details', N'DirectorDetails', N'DDINNO', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_UID', N'Director Details', N'DirectorDetails', N'DUID', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Cemail', N'Director Details', N'DirectorDetails', N'DEMAIL', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_foreignres', N'Director Details', N'DirectorDetails', N'ISForeigners', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_networthdt', N'Client Other Details', N'PersonalDetails', N'NetWorthDate', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_networth', N'Client Other Details', N'PersonalDetails', N'NetWorth', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_type', N'Client Type', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'Nominee Name', N'NomineeDetails', N'NomEmail', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_internalrefno', N'ApplicationNo', N'PersonalDetails', N'ApplicationNo', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_regno', N'Reg No', N'PersonalDetails', N'RegistrationNo', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_regauth', N'Reg Auth', N'PersonalDetails', N'RegistrationAuth', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_regplace', N'Reg Place', N'PersonalDetails', N'RegistrationPlace', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_regdate', N'Reg Date', N'PersonalDetails', N'RegistrationDate', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_cd', N'', N'PersonalDetails', N'ClientCode', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM CLIENT_MASTER(NOLOCK) WHERE CM_CD = ''<<CM_CD>>''', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_name', N'Client Name', N'PersonalDetails', N'ClientName', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Fname', N'Client First Name', N'PersonalDetails', N'FirstName', N'sa', GETDATE(), N'Client_KYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Middlename', N'Client Middle Name', N'PersonalDetails', N'MiddleName', N'sa', GETDATE(), N'Client_KYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Lname', N'Client Last Name', N'PersonalDetails', N'LastName', N'sa', GETDATE(), N'Client_KYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_brboffcode', N'Branch Code', N'PersonalDetails', N'Branch', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM BRANCH_MASTER(NOLOCK) WHERE bm_branchcd = ''<<cm_brboffcode>>''', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'', N'PersonalDetails', N'BranchName', N'sa', GETDATE(), N'', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_faherhusguar', N'Father/Husband/Guardian Name', N'PersonalDetails', N'FatherName', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_nationalcode', N'Nationality', N'PersonalDetails', N'Nationality', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'0|1|2', N'0 = Blank/1 = Indian/2  = Other', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_panno', N'PanNo', N'PersonalDetails', N'PAN', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_uid', N'UID', N'PersonalDetails', N'UID', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_constitution', N'Category', N'PersonalDetails', N'Constitution', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44', N'1 = Individual 2 = Mutual Fund 3 = Body Corporate 4 = Non-Tax Paying Entity 5 = Others 6 = Hindu Undivided Family 7 = Oversees Corporate Body 8 = Partnership Firm 9 = Merchant Banker 10 = Foreign Institutional Investor 11 = Indian Financial Instituion 12 = Banks 13 = Company 14 = Trust 15 = Financial Institution 16 = NBFC 17 = Society 18 = NRI 19 = Statutory Bodies 20 = Insurance Companies 21 = Proprietor 22 = National Pension Scheme 23 = Depository Receipts 24 = Foreign Direct Investments 25 = Foreign Venture Capital Funds 26 = Non Govt. Organisation 27 = PMS IND 28 = PMS NON-IND 29 = QFI IND 30 = QFI Others 31 = LIMITED LIABILITY PARTNERSHIPS 32 = Non-Banking Financial Company (NBFC) 33 = Alternate Investment Fund 34 = Foreign National 35 = Domestic Venture Capital Fund 36 = FPI 1 (INS) 37 = FPI 2 (INS) 38 = FPI 3 (INS) 39 = FPI 1 (I) 40 = FPI 2 (I) 41 = FPI 3 (I) 42 = FPI 1 (NI) 43 = FPI 2 (NI) 44 = FPI 3 (NI)', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_mobile', N'Mobile', N'PersonalDetails', N'Mobile', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_email', N'Email', N'PersonalDetails', N'Email', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_dob', N'Date of Birth', N'PersonalDetails', N'DateofBirth', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_sex', N'Sex', N'PersonalDetails', N'Gender', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'M|F|N', N'M=Male/F = Female/N = NA', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_maritalstatus', N'Marital Status', N'PersonalDetails', N'MaritalStatus', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'S|M|W|D|NA', N'S = Single/M=Married/W= Widow\\Widower/D=Divorce/NA=Not Applicable', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezeyn', N'Account Status', N'PersonalDetails', N'AccountStatus', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'N|Y|B|A', N'N = Active/Y = Freeze for rades/ B = Freeze for Branches/A = Freeze for All', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_residentialstatus', N'', N'PersonalDetails', N'ResidentialStatus', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'I|N|F', N'I = Indian/N = NRI/F = Foreign National', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ce_companycode', N'', N'PersonalDetails', N'ExchangeSegment', N'sa', GETDATE(), N'Client_details', N'', N'S', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM(SELECT COUNT(*) AS X FROM(SELECT VALUE AS EXC FROM dbo.ReturnTable(''<<ce_companycode>>'','','')) X1 WHERE NOT EXISTS(SELECT 1 FROM CompanyExchangeSegments(NOLOCK) WHERE CES_CD = EXC))X2 WHERE X2.X = 0', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ck_status', N'', N'PersonalDetails', N'CKYCStatus', N'sa', GETDATE(), N'Client_CKYC', N'', N'S', N'U', N'', N'Y', N'Y|N', N'Y = Yes/N = No', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'Ck_RespType', N'', N'PersonalDetails', N'CKYCRespType', N'sa', GETDATE(), N'Client_CKYC', N'', N'S', N'U', N'', N'Y', N'02|03|04|05', N'02 = Post De-Duplication/03 = Post FIR/04 = Post /confirmation with ID issuer/05 = Post KYC Generation', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'Ck_Nfiller1', N'', N'PersonalDetails', N'CKYCNumber', N'sa', GETDATE(), N'Client_CKYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'mkrdt', N'', N'PersonalDetails', N'CKYCDate', N'sa', GETDATE(), N'Client_CKYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'Ck_Reference', N'', N'PersonalDetails', N'CKYCReffNo', N'sa', GETDATE(), N'Client_CKYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_KRAStatus', N'KRA Status', N'PersonalDetails', N'KRAStatus', N'sa', GETDATE(), N'Client_Nominee', N'', N'S', N'U', N'', N'Y', N'Y|N', N'Y = Yes/N = No', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_KRADate', N'KRA Addess Updated On Date', N'PersonalDetails', N'KRAAddressUpdate', N'sa', GETDATE(), N'Client_Nominee', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN0', N'FATCA Status', N'PersonalDetails', N'FATCAStatus', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'0|1|2', N'0 = Not Reportable/1 = Reportable/2 = Blank', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN1', N'FATCA Declaration', N'PersonalDetails', N'FATCADeclaration', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'0|1|2|3', N'0 = Blank/1 = Received/2 = Not Received/3 = Not Required', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN2', N'FATCA Due diligence', N'PersonalDetails', N'FATCADueDiligence', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'0|1|2|3', N'0 = Blank/1 = Complete/2 = Incomplete/3 = Not Required', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_filler9', N'FATCA Country~Tax Indetification No~Type of Identification', N'PersonalDetails', N'FATCACountry', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'', N'', N'Select 1 From Country_master(NOLOCK) Where ct_name = ''<<cn_filler9>>''', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_filler9', N'FATCA Country~Tax Indetification No~Type of Identification', N'PersonalDetails', N'FATCATaxIdentify', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_filler9', N'FATCA Country~Tax Indetification No~Type of Identification', N'PersonalDetails', N'FATCATypeIdentify', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_name', N'', N'BankDetails', N'BankName', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_add1', N'', N'BankDetails', N'BankAddress1', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_add2', N'', N'BankDetails', N'BankAddress2', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_add3', N'', N'BankDetails', N'BankAddress3', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_city', N'', N'BankDetails', N'BankAddress4', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_pin', N'', N'BankDetails', N'BankPincode', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_ifsccode', N'IFSC Code', N'BankDetails', N'BankIFSC', N'sa', GETDATE(), N'Bankact', N'4', N'M', N'U', N'', N'Y', N'', N'', N'select 1 from bank_master(NOLOCK) WHERE bk_IFCCode = ''<<ba_ifsccode>>'' AND bk_micr = ''<<ba_micr>>''', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_actno', N'Account No.', N'BankDetails', N'BankAccNo', N'sa', GETDATE(), N'Bankact', N'4', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_micr', N'MICR', N'BankDetails', N'BankMICR', N'sa', GETDATE(), N'Bankact', N'4', N'M', N'U', N'', N'Y', N'', N'', N'select 1 from bank_master(NOLOCK) WHERE bk_IFCCode = ''<<ba_ifsccode>>'' AND bk_micr = ''<<ba_micr>>''', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_acttype', N'Account Type', N'BankDetails', N'BankAccType', N'sa', GETDATE(), N'Bankact', N'4', N'M', N'U', N'', N'Y', N'SB|CA|CC|OD|NE|NO', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add1', N'Address1', N'PersonalDetails', N'CorrAddress1', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add2', N'Address2', N'PersonalDetails', N'CorrAddress2', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add3', N'Address3', N'PersonalDetails', N'CorrAddress3', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add4', N'City', N'PersonalDetails', N'CorrCity', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_state', N'State', N'PersonalDetails', N'CorrState', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_bankactno', N'Country', N'PersonalDetails', N'CorrCountry', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pincode', N'PinCode', N'PersonalDetails', N'CorrPincode', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd1', N'Client Permanent Address 1', N'PersonalDetails', N'PerAddress1', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd2', N'Client Permanent Address 2', N'PersonalDetails', N'PerAddress2', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd3', N'Client Permanent Address 3', N'PersonalDetails', N'PerAddress3', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd4', N'Client Permanent Address City', N'PersonalDetails', N'PerCity', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pstate', N'Client Permanent Address State', N'PersonalDetails', N'PerState', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pcountry', N'Client Permanent Address Country', N'PersonalDetails', N'PerCountry', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_ppincode', N'Client Permanent Address Pin', N'PersonalDetails', N'PerPincode', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_networth', N'Networth', N'PersonalDetails', N'NetWorth', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_networthdt', N'Networth Date', N'PersonalDetails', N'NetworthDate', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_grossincome', N'Gross Annual Income Range', N'PersonalDetails', N'GrossAnnualIncome', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'1|2|3|4|5|6', N'1 = Below Rs. 1  Lac 2 = Btw Rs. 1 to Rs. 5 Lacs 3 = Btw Rs. 5 to Rs. 10 Lacs 4 = Btw Rs. 10 to Rs. 25 Lacs 5 = Btw Rs. 25 Lacs to Rs. 1 Crore 6 = More than Rs. 1 Crore', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_grossincomedt', N'Gross Annual Income Date', N'PersonalDetails', N'GrossAnnualIncomeDate', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_dpactno', N'RM Code', N'PersonalDetails', N'RM', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'Select 1 From RM_master(NOLOCK) Where RM_CD = ''<<cm_dpactno>>'' ', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_ReKYC', N'', N'PersonalDetails', N'ReKYC', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_UpdateCDSLNSDL', N'', N'PersonalDetails', N'UpdateCDSLNSDL', N'sa', GETDATE(), N'dematact', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_type', N'', N'DematDetails', N'DPType', N'sa', GETDATE(), N'Dematact', N'2', N'M', N'U', N'', N'Y', N'CDSL|NSDL', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_dpid', N'Demat A/c DPID', N'DematDetails', N'DPID', N'sa', GETDATE(), N'Dematact', N'2', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM DPS(NOLOCK) WHERE dp_dpid = ''<<da_dpid>>'' ', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_actno', N'Demat A/c no', N'DematDetails', N'DPAcno', N'sa', GETDATE(), N'Dematact', N'2', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_occup', N'Occupation', N'PersonalDetails', N'Occupation', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'Business|Farmer|House Wife|Others|Professional|Retired|Service|Student|Private Sector|Public Sector|Govt Services', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UCC', N'NomineeDetails(1)', N'NomineeDetails', N'NomUCCCode', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_regdt', N'NomineeDetails(1)', N'NomineeDetails', N'NomRegDate', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'NomineeDetails(1)', N'NomineeDetails', N'NomFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'NomineeDetails(1)', N'NomineeDetails', N'NomMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'NomineeDetails(1)', N'NomineeDetails', N'NomLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'NomineeDetails(1)', N'NomineeDetails', N'NomFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'NomineeDetails(1)', N'NomineeDetails', N'NomMobileCountryCode', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'NomineeDetails(1)', N'NomineeDetails', N'NomineePAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeRegDt', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_DOB', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeDOB', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_NomPershare', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeSharePercentage', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_ResidualFlag', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeResidualSecurities', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianPAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomMobileCountryCode', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineePAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_regdt', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeRegDt', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_DOB', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeDOB', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_NomPershare', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeSharePercentage', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_ResidualFlag', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeResidualSecurities', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianMobileCountryCode', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianPAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomMobileCountryCode', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineePAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_regdt', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeRegDt', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_DOB', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeDOB', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_NomPershare', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeSharePercentage', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_ResidualFlag', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeResidualSecurities', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianPAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'MTFC_Status', N'MTF Segment', N'PersonalDetails', N'MTFSegment', N'sa', GETDATE(), N'MrgTdgFin_Clients', N'', N'M', N'U', N'', N'Y', N'A|I', N'A-Active, I- Inactive', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'MTFC_IntRate', N'MTF Interest Rate', N'PersonalDetails', N'MTFInterestRate', N'sa', GETDATE(), N'MrgTdgFin_Clients', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'MTFC_AllowLimit', N'MTF Limit', N'PersonalDetails', N'MTFLimit', N'sa', GETDATE(), N'MrgTdgFin_Clients', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'MTFC_Frequency', N'MTF Frequency', N'PersonalDetails', N'MTFInterestFeq', N'sa', GETDATE(), N'MrgTdgFin_Clients', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezeyn', N'FreezeYN', N'PersonalDetails', N'', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'A', N'Y', N'', N'', N'', N'ONLYCLOSURE')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezedt', N'FreezeDate', N'PersonalDetails', N'', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'CURRDATE', N'Y', N'', N'', N'', N'ONLYCLOSURE')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezereason', N'FreezeReason', N'PersonalDetails', N'ClosureReason', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'ONLYCLOSURE')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_cd', N'', N'PersonalDetails', N'ClientCode', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM CLIENT_MASTER(NOLOCK) WHERE CM_CD = ''<<CM_CD>>''', N'ONLYCLOSURE')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ClosureType', N'', N'PersonalDetails', N'ClosureType', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'D|T|B', N'D-Demat/T-Trading/B-Both', N'', N'ONLYCLOSURE')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'DPAcno', N'', N'PersonalDetails', N'DPAcno', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'ONLYCLOSURE')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'DormantStatus', N'Dormant Status', N'DormantDetails', N'DormantStatus', N'sa', GETDATE(), N'Client_Master', N'1', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
-
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    dtCount = OpenDataTable("select count(0) from tbl_ReKycAuditColumnMapping_new with (NoLock) where FieldName='DormantStatus'");
-                    if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
-                    {
-                        strsql = "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'DormantStatus', N'Dormant Status', N'DormantDetails', N'DormantStatus', N'sa', GETDATE(), N'Client_Master', N'1', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template1')";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    dtCount = OpenDataTable("Select count(0) from tbl_ReKycAuditColumnMapping_new with (NoLock) WHERE TemplateCode='TEMPLATE1' AND JSONKEY LIKE '%Country%' AND FieldName='cm_pcountry'");
-                    if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) != 0)
-                    {
-                        strsql = "DELETE FROM tbl_ReKycAuditColumnMapping_new WHERE TemplateCode='TEMPLATE1' AND JSONKEY LIKE '%Country%' AND FieldName='cm_pcountry'";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    dtCount = OpenDataTable("select count(0) from tbl_ReKycAuditColumnMapping_new with (NoLock) where FieldName='cn_ResidualFlag' and TemplateCode='Template1'");
-                    if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
-                    {
-                        strsql = "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_ResidualFlag', N'NomineeResidualSecurities', N'NomineeDetails', N'NomineeResidualSecurities', N'sa', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    if (!fnchkTable("tbl_ReKycDPColumnMapping", sqlCon))
-                    {
-                        strsql = "CREATE TABLE tbl_ReKycDPColumnMapping( ";
-                        strsql += " [SerialNo] [int] IDENTITY(1,1) NOT NULL, ";
-                        strsql += " [TableColumn] [varchar](50) NOT NULL, ";
-                        strsql += " [ReKycColumn] [varchar](50) NOT NULL, ";
-                        strsql += " [GurKycColumn] [varchar](50) NOT NULL, ";
-                        strsql += " [ColumnDesc] [varchar](50) NOT NULL, ";
-                        strsql += " [UserCode] [varchar](50) NOT NULL, ";
-                        strsql += " [UpdateTimeStamp] [datetime] NOT NULL, ";
-                        strsql += " [Product] [varchar](50) NOT NULL ";
-                        strsql += " )";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    dtCount = OpenDataTable("select count(*) from tbl_ReKycDPColumnMapping with (NoLock)");
-                    if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
-                    {
-                        strsql = "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_add1', N'cm_add1', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_add2', N'cm_add2', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_add3', N'cm_add3', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_city', N'cm_add4', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_state', N'cm_state', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_country', N'cm_country', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_pin', N'cm_pincode', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_email', N'cm_email', N'', N'Primary Email', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_annualincome', N'cm_grossincome', N'', N'Annual Income', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_UID1', N'cm_uid', N'', N'First Holder UID', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomTitle', N'', N'', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomPAN', N'cn_pan', N'cn_gpan', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomUID', N'cn_uid', N'cn_guid', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomEmail', N'cn_gmail', N'cn_gmail', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomName', N'cn_firstname', N'cn_gfirstname', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomMidNm', N'cn_middlename', N'cn_gmiddlename', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomlastNm', N'cn_lastname', N'cn_glastname', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomAdd1', N'cn_add1', N'cn_gadd1', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomAdd2', N'cn_add2', N'cn_gadd2', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomAdd3', N'cn_add3', N'cn_gadd3', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_City', N'cn_city', N'cn_gcity', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_State', N'cn_state', N'cn_gstate', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_Country', N'cn_country', N'cn_gcountry', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomPin', N'cn_pin', N'cn_gpin', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_Relation ', N'cn_relation', N'cn_grelation', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomPershare ', N'cn_NomPershare ', N'cn_gdob', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomDOB', N'cn_dob', N'cn_gdob', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_tele1', N'cm_mobile', N'', N'Primary Mobile', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_divbankacno', N'ba_actno', N'', N'Dividend Bank A/c No.', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_divbankccy', N'', N'', N'Dividend Bank Currency', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_divbankcode', N'ba_micr', N'', N'Dividend Bank Code', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_voicemail', N'ba_ifsccode', N'', N'Dividend Bank IFSC', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_divbranchno', N'ba_acttype', N'', N'Dividend A/c Type', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fadd1', N'cm_padd1', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fadd2', N'cm_padd2', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fadd3', N'cm_padd3', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fcity', N'cm_padd4', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fpin', N'cm_ppincode', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fstate', N'cm_pstate', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fcountry', N'cm_pcountry', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_panno', N'cm_panno', N'', N'First Holder PAN', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fathername', N'cm_faherhusguar', N'', N'First Holder Father/Husband Name', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_occupation', N'cm_occupation', N'', N'Occupation', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_dateofbirth', N'cm_dob', N'', N'BO Date of Birth', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_name', N'CK_Fname', N'', N'First Holder Name', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_middlename', N'CK_Middlename', N'', N'First Holder Middle Name', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_lastname', N'CK_Lname', N'', N'First Holder Last Name', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
-
-
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    dtCount = OpenDataTable("select ReKycColumn from tbl_ReKycDPColumnMapping where TableColumn='cm_country'");
-                    if (dtCount.Rows[0]["ReKycColumn"].ToString().Trim().ToUpper() == "CM_COUNTRY")
-                    {
-                        strsql = "UPDATE tbl_ReKycDPColumnMapping SET ReKycColumn = 'cm_bankactno' WHERE TableColumn='cm_country'";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    dtCount = OpenDataTable("select count(0) from tbl_ReKycDPColumnMapping with (NoLock) where TableColumn='cn_ResidualFlag' and Product='CROSS'");
-                    if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
-                    {
-                        strsql = "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_ResidualFlag ', N'cn_ResidualFlag', N'', N'Share Percentage Equality', N'', GETDATE(), N'CROSS')";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    if (!fnchkTable("Client_ModifyAPI", sqlCon))
-                    {
-                        strsql = "CREATE TABLE Client_ModifyAPI( ";
-                        strsql += " [ca_Srno] [numeric](18, 0) IDENTITY(1,1) NOT NULL, ";
-                        strsql += " [ca_cmcd] [varchar](8) NOT NULL, ";
-                        strsql += " [ca_field] [varchar](50) NOT NULL, ";
-                        strsql += " [ca_desc] [varchar](100) NOT NULL, ";
-                        strsql += " [ca_oldValue] [varchar](100) NOT NULL, ";
-                        strsql += " [ca_newValue] [varchar](100) NOT NULL, ";
-                        strsql += " [ca_date] [varchar](8) NOT NULL, ";
-                        strsql += " [ca_time] [varchar](11) NOT NULL, ";
-                        strsql += " [ca_computername] [varchar](15) NOT NULL, ";
-                        strsql += " [ca_Tplus] [char](1) NOT NULL, ";
-                        strsql += " [ca_Cross] [char](1) NOT NULL, ";
-                        strsql += " [ca_Estro] [char](1) NOT NULL, ";
-                        strsql += " [ca_Dematacno] [char](16) NULL, ";
-                        strsql += " [ca_filler1] [varchar](100) NULL, ";
-                        strsql += " [ca_filler2] [char](1) NULL, ";
-                        strsql += " [ca_filler3] [char](1) NULL, ";
-                        strsql += " [ca_Nfiller1] [numeric](18, 0) NULL, ";
-                        strsql += " [ca_Nfiller2] [numeric](18, 0) NULL, ";
-                        strsql += " [ca_Nfiller3] [numeric](18, 0) NULL, ";
-                        strsql += " CONSTRAINT [PK_Client_ModifyAPI] PRIMARY KEY NONCLUSTERED ";
-                        strsql += " ( ";
-                        strsql += " [ca_Srno] ASC ";
-                        strsql += " ) ON [PRIMARY] ";
-                        strsql += " ) ON [PRIMARY] ";
-                        ExecuteSQL(strsql, sqlCon);
-
-                        strsql = "CREATE index [idx_Client_ModifyAPI_cmcd] on Client_ModifyAPI ([ca_cmcd])";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    dtCount = OpenDataTable("SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Client_ModifyAPI' and COLUMN_NAME = 'ca_filler1'");
-                    if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) < 50)
-                    {
-                        strsql = "ALTER TABLE [Client_ModifyAPI] ALTER COLUMN [ca_filler1] [varchar](50) NULL";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    if (!fnchkTable("Client_ModifyAttach", sqlCon))
-                    {
-                        strsql = "CREATE TABLE [dbo].[Client_ModifyAttach]( " +
-                        "     [ma_srno] [numeric](18, 0) IDENTITY(1,1) NOT NULL, " +
-                        "     [ma_cmcd] [varchar](50) NOT NULL, " +
-                        "     [ma_date] [varchar](12) NULL, " +
-                        "     [ma_filename] [varchar](100) NULL, " +
-                        "     [ma_field] [varchar](100) NULL, " +
-                        "     [mkrdt] [varchar](12) NULL, " +
-                        "     [mkrtm] [varchar](12) NULL, " +
-                        "     [ma_proof] [varbinary](max) NULL, " +
-                        "     [ma_refno] [numeric](18, 0) NULL, " +
-                        "     [ma_Nfiller1] [int] NOT NULL Default 1, " +
-                        "     [ma_status] [char](1) NOT NULL Default 'N', " +
-                        "     CONSTRAINT [PK_Client_ModifyAttach] PRIMARY KEY NONCLUSTERED " +
-                        "     ( " +
-                        "     [ma_srno] ASC " +
-                        "     ) ON [PRIMARY] " +
-                        "     ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY] ";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    if (!fnchkTable("Client_ReKycMain", sqlCon))
-                    {
-                        strsql = "CREATE TABLE Client_ReKycMain( ";
-                        strsql += " [rm_srno] [numeric](18, 0) IDENTITY(1,1) NOT NULL, ";
-                        strsql += " [rm_cmcd] [varchar](50) NOT NULL, ";
-                        strsql += " [rm_cdate] [varchar](12) NULL, ";
-                        strsql += " [rm_ctime] [varchar](12) NULL, ";
-                        strsql += " [rm_rekyc] [char](1) NULL, ";
-                        strsql += " [rm_status] [varchar](100) NULL, ";
-                        strsql += " [rm_desc] [varchar](500) NULL, ";
-                        strsql += " [mkrdt] [varchar](12) NULL, ";
-                        strsql += " [mkrtm] [varchar](12) NULL, ";
-                        strsql += " [rm_step] [int] NULL, ";
-                        strsql += " [rm_refno] [numeric](18, 0) NULL, ";
-                        strsql += " CONSTRAINT [PK_Client_ReKycMain] PRIMARY KEY NONCLUSTERED ";
-                        strsql += " ( ";
-                        strsql += " [rm_srno] ASC ";
-                        strsql += " ) ON [PRIMARY] ";
-                        strsql += " ) ON [PRIMARY] ";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-                    dtCount = OpenDataTable("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Client_RekycMain' and COLUMN_NAME = 'rm_RequestType'");
-                    if (dtCount.Rows.Count < 1)
-                    {
-                        strsql = "Alter Table Client_RekycMain Add rm_RequestType Varchar(20) Not Null Default 'ReKYC'";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-                    if (Convert.ToInt16(fnFireQueryTradeWeb("WebParameter", "COUNT(0)", "sp_parmcd", "TRADEPLUSTEMPDB", true)) == 0)
-                    {
-                        strsql = "INSERT INTO WebParameter(sp_parmcd, sp_name, sp_sysvalue) VALUES('TRADEPLUSTEMPDB','TRADE PLUS 130 LEVEL','TRADEPLUSTEMPDB')";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
+                    strsql = "CREATE TABLE tbl_ReKycAuditColumnMapping_new( " +
+                        " [SerialNo] [int] IDENTITY(1,1) NOT NULL, " +
+                        " [FieldName] [varchar](50) NOT NULL, " +
+                        " [FieldDescp] [varchar](100) NOT NULL, " +
+                        " [MasterJsonTag] [varchar](100) NOT NULL, " +
+                        " [JsonKey] [varchar](100) NOT NULL, " +
+                        " [UserCode] [varchar](50) NOT NULL, " +
+                        " [UpdateTimeStamp] [datetime] NOT NULL, " +
+                        " [TableName] [varchar](50) NOT NULL, " +
+                        " [RequireTag] [varchar](1) NOT NULL, " +
+                        " [RecordType] [varchar](1) NOT NULL, " +
+                        " [DefaultValuetag] [varchar](1) NOT NULL, " +
+                        " [DefaultValue] [varchar](max) NOT NULL, " +
+                        " [MandatoryTag] [varchar](max) NOT NULL, " +
+                        " [ValidationValue] [varchar](max) NOT NULL, " +
+                        " [ValidationMessage] [varchar](max) NOT NULL, " +
+                        " [ValidationQuery] [varchar](max) NOT NULL, " +
+                        " [TemplateCode] [varchar](max) NOT NULL " +
+                        " ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY] ";
+                    ExecuteSQL(strsql, sqlCon);
                 }
 
-                if (mfnGetSysSplFeature("TPI") || mfnGetSysSplFeature("RKC") || mfnGetSysSplFeature("RKM"))
+                dtCount = OpenDataTable("select count(*) from tbl_ReKycAuditColumnMapping_new with (NoLock)");
+                if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
                 {
-                    if (!fnchkTable("tbl_GenericAPIDefinition", sqlCon))
-                    {
-                        strsql = "CREATE TABLE tbl_GenericAPIDefinition( ";
-                        strsql += " [SerialNo] [int] IDENTITY(1,1) NOT NULL, ";
-                        strsql += " [ProjectName] [varchar](50) NOT NULL, ";
-                        strsql += " [ModuleName] [varchar](50) NOT NULL, ";
-                        strsql += " [FunctionName] [varchar](50) NOT NULL, ";
-                        strsql += " [ProcedureName] [varchar](1000) NOT NULL, ";
-                        strsql += " [IsDebugEnabled] [varchar](1) NOT NULL, ";
-                        strsql += " [IsActive] [varchar](1) NOT NULL, ";
-                        strsql += " [APIDescription] [varchar](1000) NOT NULL, ";
-                        strsql += " [AppServerFilePath] [varchar](255) NOT NULL, ";
-                        strsql += " [Owner] [varchar](50) NOT NULL, ";
-                        strsql += " [UpdateBy] [varchar](50) NOT NULL, ";
-                        strsql += " [UpdateTimeStamp] [datetime] NOT NULL, ";
-                        strsql += " CONSTRAINT [PK_tbl_GenericAPIDefinition] PRIMARY KEY CLUSTERED ";
-                        strsql += " ( ";
-                        strsql += " [ProjectName] ASC, ";
-                        strsql += " [ModuleName] ASC, ";
-                        strsql += " [FunctionName] ASC ";
-                        strsql += " ) ";
-                        strsql += " ) ";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
+                    strsql = "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_actno', N'Account No.', N'BankDetails', N'BankAccNo', N'SA', GETDATE(), N'Bankact', N'2', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
 
-                    dtCount = OpenDataTable("select count(*) from tbl_GenericAPIDefinition with (NoLock) where ProjectName = 'TradeWebAPI' and ModuleName = 'ReKYC'");
-                    if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
-                    {
-                        if (!mfnGetSysSplFeature("RKM"))
-                        {
-                            strsql = "INSERT INTO tbl_GenericAPIDefinition(ProjectName, ModuleName, FunctionName, ProcedureName, IsDebugEnabled, IsActive, APIDescription, AppServerFilePath, Owner, UpdateBy, UpdateTimeStamp) VALUES('TradeWebAPI', 'ReKYC', 'GetClientMaster', 'stpr_APIReKyc', 'Y', 'Y', '', '', '', '', GETDATE())";
-                            ExecuteSQL(strsql, sqlCon);
-                            strsql = "INSERT INTO tbl_GenericAPIDefinition(ProjectName, ModuleName, FunctionName, ProcedureName, IsDebugEnabled, IsActive, APIDescription, AppServerFilePath, Owner, UpdateBy, UpdateTimeStamp) VALUES('TradeWebAPI', 'ReKYC', 'UpdateClientMaster', 'stpr_APIReKyc', 'Y', 'Y', '', '', '', '', GETDATE())";
-                            ExecuteSQL(strsql, sqlCon);
-                            strsql = "INSERT INTO tbl_GenericAPIDefinition(ProjectName, ModuleName, FunctionName, ProcedureName, IsDebugEnabled, IsActive, APIDescription, AppServerFilePath, Owner, UpdateBy, UpdateTimeStamp) VALUES('TradeWebAPI', 'ReKYC', 'UpdateClientClosure', 'stpr_APIReKyc', 'Y', 'Y', '', '', '', '', GETDATE())";
-                            ExecuteSQL(strsql, sqlCon);
-                        }
-                        strsql = "INSERT INTO tbl_GenericAPIDefinition(ProjectName, ModuleName, FunctionName, ProcedureName, IsDebugEnabled, IsActive, APIDescription, AppServerFilePath, Owner, UpdateBy, UpdateTimeStamp) VALUES('TradeWebAPI', 'ReKYC', 'GetClientClosure', 'stpr_APIReKyc', 'Y', 'Y', '', '', '', '', GETDATE())";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_acttype', N'Account Type', N'BankDetails', N'AccountType', N'SA', GETDATE(), N'Bankact', N'2', N'M', N'B', N'', N'Y', N'SB|CA|CC|OD|NE|NO', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_default', N'Default Bank', N'BankDetails', N'IsDefault', N'SA', GETDATE(), N'Bankact', N'2', N'M', N'B', N'', N'Y', N'Y|N', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_ifsccode', N'IFSC Code', N'BankDetails', N'BankIFSC', N'SA', GETDATE(), N'Bankact', N'2', N'M', N'B', N'', N'Y', N'', N'', N'select 1 from bank_master(NOLOCK) WHERE bk_IFCCode = ''<<ba_ifsccode>>'' AND bk_micr = ''<<ba_micr>>''', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_micr', N'MICR', N'BankDetails', N'BankMICR', N'SA', GETDATE(), N'Bankact', N'2', N'M', N'B', N'', N'Y', N'', N'', N'select 1 from bank_master(NOLOCK) WHERE bk_IFCCode = ''<<ba_ifsccode>>'' AND bk_micr = ''<<ba_micr>>''', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_RelationEmail', N'Email Relation', N'ContactDetails', N'EmailRelation', N'SA', GETDATE(), N'Common_Contacts', N'', N'S', N'U', N'', N'N', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_RelationMobile', N'Mobile Relation', N'ContactDetails', N'MobileRelation', N'SA', GETDATE(), N'Common_Contacts', N'', N'S', N'U', N'', N'N', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ce_companycode', N'Segment Details', N'SegmentDetails', N'SegmentDetails', N'SA', GETDATE(), N'Client_details', N'', N'S', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM(SELECT COUNT(*) AS X FROM(SELECT VALUE AS EXC FROM dbo.ReturnTable(''<<ce_companycode>>'','','')) X1 WHERE NOT EXISTS(SELECT 1 FROM CompanyExchangeSegments(NOLOCK) WHERE CES_CD = EXC))X2 WHERE X2.X = 0', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add1', N'Address Address1', N'PersonalDetails', N'CorrAddress1', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add2', N'Address Address2', N'PersonalDetails', N'CorrAddress2', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add3', N'Address Address3', N'PersonalDetails', N'CorrAddress3', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add4', N'Address City/add4', N'PersonalDetails', N'CorrCity', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_bankactno', N'Address Country', N'PersonalDetails', N'CorrCountry', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_email', N'Email', N'PersonalDetails', N'Email', N'SA', GETDATE(), N'Client_master', N'', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_grossincome', N'Income', N'PersonalDetails', N'IncomeValue', N'SA', GETDATE(), N'Client_Info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_grossincomedt', N'Income Date', N'PersonalDetails', N'IncomeDate', N'SA', GETDATE(), N'Client_Info', N'', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_mobile', N'Mobile', N'PersonalDetails', N'Mobile', N'SA', GETDATE(), N'Client_master', N'', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pcountry', N'Address Country', N'PersonalDetails', N'CorrCountry', N'SA', GETDATE(), N'Client_Info', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pincode', N'Address PinCode', N'PersonalDetails', N'CorrPincode', N'SA', GETDATE(), N'Client_master', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_state', N'Address State', N'PersonalDetails', N'CorrState', N'SA', GETDATE(), N'Client_Info', N'1', N'S', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add1', N'Nominee Add1', N'NomineeDetails', N'NomAddress1', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add2', N'Nominee Add2', N'NomineeDetails', N'NomAddress2', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add3', N'Nominee Add3', N'NomineeDetails', N'NomAddress3', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_city', N'Nominee City', N'NomineeDetails', N'NomAddressCity', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_country', N'Nominee Country', N'NomineeDetails', N'NomAddressCountry', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_dob', N'Nominee Date of Birth', N'NomineeDetails', N'NomineeDOB', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'Nominee First Name', N'NomineeDetails', N'NomFirstName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'Nominee Last Name', N'NomineeDetails', N'NomLastName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'Nominee Middle Name', N'NomineeDetails', N'NomMiddleName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_pan', N'Nominee PAN', N'NomineeDetails', N'NomineePan', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_pin', N'Nominee PinCode', N'NomineeDetails', N'NomPincode', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_relation', N'Nominee Relation', N'NomineeDetails', N'NomRelation', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_NomPershare', N'Nominee Percentage', N'NomineeDetails', N'NomPercentage', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_state', N'Nominee State', N'NomineeDetails', N'NomAddressState', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_tel', N'Nominee Mobile', N'NomineeDetails', N'NomMobile', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_uid', N'Nominee UID', N'NomineeDetails', N'NomineeUID', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_actno', N'Demat A/c no', N'DematDetails', N'DPAcNo', N'SA', GETDATE(), N'Dematact', N'4', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_defaultyn', N'Default Demat', N'DematDetails', N'IsDefault', N'SA', GETDATE(), N'Dematact', N'4', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_dpid', N'Demat A/c DPID', N'DematDetails', N'DPID', N'SA', GETDATE(), N'Dematact', N'4', N'M', N'B', N'', N'Y', N'', N'', N'SELECT 1 FROM DPS(NOLOCK) WHERE dp_dpid = ''<<da_dpid>>'' ', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_type', N'Demat A/c Type', N'DematDetails', N'DematAccountType', N'SA', GETDATE(), N'Dematact', N'4', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add1', N'Nominee Guardian Address1', N'GuardianDetails', N'NomGuardianAddress1', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add2', N'Nominee Guardian Address2', N'GuardianDetails', N'NomGuardianAddress2', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_add3', N'Nominee Guardian Address3', N'GuardianDetails', N'NomGuardianAddress3', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_city', N'Nominee Guardian City', N'GuardianDetails', N'NomGuardianCity', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_dob', N'Nominee Guardian Dob', N'GuardianDetails', N'NomGuardianDob', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'Nominee Guardian First Name', N'GuardianDetails', N'NomGuardianFirstName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'Nominee Guardian Last Name', N'GuardianDetails', N'NomGuardianLastName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_email', N'Nominee Guardian Email', N'GuardianDetails', N'NomGuardianEmail', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'Nominee Guardian Middle Name', N'GuardianDetails', N'NomGuardianMiddleName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_pan', N'Nominee Guardian PAN/UID', N'GuardianDetails', N'NomGuardianPAN', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_pin', N'Nominee Guardian Pincode', N'GuardianDetails', N'NomGuardianPincode', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_relation', N'Nominee Guardian Relation', N'GuardianDetails', N'NomGuardianRelation', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_state', N'Nominee Guardian State', N'GuardianDetails', N'NomGuardianState', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_tel', N'Nominee Guardian Mobile', N'GuardianDetails', N'NomGuardianMobile', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_uid', N'Nominee Guardian PAN/UID', N'GuardianDetails', N'NomGuardianUID', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_groupcd', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'ZZZ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_familycd', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'ZZZ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_cfstdratesyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_marginyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_billflag', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_contractflag', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_contractprint', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_bankacttype', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'C ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_confirmemailyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_confirmwebyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_confirmtelyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_billroff', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'2', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_netrate', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'1222222', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_marketrate', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'1222222', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_brokerage', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'1222222', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_currencycd', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'INR ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_schedule', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'49843750', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_servicetax', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'5', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pwd', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'76065', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_directpayout', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_transfertoac', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'A       ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_specialyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezeyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezedt', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'CURRDATE', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_stampdutyyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_dematchargeyn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_brboffcode', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'000001', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_poa', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_filler2', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'COURIER 1      ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_digitalcontract', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_digitaldispatch', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'1010', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_focashmargin', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'50', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fosharemargin', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'50', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_stpexport', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_filler3', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'N         ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_sttprintYn', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_master', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ce_companycode', N'Segment Details', N'PersonalDetails', N'SegmentDetails', N'SA', GETDATE(), N'Client_details', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'SELECT 1 FROM(SELECT COUNT(*) AS X FROM(SELECT VALUE AS EXC FROM dbo.ReturnTable(''<<ce_companycode>>'','','')) X1 WHERE NOT EXISTS(SELECT 1 FROM CompanyExchangeSegments(NOLOCK) WHERE CES_CD = EXC))X2 WHERE X2.X = 0', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_contractcopies', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'1', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_brokerageroff', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'R', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_STP', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fundpayout', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'A', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_deliveryPriority', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'A', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_interestRate', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_stt', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_activeCoExSg', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'ABC,ABF,ABM,ABX,AMC,AMF,AMK,ANC,ANF,ANK', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerA0', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'L', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerA1', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N' ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerA2', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN0', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN1', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN2', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN3', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN4', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN5', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN6', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'1', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN7', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN8', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_fillerN9', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_flag', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_panexempt', N'', N'PersonalDetails', N'', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_longname', N'', N'PersonalDetails', N'CustomerName', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_chequename', N'', N'PersonalDetails', N'CustomerName', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd1', N'', N'PersonalDetails', N'PerAddress1', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd2', N'', N'PersonalDetails', N'PerAddress2', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd3', N'', N'PersonalDetails', N'PerAddress3', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd4', N'', N'PersonalDetails', N'PerCity', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_ppincode', N'', N'PersonalDetails', N'PerPincode', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pstate', N'', N'PersonalDetails', N'PerState', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_maritalstatus', N'', N'PersonalDetails', N'MaritalStatus', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'S|M|W|D|NA', N'\"S = Single M = Married W = Widow\\Widower D = Divorce NA = Not Applicable\"', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_nationalcode', N'', N'PersonalDetails', N'Nationality', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'0|1|2', N'\"0 = Blank 1 = Indian 2 = Other\"', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_uid', N'', N'PersonalDetails', N'UID', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_faherhusguar', N'', N'PersonalDetails', N'FatherName', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_occup', N'', N'PersonalDetails', N'Occupation', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'', N'Y', N'Business|Farmer|House Wife|Others|Professional|Retired|Service|Student|Private Sector|Public Sector|Govt Services', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_dob', N'', N'PersonalDetails', N'DateOfBirth', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_sex', N'', N'PersonalDetails', N'Gender', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'', N'Y', N'M|F|N', N'\"M = Male F = Female N = NA\"', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_panno', N'', N'PersonalDetails', N'PAN', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_grossincome', N'Income', N'PersonalDetails', N'Income', N'SA', GETDATE(), N'Client_Info', N'', N'S', N'I', N'', N'Y', N'1|2|3|4|5|6', N'\"1 = Below Rs. 1  Lac 2 = Btw Rs. 1 to Rs. 5 Lacs 3 = Btw Rs. 5 to Rs. 10 Lacs 4 = Btw Rs. 10 to Rs. 25 Lacs 5 = Btw Rs. 25 Lacs to Rs. 1 Crore 6 = More than Rs. 1 Crore\"', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_name', N'', N'PersonalDetails', N'CustomerName', N'SA', GETDATE(), N'client_MASTER', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_prefix', N'', N'PersonalDetails', N'ClientsNamePrefix', N'SA', GETDATE(), N'client_MASTER', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ci_Fyear', N'', N'IncomeDetail', N'Fyear', N'SA', GETDATE(), N'client_income', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ci_income', N'', N'IncomeDetail', N'IncomeFy', N'SA', GETDATE(), N'client_income', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ci_networth', N'', N'IncomeDetail', N'NetWorth', N'SA', GETDATE(), N'client_income', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_name', N'Nominee Name', N'GuardianDetails', N'NomGuardianName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_name', N'Nominee Name', N'NomineeDetails', N'NomName', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ce_brkscheme', N'Segment Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_details', N'', N'S', N'I', N'DEFAULT', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_constitution', N'', N'PersonalDetails', N'Constitution', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44', N'\"1 = Individual 2 = Mutual Fund 3 = Body Corporate 4 = Non - Tax Paying Entity 5 = Others 6 = Hindu Undivided Family 7 = Oversees Corporate Body 8 = Partnership Firm 9 = Merchant Banker 10 = Foreign Institutional Investor 11 = Indian Financial Instituion 12 = Banks 13 = Company 14 = Trust 15 = Financial Institution 16 = NBFC 17 = Society 18 = NRI 19 = Statutory Bodies 20 = Insurance Companies 21 = Proprietor 22 = National Pension Scheme 23 = Depository Receipts 24 = Foreign Direct Investments 25 = Foreign Venture Capital Funds 26 = Non Govt.Organisation 27 = PMS IND 28 = PMS NON - IND 29 = QFI IND 30 = QFI Others 31 = LIMITED LIABILITY PARTNERSHIPS 32 = Non - Banking Financial Company(NBFC) 33 = Alternate Investment Fund 34 = Foreign National 35 = Domestic Venture Capital Fund 36 = FPI 1(INS) 37 = FPI 2(INS) 38 = FPI 3(INS) 39 = FPI 1(I) 40 = FPI 2(I) 41 = FPI 3(I) 42 = FPI 1(NI) 43 = FPI 2(NI) 44 = FPI 3(NI)\"', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_residentialstatus', N'', N'PersonalDetails', N'ResidentialStatus', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'I|NA', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_KRAStatus', N'Client Other Details', N'PersonalDetails', N'KRAStatus', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'', N'Y', N'Y|N', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_KRADate', N'Client Other Details', N'PersonalDetails', N'KRAAddressUpdate', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'        ', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_smsalert', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_emailalert', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN0', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'2', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN1', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN2', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN3', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN4', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'1', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN5', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'1', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN6', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN7', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN8', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN9', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Nominee', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_PANNo', N'Client Other Details', N'PersonalDetails', N'PAN', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_BSECashUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_NSECashUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_NSEFNoUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_BSEFNoUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_IdentityProofYN', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_IdentityProof', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'PC', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_AddressProofYN', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_AddressProof', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'AC', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_PANCardYN', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'Y', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_PANVerifyYN', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_SignaturesYN', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Remarks', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Status', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'C', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Fname', N'Client Other Details', N'PersonalDetails', N'FirstName', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Middlename', N'Client Other Details', N'PersonalDetails', N'MiddleName', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Lname', N'Client Other Details', N'PersonalDetails', N'LastName', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_UCCstatus', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_BSEFXUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_NSEFXUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_MCXFXUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_MCXCASHUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_MCXFOUCC', N'Client Other Details', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_KYC', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_opendt', N'Opening Date', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'CURRDATE', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CM_BANKNAME', N'Front Office File Type', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'0', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Cname', N'Director Details', N'DirectorDetails', N'DName', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Cdesignation', N'Director Details', N'DirectorDetails', N'Designation', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Cpanno', N'Director Details', N'DirectorDetails', N'DPAN', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Caddress', N'Director Details', N'DirectorDetails', N'Daddress', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Contact', N'Director Details', N'DirectorDetails', N'DMOBILE', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_DIN', N'Director Details', N'DirectorDetails', N'DDINNO', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_UID', N'Director Details', N'DirectorDetails', N'DUID', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_Cemail', N'Director Details', N'DirectorDetails', N'DEMAIL', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cc_foreignres', N'Director Details', N'DirectorDetails', N'ISForeigners', N'SA', GETDATE(), N'Client_Contacts', N'', N'M', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_networthdt', N'Client Other Details', N'PersonalDetails', N'NetWorthDate', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_networth', N'Client Other Details', N'PersonalDetails', N'NetWorth', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_type', N'Client Type', N'PersonalDetails', N'', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'N', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'Nominee Name', N'NomineeDetails', N'NomEmail', N'SA', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_internalrefno', N'ApplicationNo', N'PersonalDetails', N'ApplicationNo', N'SA', GETDATE(), N'Client_Master', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_regno', N'Reg No', N'PersonalDetails', N'RegistrationNo', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_regauth', N'Reg Auth', N'PersonalDetails', N'RegistrationAuth', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_regplace', N'Reg Place', N'PersonalDetails', N'RegistrationPlace', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_regdate', N'Reg Date', N'PersonalDetails', N'RegistrationDate', N'SA', GETDATE(), N'client_info', N'', N'S', N'I', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_cd', N'', N'PersonalDetails', N'ClientCode', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM CLIENT_MASTER(NOLOCK) WHERE CM_CD = ''<<CM_CD>>''', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_name', N'Client Name', N'PersonalDetails', N'ClientName', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Fname', N'Client First Name', N'PersonalDetails', N'FirstName', N'sa', GETDATE(), N'Client_KYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Middlename', N'Client Middle Name', N'PersonalDetails', N'MiddleName', N'sa', GETDATE(), N'Client_KYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'CK_Lname', N'Client Last Name', N'PersonalDetails', N'LastName', N'sa', GETDATE(), N'Client_KYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_brboffcode', N'Branch Code', N'PersonalDetails', N'Branch', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM BRANCH_MASTER(NOLOCK) WHERE bm_branchcd = ''<<cm_brboffcode>>''', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'', N'PersonalDetails', N'BranchName', N'sa', GETDATE(), N'', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_faherhusguar', N'Father/Husband/Guardian Name', N'PersonalDetails', N'FatherName', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_nationalcode', N'Nationality', N'PersonalDetails', N'Nationality', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'0|1|2', N'0 = Blank/1 = Indian/2  = Other', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_panno', N'PanNo', N'PersonalDetails', N'PAN', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_uid', N'UID', N'PersonalDetails', N'UID', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_constitution', N'Category', N'PersonalDetails', N'Constitution', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44', N'1 = Individual 2 = Mutual Fund 3 = Body Corporate 4 = Non-Tax Paying Entity 5 = Others 6 = Hindu Undivided Family 7 = Oversees Corporate Body 8 = Partnership Firm 9 = Merchant Banker 10 = Foreign Institutional Investor 11 = Indian Financial Instituion 12 = Banks 13 = Company 14 = Trust 15 = Financial Institution 16 = NBFC 17 = Society 18 = NRI 19 = Statutory Bodies 20 = Insurance Companies 21 = Proprietor 22 = National Pension Scheme 23 = Depository Receipts 24 = Foreign Direct Investments 25 = Foreign Venture Capital Funds 26 = Non Govt. Organisation 27 = PMS IND 28 = PMS NON-IND 29 = QFI IND 30 = QFI Others 31 = LIMITED LIABILITY PARTNERSHIPS 32 = Non-Banking Financial Company (NBFC) 33 = Alternate Investment Fund 34 = Foreign National 35 = Domestic Venture Capital Fund 36 = FPI 1 (INS) 37 = FPI 2 (INS) 38 = FPI 3 (INS) 39 = FPI 1 (I) 40 = FPI 2 (I) 41 = FPI 3 (I) 42 = FPI 1 (NI) 43 = FPI 2 (NI) 44 = FPI 3 (NI)', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_mobile', N'Mobile', N'PersonalDetails', N'Mobile', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_email', N'Email', N'PersonalDetails', N'Email', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_dob', N'Date of Birth', N'PersonalDetails', N'DateofBirth', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_sex', N'Sex', N'PersonalDetails', N'Gender', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'M|F|N', N'M=Male/F = Female/N = NA', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_maritalstatus', N'Marital Status', N'PersonalDetails', N'MaritalStatus', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'S|M|W|D|NA', N'S = Single/M=Married/W= Widow\\Widower/D=Divorce/NA=Not Applicable', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezeyn', N'Account Status', N'PersonalDetails', N'AccountStatus', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'N|Y|B|A', N'N = Active/Y = Freeze for rades/ B = Freeze for Branches/A = Freeze for All', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_residentialstatus', N'', N'PersonalDetails', N'ResidentialStatus', N'sa', GETDATE(), N'client_info', N'', N'S', N'U', N'', N'Y', N'I|N|F', N'I = Indian/N = NRI/F = Foreign National', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ce_companycode', N'', N'PersonalDetails', N'ExchangeSegment', N'sa', GETDATE(), N'Client_details', N'', N'S', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM(SELECT COUNT(*) AS X FROM(SELECT VALUE AS EXC FROM dbo.ReturnTable(''<<ce_companycode>>'','','')) X1 WHERE NOT EXISTS(SELECT 1 FROM CompanyExchangeSegments(NOLOCK) WHERE CES_CD = EXC))X2 WHERE X2.X = 0', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ck_status', N'', N'PersonalDetails', N'CKYCStatus', N'sa', GETDATE(), N'Client_CKYC', N'', N'S', N'U', N'', N'Y', N'Y|N', N'Y = Yes/N = No', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'Ck_RespType', N'', N'PersonalDetails', N'CKYCRespType', N'sa', GETDATE(), N'Client_CKYC', N'', N'S', N'U', N'', N'Y', N'02|03|04|05', N'02 = Post De-Duplication/03 = Post FIR/04 = Post /confirmation with ID issuer/05 = Post KYC Generation', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'Ck_Nfiller1', N'', N'PersonalDetails', N'CKYCNumber', N'sa', GETDATE(), N'Client_CKYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'mkrdt', N'', N'PersonalDetails', N'CKYCDate', N'sa', GETDATE(), N'Client_CKYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'Ck_Reference', N'', N'PersonalDetails', N'CKYCReffNo', N'sa', GETDATE(), N'Client_CKYC', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_KRAStatus', N'KRA Status', N'PersonalDetails', N'KRAStatus', N'sa', GETDATE(), N'Client_Nominee', N'', N'S', N'U', N'', N'Y', N'Y|N', N'Y = Yes/N = No', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_KRADate', N'KRA Addess Updated On Date', N'PersonalDetails', N'KRAAddressUpdate', N'sa', GETDATE(), N'Client_Nominee', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN0', N'FATCA Status', N'PersonalDetails', N'FATCAStatus', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'0|1|2', N'0 = Not Reportable/1 = Reportable/2 = Blank', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN1', N'FATCA Declaration', N'PersonalDetails', N'FATCADeclaration', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'0|1|2|3', N'0 = Blank/1 = Received/2 = Not Received/3 = Not Required', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_fillerN2', N'FATCA Due diligence', N'PersonalDetails', N'FATCADueDiligence', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'0|1|2|3', N'0 = Blank/1 = Complete/2 = Incomplete/3 = Not Required', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_filler9', N'FATCA Country~Tax Indetification No~Type of Identification', N'PersonalDetails', N'FATCACountry', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'', N'', N'Select 1 From Country_master(NOLOCK) Where ct_name = ''<<cn_filler9>>''', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_filler9', N'FATCA Country~Tax Indetification No~Type of Identification', N'PersonalDetails', N'FATCATaxIdentify', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_filler9', N'FATCA Country~Tax Indetification No~Type of Identification', N'PersonalDetails', N'FATCATypeIdentify', N'sa', GETDATE(), N'client_Nominee', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_name', N'', N'BankDetails', N'BankName', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_add1', N'', N'BankDetails', N'BankAddress1', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_add2', N'', N'BankDetails', N'BankAddress2', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_add3', N'', N'BankDetails', N'BankAddress3', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_city', N'', N'BankDetails', N'BankAddress4', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'bk_pin', N'', N'BankDetails', N'BankPincode', N'sa', GETDATE(), N'Bank_master', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_ifsccode', N'IFSC Code', N'BankDetails', N'BankIFSC', N'sa', GETDATE(), N'Bankact', N'4', N'M', N'U', N'', N'Y', N'', N'', N'select 1 from bank_master(NOLOCK) WHERE bk_IFCCode = ''<<ba_ifsccode>>'' AND bk_micr = ''<<ba_micr>>''', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_actno', N'Account No.', N'BankDetails', N'BankAccNo', N'sa', GETDATE(), N'Bankact', N'4', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_micr', N'MICR', N'BankDetails', N'BankMICR', N'sa', GETDATE(), N'Bankact', N'4', N'M', N'U', N'', N'Y', N'', N'', N'select 1 from bank_master(NOLOCK) WHERE bk_IFCCode = ''<<ba_ifsccode>>'' AND bk_micr = ''<<ba_micr>>''', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ba_acttype', N'Account Type', N'BankDetails', N'BankAccType', N'sa', GETDATE(), N'Bankact', N'4', N'M', N'U', N'', N'Y', N'SB|CA|CC|OD|NE|NO', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add1', N'Address1', N'PersonalDetails', N'CorrAddress1', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add2', N'Address2', N'PersonalDetails', N'CorrAddress2', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add3', N'Address3', N'PersonalDetails', N'CorrAddress3', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_add4', N'City', N'PersonalDetails', N'CorrCity', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_state', N'State', N'PersonalDetails', N'CorrState', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_bankactno', N'Country', N'PersonalDetails', N'CorrCountry', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pincode', N'PinCode', N'PersonalDetails', N'CorrPincode', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd1', N'Client Permanent Address 1', N'PersonalDetails', N'PerAddress1', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd2', N'Client Permanent Address 2', N'PersonalDetails', N'PerAddress2', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd3', N'Client Permanent Address 3', N'PersonalDetails', N'PerAddress3', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_padd4', N'Client Permanent Address City', N'PersonalDetails', N'PerCity', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pstate', N'Client Permanent Address State', N'PersonalDetails', N'PerState', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_pcountry', N'Client Permanent Address Country', N'PersonalDetails', N'PerCountry', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_ppincode', N'Client Permanent Address Pin', N'PersonalDetails', N'PerPincode', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_networth', N'Networth', N'PersonalDetails', N'NetWorth', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_networthdt', N'Networth Date', N'PersonalDetails', N'NetworthDate', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_grossincome', N'Gross Annual Income Range', N'PersonalDetails', N'GrossAnnualIncome', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'1|2|3|4|5|6', N'1 = Below Rs. 1  Lac 2 = Btw Rs. 1 to Rs. 5 Lacs 3 = Btw Rs. 5 to Rs. 10 Lacs 4 = Btw Rs. 10 to Rs. 25 Lacs 5 = Btw Rs. 25 Lacs to Rs. 1 Crore 6 = More than Rs. 1 Crore', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_grossincomedt', N'Gross Annual Income Date', N'PersonalDetails', N'GrossAnnualIncomeDate', N'sa', GETDATE(), N'Client_info', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_dpactno', N'RM Code', N'PersonalDetails', N'RM', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'Select 1 From RM_master(NOLOCK) Where RM_CD = ''<<cm_dpactno>>'' ', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_ReKYC', N'', N'PersonalDetails', N'ReKYC', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_UpdateCDSLNSDL', N'', N'PersonalDetails', N'UpdateCDSLNSDL', N'sa', GETDATE(), N'dematact', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_type', N'', N'DematDetails', N'DPType', N'sa', GETDATE(), N'Dematact', N'2', N'M', N'U', N'', N'Y', N'CDSL|NSDL', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_dpid', N'Demat A/c DPID', N'DematDetails', N'DPID', N'sa', GETDATE(), N'Dematact', N'2', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM DPS(NOLOCK) WHERE dp_dpid = ''<<da_dpid>>'' ', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'da_actno', N'Demat A/c no', N'DematDetails', N'DPAcno', N'sa', GETDATE(), N'Dematact', N'2', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_occup', N'Occupation', N'PersonalDetails', N'Occupation', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'Business|Farmer|House Wife|Others|Professional|Retired|Service|Student|Private Sector|Public Sector|Govt Services', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UCC', N'NomineeDetails(1)', N'NomineeDetails', N'NomUCCCode', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_regdt', N'NomineeDetails(1)', N'NomineeDetails', N'NomRegDate', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'NomineeDetails(1)', N'NomineeDetails', N'NomFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'NomineeDetails(1)', N'NomineeDetails', N'NomMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'NomineeDetails(1)', N'NomineeDetails', N'NomLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'NomineeDetails(1)', N'NomineeDetails', N'NomFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'NomineeDetails(1)', N'NomineeDetails', N'NomMobileCountryCode', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'NomineeDetails(1)', N'NomineeDetails', N'NomAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'NomineeDetails(1)', N'NomineeDetails', N'NomineePAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeRegDt', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_DOB', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeDOB', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_NomPershare', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeSharePercentage', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_ResidualFlag', N'NomineeDetails(1)', N'NomineeDetails', N'NomineeResidualSecurities', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianPAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'GuardianDetails(1)', N'GuardianDetails', N'NomGuardianRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomMobileCountryCode', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineePAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_regdt', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeRegDt', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_DOB', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeDOB', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_NomPershare', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeSharePercentage', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_ResidualFlag', N'NomineeDetails(2)', N'NomineeDetails', N'SecondNomineeResidualSecurities', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianMobileCountryCode', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianPAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'GuardianDetails(2)', N'GuardianDetails', N'SecondNomGuardianRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomMobileCountryCode', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineePAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_regdt', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeRegDt', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_DOB', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeDOB', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_NomPershare', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeSharePercentage', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_ResidualFlag', N'NomineeDetails(3)', N'NomineeDetails', N'ThirdNomineeResidualSecurities', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_firstname', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianFirstName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_middlename', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianMiddleName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_lastname', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianLastName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_FathHusbnm', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianFatherSpouseName', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add1', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddress1', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add2', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddress2', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Add3', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddress3', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_City', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddressCity', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_State', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddressState', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM state_master where st_state = ''<<cn_State>>''', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Country', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddressCountry', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Pin', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianAddressPin', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Tel', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianPAN', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Email', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianMobile', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_UID', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianEmail', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_PAN', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianUID', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_Relation', N'GuardianDetails(3)', N'GuardianDetails', N'ThirdNomGuardianRelation', N'sa', GETDATE(), N'Client_NomineeDetails', N'', N'M', N'U', N'', N'Y', N'01|02|03|04|05|06|07|08|09|10|11|12|13', N'\"01 = Spouse  02 = Son  03 = Daughter  04 = Father  05 = Mother  06 = Brother  07 = Sister  08 = Grandson  09 = Granddaughter  10 = Grandfather  11 = Grandmother  12 = Not Provided  13 = Others\"', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'MTFC_Status', N'MTF Segment', N'PersonalDetails', N'MTFSegment', N'sa', GETDATE(), N'MrgTdgFin_Clients', N'', N'M', N'U', N'', N'Y', N'A|I', N'A-Active, I- Inactive', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'MTFC_IntRate', N'MTF Interest Rate', N'PersonalDetails', N'MTFInterestRate', N'sa', GETDATE(), N'MrgTdgFin_Clients', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'MTFC_AllowLimit', N'MTF Limit', N'PersonalDetails', N'MTFLimit', N'sa', GETDATE(), N'MrgTdgFin_Clients', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'MTFC_Frequency', N'MTF Frequency', N'PersonalDetails', N'MTFInterestFeq', N'sa', GETDATE(), N'MrgTdgFin_Clients', N'', N'M', N'U', N'', N'Y', N'', N'', N'', N'Template2')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezeyn', N'FreezeYN', N'PersonalDetails', N'', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'A', N'Y', N'', N'', N'', N'ONLYCLOSURE')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezedt', N'FreezeDate', N'PersonalDetails', N'', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'CURRDATE', N'Y', N'', N'', N'', N'ONLYCLOSURE')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_freezereason', N'FreezeReason', N'PersonalDetails', N'ClosureReason', N'sa', GETDATE(), N'Client_Master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'ONLYCLOSURE')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cm_cd', N'', N'PersonalDetails', N'ClientCode', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'', N'', N'SELECT 1 FROM CLIENT_MASTER(NOLOCK) WHERE CM_CD = ''<<CM_CD>>''', N'ONLYCLOSURE')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'ClosureType', N'', N'PersonalDetails', N'ClosureType', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'D|T|B', N'D-Demat/T-Trading/B-Both', N'', N'ONLYCLOSURE')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'DPAcno', N'', N'PersonalDetails', N'DPAcno', N'sa', GETDATE(), N'Client_master', N'', N'S', N'U', N'', N'Y', N'', N'', N'', N'ONLYCLOSURE')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'DormantStatus', N'Dormant Status', N'DormantDetails', N'DormantStatus', N'sa', GETDATE(), N'Client_Master', N'1', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template1')" + Environment.NewLine;
+
+                    ExecuteSQL(strsql, sqlCon);
                 }
 
-                if (mfnGetSysSplFeature("RKC"))
+                dtCount = OpenDataTable("select count(0) from tbl_ReKycAuditColumnMapping_new with (NoLock) where FieldName='DormantStatus'");
+                if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
                 {
-                    if (!fnchkTable("tbl_VendorAPISetting", sqlCon))
+                    strsql = "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'DormantStatus', N'Dormant Status', N'DormantDetails', N'DormantStatus', N'sa', GETDATE(), N'Client_Master', N'1', N'S', N'U', N'', N'Y', N'', N'', N'', N'Template1')";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                dtCount = OpenDataTable("Select count(0) from tbl_ReKycAuditColumnMapping_new with (NoLock) WHERE TemplateCode='TEMPLATE1' AND JSONKEY LIKE '%Country%' AND FieldName='cm_pcountry'");
+                if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) != 0)
+                {
+                    strsql = "DELETE FROM tbl_ReKycAuditColumnMapping_new WHERE TemplateCode='TEMPLATE1' AND JSONKEY LIKE '%Country%' AND FieldName='cm_pcountry'";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                dtCount = OpenDataTable("select count(0) from tbl_ReKycAuditColumnMapping_new with (NoLock) where FieldName='cn_ResidualFlag' and TemplateCode='Template1'");
+                if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
+                {
+                    strsql = "INSERT INTO tbl_ReKycAuditColumnMapping_new ([FieldName], [FieldDescp], [MasterJsonTag], [JsonKey], [UserCode], [UpdateTimeStamp], [TableName], [RequireTag], [RecordType], [DefaultValuetag], [DefaultValue], [MandatoryTag], [ValidationValue], [ValidationMessage], [ValidationQuery], [TemplateCode]) VALUES (N'cn_ResidualFlag', N'NomineeResidualSecurities', N'NomineeDetails', N'NomineeResidualSecurities', N'sa', GETDATE(), N'Client_NomineeDetails', N'3', N'M', N'B', N'', N'Y', N'', N'', N'', N'Template1')";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                if (!fnchkTable("tbl_ReKycDPColumnMapping", sqlCon))
+                {
+                    strsql = "CREATE TABLE tbl_ReKycDPColumnMapping( ";
+                    strsql += " [SerialNo] [int] IDENTITY(1,1) NOT NULL, ";
+                    strsql += " [TableColumn] [varchar](50) NOT NULL, ";
+                    strsql += " [ReKycColumn] [varchar](50) NOT NULL, ";
+                    strsql += " [GurKycColumn] [varchar](50) NOT NULL, ";
+                    strsql += " [ColumnDesc] [varchar](50) NOT NULL, ";
+                    strsql += " [UserCode] [varchar](50) NOT NULL, ";
+                    strsql += " [UpdateTimeStamp] [datetime] NOT NULL, ";
+                    strsql += " [Product] [varchar](50) NOT NULL ";
+                    strsql += " )";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                dtCount = OpenDataTable("select count(*) from tbl_ReKycDPColumnMapping with (NoLock)");
+                if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
+                {
+                    strsql = "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_add1', N'cm_add1', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_add2', N'cm_add2', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_add3', N'cm_add3', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_city', N'cm_add4', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_state', N'cm_state', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_country', N'cm_country', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_pin', N'cm_pincode', N'', N'Client Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_email', N'cm_email', N'', N'Primary Email', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_annualincome', N'cm_grossincome', N'', N'Annual Income', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_UID1', N'cm_uid', N'', N'First Holder UID', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomTitle', N'', N'', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomPAN', N'cn_pan', N'cn_gpan', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomUID', N'cn_uid', N'cn_guid', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomEmail', N'cn_gmail', N'cn_gmail', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomName', N'cn_firstname', N'cn_gfirstname', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomMidNm', N'cn_middlename', N'cn_gmiddlename', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomlastNm', N'cn_lastname', N'cn_glastname', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomAdd1', N'cn_add1', N'cn_gadd1', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomAdd2', N'cn_add2', N'cn_gadd2', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomAdd3', N'cn_add3', N'cn_gadd3', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_City', N'cn_city', N'cn_gcity', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_State', N'cn_state', N'cn_gstate', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_Country', N'cn_country', N'cn_gcountry', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomPin', N'cn_pin', N'cn_gpin', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_Relation ', N'cn_relation', N'cn_grelation', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomPershare ', N'cn_NomPershare ', N'cn_gdob', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_NomDOB', N'cn_dob', N'cn_gdob', N'Nominee', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_tele1', N'cm_mobile', N'', N'Primary Mobile', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_divbankacno', N'ba_actno', N'', N'Dividend Bank A/c No.', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_divbankccy', N'', N'', N'Dividend Bank Currency', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_divbankcode', N'ba_micr', N'', N'Dividend Bank Code', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_voicemail', N'ba_ifsccode', N'', N'Dividend Bank IFSC', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_divbranchno', N'ba_acttype', N'', N'Dividend A/c Type', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fadd1', N'cm_padd1', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fadd2', N'cm_padd2', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fadd3', N'cm_padd3', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fcity', N'cm_padd4', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fpin', N'cm_ppincode', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fstate', N'cm_pstate', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fcountry', N'cm_pcountry', N'', N'Client Permanent Address', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_panno', N'cm_panno', N'', N'First Holder PAN', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cb_fathername', N'cm_faherhusguar', N'', N'First Holder Father/Husband Name', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_occupation', N'cm_occupation', N'', N'Occupation', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_dateofbirth', N'cm_dob', N'', N'BO Date of Birth', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_name', N'CK_Fname', N'', N'First Holder Name', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_middlename', N'CK_Middlename', N'', N'First Holder Middle Name', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cm_lastname', N'CK_Lname', N'', N'First Holder Last Name', N'', GETDATE(), N'CROSS')" + Environment.NewLine;
+
+
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                dtCount = OpenDataTable("select ReKycColumn from tbl_ReKycDPColumnMapping where TableColumn='cm_country'");
+                if (dtCount.Rows[0]["ReKycColumn"].ToString().Trim().ToUpper() == "CM_COUNTRY")
+                {
+                    strsql = "UPDATE tbl_ReKycDPColumnMapping SET ReKycColumn = 'cm_bankactno' WHERE TableColumn='cm_country'";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                dtCount = OpenDataTable("select count(0) from tbl_ReKycDPColumnMapping with (NoLock) where TableColumn='cn_ResidualFlag' and Product='CROSS'");
+                if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
+                {
+                    strsql = "INSERT INTO tbl_ReKycDPColumnMapping ([TableColumn], [ReKycColumn], [GurKycColumn], [ColumnDesc], [UserCode], [UpdateTimeStamp], [Product]) VALUES (N'cn_ResidualFlag ', N'cn_ResidualFlag', N'', N'Share Percentage Equality', N'', GETDATE(), N'CROSS')";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                if (!fnchkTable("Client_ModifyAPI", sqlCon))
+                {
+                    strsql = "CREATE TABLE Client_ModifyAPI( ";
+                    strsql += " [ca_Srno] [numeric](18, 0) IDENTITY(1,1) NOT NULL, ";
+                    strsql += " [ca_cmcd] [varchar](8) NOT NULL, ";
+                    strsql += " [ca_field] [varchar](50) NOT NULL, ";
+                    strsql += " [ca_desc] [varchar](100) NOT NULL, ";
+                    strsql += " [ca_oldValue] [varchar](100) NOT NULL, ";
+                    strsql += " [ca_newValue] [varchar](100) NOT NULL, ";
+                    strsql += " [ca_date] [varchar](8) NOT NULL, ";
+                    strsql += " [ca_time] [varchar](11) NOT NULL, ";
+                    strsql += " [ca_computername] [varchar](15) NOT NULL, ";
+                    strsql += " [ca_Tplus] [char](1) NOT NULL, ";
+                    strsql += " [ca_Cross] [char](1) NOT NULL, ";
+                    strsql += " [ca_Estro] [char](1) NOT NULL, ";
+                    strsql += " [ca_Dematacno] [char](16) NULL, ";
+                    strsql += " [ca_filler1] [varchar](100) NULL, ";
+                    strsql += " [ca_filler2] [char](1) NULL, ";
+                    strsql += " [ca_filler3] [char](1) NULL, ";
+                    strsql += " [ca_Nfiller1] [numeric](18, 0) NULL, ";
+                    strsql += " [ca_Nfiller2] [numeric](18, 0) NULL, ";
+                    strsql += " [ca_Nfiller3] [numeric](18, 0) NULL, ";
+                    strsql += " CONSTRAINT [PK_Client_ModifyAPI] PRIMARY KEY NONCLUSTERED ";
+                    strsql += " ( ";
+                    strsql += " [ca_Srno] ASC ";
+                    strsql += " ) ON [PRIMARY] ";
+                    strsql += " ) ON [PRIMARY] ";
+                    ExecuteSQL(strsql, sqlCon);
+
+                    strsql = "CREATE index [idx_Client_ModifyAPI_cmcd] on Client_ModifyAPI ([ca_cmcd])";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                dtCount = OpenDataTable("SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Client_ModifyAPI' and COLUMN_NAME = 'ca_filler1'");
+                if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) < 50)
+                {
+                    strsql = "ALTER TABLE [Client_ModifyAPI] ALTER COLUMN [ca_filler1] [varchar](50) NULL";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                if (!fnchkTable("Client_ModifyAttach", sqlCon))
+                {
+                    strsql = "CREATE TABLE [dbo].[Client_ModifyAttach]( " +
+                    "     [ma_srno] [numeric](18, 0) IDENTITY(1,1) NOT NULL, " +
+                    "     [ma_cmcd] [varchar](50) NOT NULL, " +
+                    "     [ma_date] [varchar](12) NULL, " +
+                    "     [ma_filename] [varchar](100) NULL, " +
+                    "     [ma_field] [varchar](100) NULL, " +
+                    "     [mkrdt] [varchar](12) NULL, " +
+                    "     [mkrtm] [varchar](12) NULL, " +
+                    "     [ma_proof] [varbinary](max) NULL, " +
+                    "     [ma_refno] [numeric](18, 0) NULL, " +
+                    "     [ma_Nfiller1] [int] NOT NULL Default 1, " +
+                    "     [ma_status] [char](1) NOT NULL Default 'N', " +
+                    "     CONSTRAINT [PK_Client_ModifyAttach] PRIMARY KEY NONCLUSTERED " +
+                    "     ( " +
+                    "     [ma_srno] ASC " +
+                    "     ) ON [PRIMARY] " +
+                    "     ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY] ";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                if (!fnchkTable("Client_ReKycMain", sqlCon))
+                {
+                    strsql = "CREATE TABLE Client_ReKycMain( ";
+                    strsql += " [rm_srno] [numeric](18, 0) IDENTITY(1,1) NOT NULL, ";
+                    strsql += " [rm_cmcd] [varchar](50) NOT NULL, ";
+                    strsql += " [rm_cdate] [varchar](12) NULL, ";
+                    strsql += " [rm_ctime] [varchar](12) NULL, ";
+                    strsql += " [rm_rekyc] [char](1) NULL, ";
+                    strsql += " [rm_status] [varchar](100) NULL, ";
+                    strsql += " [rm_desc] [varchar](500) NULL, ";
+                    strsql += " [mkrdt] [varchar](12) NULL, ";
+                    strsql += " [mkrtm] [varchar](12) NULL, ";
+                    strsql += " [rm_step] [int] NULL, ";
+                    strsql += " [rm_refno] [numeric](18, 0) NULL, ";
+                    strsql += " CONSTRAINT [PK_Client_ReKycMain] PRIMARY KEY NONCLUSTERED ";
+                    strsql += " ( ";
+                    strsql += " [rm_srno] ASC ";
+                    strsql += " ) ON [PRIMARY] ";
+                    strsql += " ) ON [PRIMARY] ";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+                dtCount = OpenDataTable("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Client_RekycMain' and COLUMN_NAME = 'rm_RequestType'");
+                if (dtCount.Rows.Count < 1)
+                {
+                    strsql = "Alter Table Client_RekycMain Add rm_RequestType Varchar(20) Not Null Default 'ReKYC'";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+                if (Convert.ToInt16(fnFireQueryTradeWeb("WebParameter", "COUNT(0)", "sp_parmcd", "TRADEPLUSTEMPDB", true)) == 0)
+                {
+                    strsql = "INSERT INTO WebParameter(sp_parmcd, sp_name, sp_sysvalue) VALUES('TRADEPLUSTEMPDB','TRADE PLUS 130 LEVEL','TRADEPLUSTEMPDB')";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+            }
+
+            if (mfnGetSysSplFeature("TPI") || mfnGetSysSplFeature("RKC") || mfnGetSysSplFeature("RKM"))
+            {
+                if (!fnchkTable("tbl_GenericAPIDefinition", sqlCon))
+                {
+                    strsql = "CREATE TABLE tbl_GenericAPIDefinition( ";
+                    strsql += " [SerialNo] [int] IDENTITY(1,1) NOT NULL, ";
+                    strsql += " [ProjectName] [varchar](50) NOT NULL, ";
+                    strsql += " [ModuleName] [varchar](50) NOT NULL, ";
+                    strsql += " [FunctionName] [varchar](50) NOT NULL, ";
+                    strsql += " [ProcedureName] [varchar](1000) NOT NULL, ";
+                    strsql += " [IsDebugEnabled] [varchar](1) NOT NULL, ";
+                    strsql += " [IsActive] [varchar](1) NOT NULL, ";
+                    strsql += " [APIDescription] [varchar](1000) NOT NULL, ";
+                    strsql += " [AppServerFilePath] [varchar](255) NOT NULL, ";
+                    strsql += " [Owner] [varchar](50) NOT NULL, ";
+                    strsql += " [UpdateBy] [varchar](50) NOT NULL, ";
+                    strsql += " [UpdateTimeStamp] [datetime] NOT NULL, ";
+                    strsql += " CONSTRAINT [PK_tbl_GenericAPIDefinition] PRIMARY KEY CLUSTERED ";
+                    strsql += " ( ";
+                    strsql += " [ProjectName] ASC, ";
+                    strsql += " [ModuleName] ASC, ";
+                    strsql += " [FunctionName] ASC ";
+                    strsql += " ) ";
+                    strsql += " ) ";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                dtCount = OpenDataTable("select count(*) from tbl_GenericAPIDefinition with (NoLock) where ProjectName = 'TradeWebAPI' and ModuleName = 'ReKYC'");
+                if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
+                {
+                    if (!mfnGetSysSplFeature("RKM"))
                     {
-                        strsql = "CREATE TABLE tbl_VendorAPISetting( ";
-                        strsql += " [SerialNo] [int] IDENTITY(1,1) NOT NULL, ";
-                        strsql += " [APIVendorName] [varchar](50) NOT NULL  DEFAULT '', ";
-                        strsql += " [APIName] [varchar](50) NOT NULL  DEFAULT '', ";
-                        strsql += " [APIType] [varchar](50) NOT NULL  DEFAULT '', ";
-                        strsql += " [APICallingType] [varchar](50) NOT NULL  DEFAULT '', ";
-                        strsql += " [APIUrl] [varchar](200) NOT NULL  DEFAULT '', ";
-                        strsql += " [APIContantType] [varchar](200) NOT NULL  DEFAULT '', ";
-                        strsql += " [APIAuthToken] [varchar](200) NOT NULL  DEFAULT '', ";
-                        strsql += " [FieldsForHeader] [varchar](max) NOT NULL  DEFAULT '', ";
-                        strsql += " [FileFormat] [varchar](50) NOT NULL  DEFAULT '', ";
-                        strsql += " [FileContantandPath] [nvarchar](max) NOT NULL  DEFAULT '', ";
-                        strsql += " [FileName] [varchar](200) NOT NULL  DEFAULT '', ";
-                        strsql += " [FilePassword] [varchar](200) NOT NULL  DEFAULT '', ";
-                        strsql += " [RequestJson] [nvarchar](max) NOT NULL  DEFAULT '', ";
-                        strsql += " [ResponseJson] [nvarchar](max) NOT NULL  DEFAULT '', ";
-                        strsql += " [CallBackTag] [varchar](1) NOT NULL  DEFAULT '', ";
-                        strsql += " [CallBackUrl] [varchar](100) NOT NULL  DEFAULT '', ";
-                        strsql += " [CallBackRequestJson] [varchar](100) NOT NULL  DEFAULT '', ";
-                        strsql += " [CallBackResponseJson] [varchar](100) NOT NULL  DEFAULT '', ";
-                        strsql += " [IsActive] [varchar](1) NOT NULL  DEFAULT '', ";
-                        strsql += " [UserCode] [varchar](50) NOT NULL  DEFAULT '', ";
-                        strsql += " [UpdateTimeStamp] [datetime] NOT NULL  DEFAULT GETDATE() ";
-                        strsql += " ) ";
+                        strsql = "INSERT INTO tbl_GenericAPIDefinition(ProjectName, ModuleName, FunctionName, ProcedureName, IsDebugEnabled, IsActive, APIDescription, AppServerFilePath, Owner, UpdateBy, UpdateTimeStamp) VALUES('TradeWebAPI', 'ReKYC', 'GetClientMaster', 'stpr_APIReKyc', 'Y', 'Y', '', '', '', '', GETDATE())";
+                        ExecuteSQL(strsql, sqlCon);
+                        strsql = "INSERT INTO tbl_GenericAPIDefinition(ProjectName, ModuleName, FunctionName, ProcedureName, IsDebugEnabled, IsActive, APIDescription, AppServerFilePath, Owner, UpdateBy, UpdateTimeStamp) VALUES('TradeWebAPI', 'ReKYC', 'UpdateClientMaster', 'stpr_APIReKyc', 'Y', 'Y', '', '', '', '', GETDATE())";
+                        ExecuteSQL(strsql, sqlCon);
+                        strsql = "INSERT INTO tbl_GenericAPIDefinition(ProjectName, ModuleName, FunctionName, ProcedureName, IsDebugEnabled, IsActive, APIDescription, AppServerFilePath, Owner, UpdateBy, UpdateTimeStamp) VALUES('TradeWebAPI', 'ReKYC', 'UpdateClientClosure', 'stpr_APIReKyc', 'Y', 'Y', '', '', '', '', GETDATE())";
                         ExecuteSQL(strsql, sqlCon);
                     }
+                    strsql = "INSERT INTO tbl_GenericAPIDefinition(ProjectName, ModuleName, FunctionName, ProcedureName, IsDebugEnabled, IsActive, APIDescription, AppServerFilePath, Owner, UpdateBy, UpdateTimeStamp) VALUES('TradeWebAPI', 'ReKYC', 'GetClientClosure', 'stpr_APIReKyc', 'Y', 'Y', '', '', '', '', GETDATE())";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+            }
 
-                    dtCount = OpenDataTable("select count(*) from tbl_VendorAPISetting");
-                    if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
-                    {
-                        //strsql = @"INSERT INTO tbl_VendorAPISetting([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES(N'Setu', N'PAN', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/verify/pan', N'application/json', N'', N'[{""Key"":""x-client-id"",""Value"":""secmark-consultancy-dg-sbx""}, {""Key"":""x-client-secret"",""Value"":""mD4DoHZwTuge95Ztd0tzUvJA56CASlOy""}, {""Key"":""x-product-instance-id"",""Value"":""66682b22-a964-44d6-b9a9-9c55baf2cfd8""}]', N'', N'', N'', N'', N'{""pan"": ""<<Field1>>"",""consent"": ""<<Field2>>"",""reason"": ""<<Field3>>""}', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
-                        //ExecuteSQL(strsql, sqlCon);
+            if (mfnGetSysSplFeature("RKC"))
+            {
+                if (!fnchkTable("tbl_VendorAPISetting", sqlCon))
+                {
+                    strsql = "CREATE TABLE tbl_VendorAPISetting( ";
+                    strsql += " [SerialNo] [int] IDENTITY(1,1) NOT NULL, ";
+                    strsql += " [APIVendorName] [varchar](50) NOT NULL  DEFAULT '', ";
+                    strsql += " [APIName] [varchar](50) NOT NULL  DEFAULT '', ";
+                    strsql += " [APIType] [varchar](50) NOT NULL  DEFAULT '', ";
+                    strsql += " [APICallingType] [varchar](50) NOT NULL  DEFAULT '', ";
+                    strsql += " [APIUrl] [varchar](200) NOT NULL  DEFAULT '', ";
+                    strsql += " [APIContantType] [varchar](200) NOT NULL  DEFAULT '', ";
+                    strsql += " [APIAuthToken] [varchar](200) NOT NULL  DEFAULT '', ";
+                    strsql += " [FieldsForHeader] [varchar](max) NOT NULL  DEFAULT '', ";
+                    strsql += " [FileFormat] [varchar](50) NOT NULL  DEFAULT '', ";
+                    strsql += " [FileContantandPath] [nvarchar](max) NOT NULL  DEFAULT '', ";
+                    strsql += " [FileName] [varchar](200) NOT NULL  DEFAULT '', ";
+                    strsql += " [FilePassword] [varchar](200) NOT NULL  DEFAULT '', ";
+                    strsql += " [RequestJson] [nvarchar](max) NOT NULL  DEFAULT '', ";
+                    strsql += " [ResponseJson] [nvarchar](max) NOT NULL  DEFAULT '', ";
+                    strsql += " [CallBackTag] [varchar](1) NOT NULL  DEFAULT '', ";
+                    strsql += " [CallBackUrl] [varchar](100) NOT NULL  DEFAULT '', ";
+                    strsql += " [CallBackRequestJson] [varchar](100) NOT NULL  DEFAULT '', ";
+                    strsql += " [CallBackResponseJson] [varchar](100) NOT NULL  DEFAULT '', ";
+                    strsql += " [IsActive] [varchar](1) NOT NULL  DEFAULT '', ";
+                    strsql += " [UserCode] [varchar](50) NOT NULL  DEFAULT '', ";
+                    strsql += " [UpdateTimeStamp] [datetime] NOT NULL  DEFAULT GETDATE() ";
+                    strsql += " ) ";
+                    ExecuteSQL(strsql, sqlCon);
+                }
 
-                        strsql = @"INSERT INTO tbl_VendorAPISetting([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES(N'Setu', N'DigilockerRequest', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/digilocker', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
-                        ExecuteSQL(strsql, sqlCon);
+                dtCount = OpenDataTable("select count(*) from tbl_VendorAPISetting");
+                if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
+                {
+                    //strsql = @"INSERT INTO tbl_VendorAPISetting([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES(N'Setu', N'PAN', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/verify/pan', N'application/json', N'', N'[{""Key"":""x-client-id"",""Value"":""secmark-consultancy-dg-sbx""}, {""Key"":""x-client-secret"",""Value"":""mD4DoHZwTuge95Ztd0tzUvJA56CASlOy""}, {""Key"":""x-product-instance-id"",""Value"":""66682b22-a964-44d6-b9a9-9c55baf2cfd8""}]', N'', N'', N'', N'', N'{""pan"": ""<<Field1>>"",""consent"": ""<<Field2>>"",""reason"": ""<<Field3>>""}', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
+                    //ExecuteSQL(strsql, sqlCon);
 
-                        strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'Gete-AadhaarXML', N'REST', N'GET', N'https://dg-sandbox.setu.co/api/digilocker/<<Requestid>>/aadhaar', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
-                        ExecuteSQL(strsql, sqlCon);
+                    strsql = @"INSERT INTO tbl_VendorAPISetting([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES(N'Setu', N'DigilockerRequest', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/digilocker', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
+                    ExecuteSQL(strsql, sqlCon);
 
-                        //strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'PENNY-DROP', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/verify/ban', N'application/json', N'', N'[{""Key"":""x-client-id"",""Value"":""secmark-consultancy-dg-sbx""}, {""Key"":""x-client-secret"",""Value"":""mD4DoHZwTuge95Ztd0tzUvJA56CASlOy""}, {""Key"":""x-product-instance-id"",""Value"":""b9d146d3-afde-45b8-8ad8-e7f14134d776""}]', N'', N'', N'', N'', N'{""ifsc"": <<Field1>>"",""accountNumber"": ""<<Field2>>""} ', N'', N'Y', N'https://dg-sandbox.setu.co/api/verify/ban/async/<<Requestid>>', N'', N'', N'Y', N'', GETDATE())";
-                        //ExecuteSQL(strsql, sqlCon);
+                    strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'Gete-AadhaarXML', N'REST', N'GET', N'https://dg-sandbox.setu.co/api/digilocker/<<Requestid>>/aadhaar', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
+                    ExecuteSQL(strsql, sqlCon);
 
-                        strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'CreateRPD', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/verify/ban/reverse', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'https://dg-sandbox.setu.co/api/verify/ban/reverse/<<Requestid>>', N'', N'', N'Y', N'', GETDATE())";
-                        ExecuteSQL(strsql, sqlCon);
+                    //strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'PENNY-DROP', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/verify/ban', N'application/json', N'', N'[{""Key"":""x-client-id"",""Value"":""secmark-consultancy-dg-sbx""}, {""Key"":""x-client-secret"",""Value"":""mD4DoHZwTuge95Ztd0tzUvJA56CASlOy""}, {""Key"":""x-product-instance-id"",""Value"":""b9d146d3-afde-45b8-8ad8-e7f14134d776""}]', N'', N'', N'', N'', N'{""ifsc"": <<Field1>>"",""accountNumber"": ""<<Field2>>""} ', N'', N'Y', N'https://dg-sandbox.setu.co/api/verify/ban/async/<<Requestid>>', N'', N'', N'Y', N'', GETDATE())";
+                    //ExecuteSQL(strsql, sqlCon);
 
-                        strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'EsignUploadDocument', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/documents', N'multipart/form-data', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
-                        ExecuteSQL(strsql, sqlCon);
+                    strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'CreateRPD', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/verify/ban/reverse', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'https://dg-sandbox.setu.co/api/verify/ban/reverse/<<Requestid>>', N'', N'', N'Y', N'', GETDATE())";
+                    ExecuteSQL(strsql, sqlCon);
 
-                        strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'CreateSign', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/signature', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
-                        ExecuteSQL(strsql, sqlCon);
+                    strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'EsignUploadDocument', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/documents', N'multipart/form-data', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
+                    ExecuteSQL(strsql, sqlCon);
 
-                        strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'GetSignDownload', N'REST', N'GET', N'https://dg-sandbox.setu.co/api/signature/<<Requestid>>/download', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', GETDATE())";
-                        ExecuteSQL(strsql, sqlCon);
+                    strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'CreateSign', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/signature', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
+                    ExecuteSQL(strsql, sqlCon);
 
-                        strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'documentDigilocker', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/digilocker/<<Requestid>>/document', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
-                        ExecuteSQL(strsql, sqlCon);
+                    strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'GetSignDownload', N'REST', N'GET', N'https://dg-sandbox.setu.co/api/signature/<<Requestid>>/download', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', GETDATE())";
+                    ExecuteSQL(strsql, sqlCon);
 
-                        //strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'MockPayment', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/verify/ban/reverse/mock_payment/<<Requestid>>', N'application/json', N'', N'[{""Key"":""x-client-id"",""Value"":""secmark-consultancy-dg-sbx""}, {""Key"":""x-client-secret"",""Value"":""mD4DoHZwTuge95Ztd0tzUvJA56CASlOy""}, {""Key"":""x-product-instance-id"",""Value"":""3d72371f-901f-4a2c-9506-18907e3d193e""}]', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', GETDATE())";
-                        //ExecuteSQL(strsql, sqlCon);
-                    }
+                    strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'documentDigilocker', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/digilocker/<<Requestid>>/document', N'application/json', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'Y', N'', GETDATE())";
+                    ExecuteSQL(strsql, sqlCon);
 
-                    if (!fnchkTable("tbl_GenericAPILog", sqlCon))
-                    {
-                        strsql = @"CREATE TABLE tbl_GenericAPILog(
+                    //strsql = @"INSERT INTO tbl_VendorAPISetting ([APIVendorName], [APIName], [APIType], [APICallingType], [APIUrl], [APIContantType], [APIAuthToken], [FieldsForHeader], [FileFormat], [FileContantandPath], [FileName], [FilePassword], [RequestJson], [ResponseJson], [CallBackTag], [CallBackUrl], [CallBackRequestJson], [CallBackResponseJson], [IsActive], [UserCode], [UpdateTimeStamp]) VALUES (N'Setu', N'MockPayment', N'REST', N'POST', N'https://dg-sandbox.setu.co/api/verify/ban/reverse/mock_payment/<<Requestid>>', N'application/json', N'', N'[{""Key"":""x-client-id"",""Value"":""secmark-consultancy-dg-sbx""}, {""Key"":""x-client-secret"",""Value"":""mD4DoHZwTuge95Ztd0tzUvJA56CASlOy""}, {""Key"":""x-product-instance-id"",""Value"":""3d72371f-901f-4a2c-9506-18907e3d193e""}]', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', N'', GETDATE())";
+                    //ExecuteSQL(strsql, sqlCon);
+                }
+
+                if (!fnchkTable("tbl_GenericAPILog", sqlCon))
+                {
+                    strsql = @"CREATE TABLE tbl_GenericAPILog(
 	                                    SerialNo int IDENTITY(1,1) NOT NULL,
 	                                    ProjectName varchar(100) NOT NULL DEFAULT '',
 	                                    APIVendorName varchar(100) NOT NULL DEFAULT '',
@@ -6260,81 +2611,76 @@ namespace TradeWeb.API.Repository
 	                                    UserCode varchar(50) NOT NULL DEFAULT '',
 	                                    updatetimestamp datetime NOT NULL DEFAULT GETDATE()
                                     )";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    if (Convert.ToInt16(fnFireQueryTradeWeb("WebParameter", "COUNT(0)", "sp_parmcd", "SetuSetting", true)) == 0)
-                    {
-                        strsql = "Insert into WebParameter values ('SetuSetting','OKYC_DigiLocker/PD_RPD','DigiLocker/RPD')";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    if (Convert.ToInt16(fnFireQueryTradeWeb("WebParameter", "COUNT(0)", "sp_parmcd", "ReKycChecker", true)) == 0)
-                    {
-                        strsql = "Insert into WebParameter values ('ReKycChecker','Rekyc Checker Users','')";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
-                    if (Convert.ToInt16(fnFireQueryTradeWeb("Sysparameter", "COUNT(0)", "sp_parmcd", "ThirdParty", true)) == 0)
-                    {
-                        strsql = "INSERT INTO Sysparameter(sp_parmcd, sp_effdt, SP_NAME, sp_datatype, sp_datalen, sp_table, sp_sysvalue, sp_Securedyn, mkrid, mkrdt) VALUES('ThirdParty', CONVERT(VARCHAR(8), GETDATE(), 112), 'Call Third Party URL', '0', '1', 'NA', '', 'Y', 'SUPER', CONVERT(VARCHAR(8), GETDATE(), 112))";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-                    //// Added Email template and log table 20240503
-                    if (!fnchkTable("tbl_EMailLog", sqlCon))
-                    {
-                        strsql = "CREATE TABLE tbl_EMailLog( ";
-                        strsql += " [SerialNo] [int] IDENTITY(1,1) NOT NULL, ";
-                        strsql += " [Code] [varchar](20) NOT NULL DEFAULT '', ";
-                        strsql += " [ToMailid] [varchar](1000) NOT NULL  DEFAULT '', ";
-                        strsql += " [CCMailid] [varchar](1000) NOT NULL  DEFAULT '', ";
-                        strsql += " [BCCMailid] [varchar](1000) NOT NULL  DEFAULT '', ";
-                        strsql += " [EmailSubject] [varchar](1000) NOT NULL  DEFAULT '', ";
-                        strsql += " [EmailBodyText] [nvarchar](max) NOT NULL  DEFAULT '', ";
-                        strsql += " [AttachmentFile1Name] [varchar](1000) NOT NULL  DEFAULT '', ";
-                        strsql += " [AttachmentFile1] [VARCHAR](max) NULL  DEFAULT '', ";
-                        strsql += " [AttachmentFile2Name] [varchar](1000) NOT NULL  DEFAULT '', ";
-                        strsql += " [AttachmentFile2] [VARCHAR](max) NULL  DEFAULT '', ";
-                        strsql += " [AttachmentFile3Name] [varchar](1000) NOT NULL  DEFAULT '', ";
-                        strsql += " [AttachmentFile3] [VARCHAR](max) NULL  DEFAULT '', ";
-                        strsql += " [SendDate] [datetime] NOT NULL  DEFAULT 0, ";
-                        strsql += " [Response] [nvarchar](max) NOT NULL DEFAULT '', ";
-                        strsql += " [RefName] [varchar](50) NOT NULL DEFAULT '', ";
-                        strsql += " [UserCode] [varchar](50) NOT NULL DEFAULT '', ";
-                        strsql += " [UpdateTimeStamp] [datetime] NOT NULL  DEFAULT GETDATE() ";
-                        strsql += " ) ";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-                    if (!fnchkTable("tbl_EmailTemplate", sqlCon))
-                    {
-                        strsql = "CREATE TABLE tbl_EmailTemplate( ";
-                        strsql += " [SerialNo] [int] IDENTITY(1,1) NOT NULL, ";
-                        strsql += " [RefName] VARCHAR(50) NOT NULL DEFAULT '', ";
-                        strsql += " [BodyText] VARCHAR(MAX) NOT NULL DEFAULT '', ";
-                        strsql += " [CCEmail] VARCHAR(100) NOT NULL DEFAULT '', ";
-                        strsql += " [BCCEmailid] VARCHAR(100) NOT NULL DEFAULT '', ";
-                        strsql += " [EmailSubject] VARCHAR(100) NOT NULL DEFAULT '', ";
-                        strsql += " [UserCode] [varchar](50) NOT NULL DEFAULT '', ";
-                        strsql += " [UpdateTimeStamp] [datetime] NOT NULL DEFAULT GETDATE() ) ";
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-                    dtCount = OpenDataTable("select count(*) from tbl_EmailTemplate");
-                    if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
-                    {
-                        strsql = "INSERT INTO tbl_EmailTemplate([RefName], [BodyText], [CCEmail], [UserCode], EmailSubject) VALUES('RekycMakerPDF','Dear Sir / Madam,<br /><br /><br />Please find attached herewith the application form and the attachments that were submitted by you for doing <br/> your Re-KYC / modification / re-enablement at <<CompanyName>>  <br /><br />Regards<br /> <br />OPS Team','','SA','Re-KYC Application Form')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_EmailTemplate([RefName], [BodyText], [CCEmail], [UserCode], EmailSubject) VALUES('RekycCheckerAccept','Dear Sir / Madam,<br /><br /><br />Your Re-KYC/Modification Request at <<CompanyName>> has been successfully completed.<br /><br />Regards<br /> <br />OPS Team','','SA','Re-KYC Application Accepted')" + Environment.NewLine;
-
-                        strsql += "INSERT INTO tbl_EmailTemplate([RefName], [BodyText], [CCEmail], [UserCode], EmailSubject) VALUES('RekycCheckerReject','Dear Sir / Madam,<br /><br /><br />Your Re-KYC Request/Modification at <<CompanyName>> has been Rejected due to <<Reason>>.<br /><br />Regards<br /> <br />OPS Team','','SA','Re-KYC Application Rejected');" + Environment.NewLine;
-
-                        ExecuteSQL(strsql, sqlCon);
-                    }
-
+                    ExecuteSQL(strsql, sqlCon);
                 }
-            }
-            catch (Exception ex)
-            {
-                throw ex;
+
+                if (Convert.ToInt16(fnFireQueryTradeWeb("WebParameter", "COUNT(0)", "sp_parmcd", "SetuSetting", true)) == 0)
+                {
+                    strsql = "Insert into WebParameter values ('SetuSetting','OKYC_DigiLocker/PD_RPD','DigiLocker/RPD')";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                if (Convert.ToInt16(fnFireQueryTradeWeb("WebParameter", "COUNT(0)", "sp_parmcd", "ReKycChecker", true)) == 0)
+                {
+                    strsql = "Insert into WebParameter values ('ReKycChecker','Rekyc Checker Users','')";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
+                if (Convert.ToInt16(fnFireQueryTradeWeb("Sysparameter", "COUNT(0)", "sp_parmcd", "ThirdParty", true)) == 0)
+                {
+                    strsql = "INSERT INTO Sysparameter(sp_parmcd, sp_effdt, SP_NAME, sp_datatype, sp_datalen, sp_table, sp_sysvalue, sp_Securedyn, mkrid, mkrdt) VALUES('ThirdParty', CONVERT(VARCHAR(8), GETDATE(), 112), 'Call Third Party URL', '0', '1', 'NA', '', 'Y', 'SUPER', CONVERT(VARCHAR(8), GETDATE(), 112))";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+                //// Added Email template and log table 20240503
+                if (!fnchkTable("tbl_EMailLog", sqlCon))
+                {
+                    strsql = "CREATE TABLE tbl_EMailLog( ";
+                    strsql += " [SerialNo] [int] IDENTITY(1,1) NOT NULL, ";
+                    strsql += " [Code] [varchar](20) NOT NULL DEFAULT '', ";
+                    strsql += " [ToMailid] [varchar](1000) NOT NULL  DEFAULT '', ";
+                    strsql += " [CCMailid] [varchar](1000) NOT NULL  DEFAULT '', ";
+                    strsql += " [BCCMailid] [varchar](1000) NOT NULL  DEFAULT '', ";
+                    strsql += " [EmailSubject] [varchar](1000) NOT NULL  DEFAULT '', ";
+                    strsql += " [EmailBodyText] [nvarchar](max) NOT NULL  DEFAULT '', ";
+                    strsql += " [AttachmentFile1Name] [varchar](1000) NOT NULL  DEFAULT '', ";
+                    strsql += " [AttachmentFile1] [VARCHAR](max) NULL  DEFAULT '', ";
+                    strsql += " [AttachmentFile2Name] [varchar](1000) NOT NULL  DEFAULT '', ";
+                    strsql += " [AttachmentFile2] [VARCHAR](max) NULL  DEFAULT '', ";
+                    strsql += " [AttachmentFile3Name] [varchar](1000) NOT NULL  DEFAULT '', ";
+                    strsql += " [AttachmentFile3] [VARCHAR](max) NULL  DEFAULT '', ";
+                    strsql += " [SendDate] [datetime] NOT NULL  DEFAULT 0, ";
+                    strsql += " [Response] [nvarchar](max) NOT NULL DEFAULT '', ";
+                    strsql += " [RefName] [varchar](50) NOT NULL DEFAULT '', ";
+                    strsql += " [UserCode] [varchar](50) NOT NULL DEFAULT '', ";
+                    strsql += " [UpdateTimeStamp] [datetime] NOT NULL  DEFAULT GETDATE() ";
+                    strsql += " ) ";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+                if (!fnchkTable("tbl_EmailTemplate", sqlCon))
+                {
+                    strsql = "CREATE TABLE tbl_EmailTemplate( ";
+                    strsql += " [SerialNo] [int] IDENTITY(1,1) NOT NULL, ";
+                    strsql += " [RefName] VARCHAR(50) NOT NULL DEFAULT '', ";
+                    strsql += " [BodyText] VARCHAR(MAX) NOT NULL DEFAULT '', ";
+                    strsql += " [CCEmail] VARCHAR(100) NOT NULL DEFAULT '', ";
+                    strsql += " [BCCEmailid] VARCHAR(100) NOT NULL DEFAULT '', ";
+                    strsql += " [EmailSubject] VARCHAR(100) NOT NULL DEFAULT '', ";
+                    strsql += " [UserCode] [varchar](50) NOT NULL DEFAULT '', ";
+                    strsql += " [UpdateTimeStamp] [datetime] NOT NULL DEFAULT GETDATE() ) ";
+                    ExecuteSQL(strsql, sqlCon);
+                }
+                dtCount = OpenDataTable("select count(*) from tbl_EmailTemplate");
+                if (Convert.ToInt32(dtCount.Rows[0][0].ToString()) == 0)
+                {
+                    strsql = "INSERT INTO tbl_EmailTemplate([RefName], [BodyText], [CCEmail], [UserCode], EmailSubject) VALUES('RekycMakerPDF','Dear Sir / Madam,<br /><br /><br />Please find attached herewith the application form and the attachments that were submitted by you for doing <br/> your Re-KYC / modification / re-enablement at <<CompanyName>>  <br /><br />Regards<br /> <br />OPS Team','','SA','Re-KYC Application Form')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_EmailTemplate([RefName], [BodyText], [CCEmail], [UserCode], EmailSubject) VALUES('RekycCheckerAccept','Dear Sir / Madam,<br /><br /><br />Your Re-KYC/Modification Request at <<CompanyName>> has been successfully completed.<br /><br />Regards<br /> <br />OPS Team','','SA','Re-KYC Application Accepted')" + Environment.NewLine;
+
+                    strsql += "INSERT INTO tbl_EmailTemplate([RefName], [BodyText], [CCEmail], [UserCode], EmailSubject) VALUES('RekycCheckerReject','Dear Sir / Madam,<br /><br /><br />Your Re-KYC Request/Modification at <<CompanyName>> has been Rejected due to <<Reason>>.<br /><br />Regards<br /> <br />OPS Team','','SA','Re-KYC Application Rejected');" + Environment.NewLine;
+
+                    ExecuteSQL(strsql, sqlCon);
+                }
+
             }
         }
 
@@ -6359,9 +2705,10 @@ namespace TradeWeb.API.Repository
                 string strDbDateTime = "";
                 string strMode = "";
 
-                var db = new DataContext();
+                //var db = new DataContext();
                 //using SqlConnection sqlCon = conn ?? new SqlConnection(db.Database.GetDbConnection().ConnectionString);
-                SqlConnection sqlCon = conn ?? new SqlConnection(db.Database.GetDbConnection().ConnectionString);
+                //SqlConnection sqlCon = conn ?? new SqlConnection(db.Database.GetDbConnection().ConnectionString);
+                SqlConnection sqlCon = conn ?? new SqlConnection(_connStr);
                 bool blnShouldClose = false;
 
                 if (conn == null)
@@ -6422,7 +2769,7 @@ namespace TradeWeb.API.Repository
                                 using SqlCommand command = new SqlCommand(batch, sqlCon);
                                 command.ExecuteNonQuery();
                             }
-                            catch (Exception ex)
+                            catch (Exception)
                             {
                                 continue;
                             }
@@ -6447,50 +2794,10 @@ namespace TradeWeb.API.Repository
                 }
                 return;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 return;
             }
-        }
-
-        public static byte[] EncryptStringToBytes_Aes(string plainText, byte[] Key, byte[] IV)
-        {
-            // Check arguments.
-            if (plainText == null || plainText.Length <= 0)
-                throw new ArgumentNullException("plainText");
-            if (Key == null || Key.Length <= 0)
-                throw new ArgumentNullException("Key");
-            if (IV == null || IV.Length <= 0)
-                throw new ArgumentNullException("IV");
-
-            byte[] encrypted;
-
-            // Create an Aes object with the specified key and IV.
-            using (Aes aesAlg = Aes.Create())
-            {
-                aesAlg.Key = Key;
-                aesAlg.IV = IV;
-
-                // Create an encryptor to perform the stream transform.
-                ICryptoTransform encryptor = aesAlg.CreateEncryptor(aesAlg.Key, aesAlg.IV);
-
-                // Create the streams used for encryption.
-                using (MemoryStream msEncrypt = new MemoryStream())
-                {
-                    using (CryptoStream csEncrypt = new CryptoStream(msEncrypt, encryptor, CryptoStreamMode.Write))
-                    {
-                        using (StreamWriter swEncrypt = new StreamWriter(csEncrypt))
-                        {
-                            //Write all data to the stream.
-                            swEncrypt.Write(plainText);
-                        }
-                        encrypted = msEncrypt.ToArray();
-                    }
-                }
-            }
-
-            // Return the encrypted bytes from the memory stream.
-            return encrypted;
         }
 
         public static string DecryptStringFromBytes_Aes(byte[] cipherText, byte[] Key, byte[] IV)
@@ -6536,8 +2843,9 @@ namespace TradeWeb.API.Repository
         {
             string strsql = "";
 
-            var db = new DataContext();
-            SqlConnection sqlCon = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
+            /*var db = new DataContext();
+            SqlConnection sqlCon = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);*/
+            SqlConnection sqlCon = new SqlConnection(_connStr);
             sqlCon.Open();
 
             if (!fnchkTable("tbl_GenericAPIDebugLog"))
@@ -6578,8 +2886,9 @@ namespace TradeWeb.API.Repository
             {
                 string strsql = "";
 
-                var db = new DataContext();
-                SqlConnection sqlCon = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);
+                /*var db = new DataContext();
+                SqlConnection sqlCon = new SqlConnection((db.Database.GetDbConnection()).ConnectionString);*/
+                SqlConnection sqlCon = new SqlConnection(_connStr);
                 sqlCon.Open();
 
                 strsql = "update tbl_GenericAPIDebugLog set ResponseString = '" + strResponse + "', ExceptionMessage = '" + strException + "' where SerialNo = '" + srNo + "'";
@@ -6656,23 +2965,6 @@ namespace TradeWeb.API.Repository
                 command.ExecuteNonQuery();
             }
         }
-
-        public string MaskedIdentityNumber(string maskString, int startFrom, int endTo)
-        {
-            if (!string.IsNullOrEmpty(maskString))
-            {
-                int lastOpr = startFrom + endTo;
-                if (maskString.Trim().Length > lastOpr)
-                {
-                    var aStringBuilder = new StringBuilder(maskString.Trim());
-                    aStringBuilder.Remove(startFrom, maskString.Length - lastOpr);
-                    aStringBuilder.Insert(startFrom, "X", maskString.Length - lastOpr);
-                    maskString = aStringBuilder.ToString();
-                }
-            }
-            return maskString;
-        }
-
 
         public string ReturnIncomeString(string Code)
         {
@@ -6762,54 +3054,53 @@ namespace TradeWeb.API.Repository
                 returnValue = System.Text.ASCIIEncoding.ASCII.GetString(encodedDataAsBytes);
                 return returnValue;
             }
-            catch (Exception ex)
-            {
-                return "";
-            }
-        }
-        public string WebRequestTestStr(string strurl)
-        {
-            string url = strurl;
-            if (string.IsNullOrEmpty(strurl))
-                return "";
-            Uri uri = new Uri(url);
-            try
-            {
-                string strresponse;
-
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls;
-                System.Net.WebRequest myRequest = System.Net.WebRequest.Create(uri);
-                ServicePointManager.ServerCertificateValidationCallback = new System.Net.Security.RemoteCertificateValidationCallback(AcceptAllCertificates);
-                using (HttpWebResponse response = (HttpWebResponse)myRequest.GetResponse())
-                {
-                    // Get the response stream.
-                    Stream responseStream = response.GetResponseStream();
-                    // Use a stream reader that understands UTF8.
-                    using (StreamReader reader =
-                    new StreamReader(responseStream, Encoding.UTF8))
-                    {
-                        strresponse = reader.ReadLine().ToString();
-                    }
-                }
-                return strresponse;
-            }
             catch (Exception)
             {
                 return "";
             }
         }
+
+        public async Task<string> WebRequestTestStr(string strurl)
+        {
+            if (string.IsNullOrWhiteSpace(strurl))
+                return "";
+
+            try
+            {
+                //not for production code as it accepts all certificates, should be used only for testing with self-signed certificates
+                /*var handler = new HttpClientHandler
+                {
+                    ServerCertificateCustomValidationCallback =
+        HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                };*/
+
+                using var httpClient = new HttpClient();
+
+                var response = await httpClient.GetAsync(strurl);
+
+                response.EnsureSuccessStatusCode();
+
+                var strresponse = await response.Content.ReadAsStringAsync();
+
+                return strresponse;
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
         public bool AcceptAllCertificates(object sender, System.Security.Cryptography.X509Certificates.X509Certificate certification, System.Security.Cryptography.X509Certificates.X509Chain chain, System.Net.Security.SslPolicyErrors sslPolicyErrors)
         {
             return true;
         }
 
-
         public void CreateTables(string strLoginAs, string strProduct, string projectName)
         {
             string strsql = "";
-            var db = new DataContext();
+            //var db = new DataContext();
 
-            using (SqlConnection sqlCon = new SqlConnection((db.Database.GetDbConnection()).ConnectionString))
+            using (SqlConnection sqlCon = new SqlConnection(_connStr))
             {
                 sqlCon.Open();
 
@@ -12092,13 +8383,13 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
         public void CreateMrgpTables()
         {
             string strsql = "";
-            var db = new DataContext();
+            //var db = new DataContext();
             DataTable dtCount = new DataTable();
             string strMarginType = mfnGetSysSplFeature("OPN") ? "OPN" : (mfnGetSysSplFeature("OPC") ? "OPC" : "");
 
             if (strMarginType == "OPN" || strMarginType == "OPC")
             {
-                using (SqlConnection sqlCon = new SqlConnection((db.Database.GetDbConnection()).ConnectionString))
+                using (SqlConnection sqlCon = new SqlConnection(_connStr))
                 {
                     sqlCon.Open();
 
@@ -12289,9 +8580,9 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                     if (GetWebParameter("TRADEPLUSTEMPDB") != "")
                     {
                         string strDatabase = GetWebParameter("TRADEPLUSTEMPDB").Trim();
-                        var dbCon = new DataContext();
-                        string connectionString = dbCon.Database.GetDbConnection().ConnectionString;
-                        SqlConnectionStringBuilder builder = new SqlConnectionStringBuilder(connectionString)
+                        //var dbCon = new DataContext();
+                        //string connectionString = dbCon.Database.GetDbConnection().ConnectionString;
+                        SqlConnectionStringBuilder builder = new SqlConnectionStringBuilder(_connStr)
                         {
                             InitialCatalog = strDatabase
                         };
@@ -12314,24 +8605,24 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                 string StrConn = ConfigurationManager.GetConnectionString("DefaultConnection");
                 if (StrConn.Contains("EPWD"))
                 {
-                    UtilityCommon objUtility = new UtilityCommon();
+                    //UtilityCommon objUtility = new UtilityCommon();
                     string epwd = StrConn.Split("EPWD=")[1].Split(";")[0];
                     string pwd = "";
                     if (!string.IsNullOrWhiteSpace(epwd))
                     {
-                        pwd = objUtility.Decrypt(epwd);
+                        pwd = Decrypt(epwd);
                         StrConn = StrConn.Replace(epwd, pwd);
                     }
                     StrConn = StrConn.Replace("EPWD", "Pwd");
                 }
                 return StrConn;
             }
-            catch (Exception ex) { }
+            catch (Exception) { }
 
             return "";
         }
 
-        public DataTable TradeMobileSendOTP(string clientCd, string Product, string Mode, string role)
+        public async Task<DataTable> TradeMobileSendOTP(string clientCd, string Product, string Mode, string role)
         {
             try
             {
@@ -12340,12 +8631,13 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                 dtTable.Columns.Add("Status", typeof(string));
                 dtTable.Columns.Add("Message", typeof(string));
                 DataRow dr = dtTable.NewRow();
-                SqlTransaction objTrans;
+                //SqlTransaction objTrans;
                 var strSMSParamVal = new string[5];
                 string strSMSParameter = "SMSUSERID/SMSPWD/SMSSENDER/SMSLENGTH/SMSLINK";
                 string strvalue = string.Empty;
-                string strPass = "";
+                //string strPass = "";
                 string strMsgTxt = "";
+                string strSubject = "";
                 string strUser = "";
                 string strMobile = "";
                 string strFromNo1 = "";
@@ -12477,6 +8769,10 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                                     if (Convert.ToInt16(fnFireQuery("Webparameter", "count(0)", "sp_parmcd", "FundReqOTP", true)) > 0)
                                     {
                                         strMsgTxt = fnFireQuery("Webparameter", "SP_SYSVALUE", "sp_parmcd", "FundReqOTP", true);
+                                        string[] arrValues = strMsgTxt.Split('~', 2);
+
+                                        strMsgTxt = arrValues[0];
+                                        strSubject = arrValues.Length > 1 ? arrValues[1] : "";
                                     }
                                 }
                             }
@@ -12627,9 +8923,16 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                             strURLLink = strURLLink.Replace("<SENDERID3>", strSENDER);
                         }
 
-                        if (GetWebParameter("SECURITYPROT").Trim() == "TLS12")
+                        /*if (GetWebParameter("SECURITYPROT").Trim() == "TLS12")
                         {
                             ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                        }*/
+
+                        var handler = new HttpClientHandler();
+
+                        if (GetWebParameter("SECURITYPROT").Trim() == "TLS12")
+                        {
+                            handler.SslProtocols = SslProtocols.Tls12;
                         }
 
                         string content = "";
@@ -12643,12 +8946,23 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
 
                         try
                         {
-                            HttpWebRequest http = (HttpWebRequest)WebRequest.Create(strURLLink);
-                            ServicePointManager.Expect100Continue = true;
-                            HttpWebResponse response = (HttpWebResponse)http.GetResponse();
-                            var sr = new StreamReader(response.GetResponseStream());
-                            content = sr.ReadToEnd();
-                            strresponse = content;
+                            //HttpWebRequest http = (HttpWebRequest)WebRequest.Create(strURLLink);
+                            //ServicePointManager.Expect100Continue = true;
+                            //HttpWebResponse response = (HttpWebResponse)http.GetResponse();
+                            //var sr = new StreamReader(response.GetResponseStream());
+                            //content = sr.ReadToEnd();
+                            //strresponse = content;
+
+                            HttpResponseMessage response = new HttpResponseMessage();
+                            using (HttpClient client = new HttpClient(handler))
+                            {
+                                response = await client.GetAsync(strURLLink);
+
+                                //response.EnsureSuccessStatusCode();
+
+                                content = await response.Content.ReadAsStringAsync();
+                                strresponse = content;
+                            }
 
                             if (response.StatusCode == HttpStatusCode.OK)
                             {
@@ -12725,7 +9039,7 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                                 strresponse = content;
                             }
                         }
-                        catch (Exception ex)
+                        catch (Exception)
                         {
                         }
 
@@ -12756,6 +9070,8 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
 
                         blnOTP = true;
 
+                        UpdateConfirmWebStatus(clientCd, objConnection);
+
                         dtTable.Rows.Add("Y", "OTP sent to your registered mobile " + strMobile);
                         //return dtTable;
                     }
@@ -12765,61 +9081,128 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                         return dtTable;
                     }
 
-                    if (Convert.ToInt32(fnFireQueryTradeWeb("WebParameter", "count(0)", "sp_parmcd", "SMTPSERVERW", true)) > 0)
+                    if (Convert.ToInt32(fnFireQueryTradeWeb("WebParameter", "count(0)", "sp_parmcd", "SMTPSERVERW", true)) > 0 || Convert.ToInt32(fnFireQueryTradeWeb("WebParameter", "count(0)", "sp_parmcd", "SMTPSERVERWN", true)) > 0 || Convert.ToInt32(fnFireQueryTradeWeb("WebParameter", "count(0)", "sp_parmcd", "BulkMailW", true)) > 0)
                     {
                         try
                         {
-                            string strHost = string.Empty;
-                            int intPort;
-                            string strEmailUserID = string.Empty;
-                            string strPWD = string.Empty;
-                            string strEmailCC = string.Empty;
-                            string strSSL = string.Empty;
                             string strUserCd = string.Empty;
                             string strToEmailId = string.Empty;
                             string strEmailResp = string.Empty;
                             string strEmailErr = string.Empty;
-                            string strSMTPParamVal = fnFireQueryTradeWeb("WebParameter", "SP_SYSVALUE", "sp_parmcd", "SMTPSERVERW", true);
-                            string[] emmailValues = strSMTPParamVal.Split('/');
-                            if (emmailValues.Length > 5)
+                            string strSMTPParamVal = fnFireQueryTradeWeb("WebParameter", "SP_SYSVALUE", "sp_parmcd", "SMTPSERVERWN", true);
+                            string strSMTPNetcore = fnFireQueryTradeWeb("WebParameter", "SP_SYSVALUE", "sp_parmcd", "BulkMailW", true);
+                            try
                             {
-                                try
+                                string strSenderEmail = "";
+                                string strHost = "";
+                                int intPort = 0;
+                                string strEmailUserID = "";
+                                string strPWD = "";
+                                string strEmailCC = "";
+                                string strEmailBCC = "";
+                                string strSSL = "";
+                                string strUrl = "";
+                                string strAPIKey = "";
+                                string strFromEmail = "";
+                                string strFromEmailName = "";
+
+                                if (!string.IsNullOrWhiteSpace(strSMTPNetcore))
                                 {
-                                    strHost = strSMTPParamVal.Split('/')[0];
-                                    intPort = Convert.ToInt32(strSMTPParamVal.Split('/')[1]);
-                                    strEmailUserID = strSMTPParamVal.Split('/')[2];
-                                    strPWD = strSMTPParamVal.Split('/')[3];
-                                    strEmailCC = strSMTPParamVal.Split('/')[4];
-                                    strSSL = strSMTPParamVal.Split('/')[5];
+                                    string[] arrBulkEmail = strSMTPNetcore.Split("|");
+                                    strAPIKey = arrBulkEmail[1].Trim();
+                                    strFromEmail = arrBulkEmail[0].Trim();
+                                    strUrl = arrBulkEmail[2].Trim();
+                                }
+                                else if (!string.IsNullOrWhiteSpace(strSMTPParamVal))
+                                {
+                                    // JSON Format
+                                    SMTPSettings smtpSetting =
+                                        JsonConvert.DeserializeObject<SMTPSettings>(strSMTPParamVal);
 
-                                    DataSet ds = new DataSet();
-                                    strsql = "Select * from Client_master where cm_cd = '" + clientCd + "'";
-                                    ds = OpenDataSet(strsql);
-                                    if (ds.Tables[0].Rows.Count == 0)
+                                    if (smtpSetting != null)
                                     {
-                                        dtTable.Rows.Add("N", "Client Not Found");
-                                        return dtTable;
+                                        strSenderEmail = smtpSetting.Email;
+                                        strHost = smtpSetting.Server;
+                                        if (!int.TryParse(smtpSetting.Port, out intPort) || intPort <= 0)
+                                        {
+                                            dtTable.Rows.Add("N", "Invalid value specified in SMTP Port");
+                                            return dtTable;
+                                        }
+                                        strEmailUserID = smtpSetting.User;
+                                        strPWD = smtpSetting.Password;
+                                        strEmailCC = smtpSetting.CCMail;
+                                        strEmailBCC = smtpSetting.BCCEmail;
+                                        strSSL = smtpSetting.SSL;
                                     }
-                                    if (ds.Tables[0].Rows[0]["cm_email"].ToString().Trim() == "")
-                                    {
-                                        dtTable.Rows.Add("N", "EmailID is not available");
-                                        return dtTable;
-                                    }
-                                    strToEmailId = ds.Tables[0].Rows[0]["cm_email"].ToString().Trim();
+                                }
+                                else
+                                {
+                                    // Old Format
+                                    strSMTPParamVal = fnFireQueryTradeWeb("WebParameter", "SP_SYSVALUE", "sp_parmcd", "SMTPSERVERW", true);
+                                    string[] emailValues = strSMTPParamVal.Split('/');
 
-                                    StringBuilder sb = new StringBuilder(strToEmailId);
-                                    for (int i = 2; i <= strToEmailId.Length - 3; i++)
+                                    if (emailValues.Length >= 6)
                                     {
-                                        sb[i] = 'x';
+                                        strHost = emailValues[0];
+                                        if (!int.TryParse(emailValues[1], out intPort) || intPort <= 0)
+                                        {
+                                            dtTable.Rows.Add("N", "Invalid value specified in SMTP Port");
+                                            return dtTable;
+                                        }
+                                        strEmailUserID = emailValues[2];
+                                        strSenderEmail = emailValues[2];
+                                        strPWD = emailValues[3];
+                                        strEmailCC = emailValues[4];
+                                        strSSL = emailValues[5];
                                     }
-                                    string strEmailRtn = sb.ToString();
+                                }
 
+                                DataSet ds = new DataSet();
+                                strsql = "Select * from Client_master where cm_cd = '" + clientCd + "'";
+                                ds = OpenDataSet(strsql);
+                                if (ds.Tables[0].Rows.Count == 0)
+                                {
+                                    dtTable.Rows.Add("N", "Client Not Found");
+                                    return dtTable;
+                                }
+                                if (ds.Tables[0].Rows[0]["cm_email"].ToString().Trim() == "")
+                                {
+                                    dtTable.Rows.Add("N", "EmailID is not available");
+                                    return dtTable;
+                                }
+                                strToEmailId = ds.Tables[0].Rows[0]["cm_email"].ToString().Trim();
+
+                                StringBuilder sb = new StringBuilder(strToEmailId);
+                                for (int i = 2; i <= strToEmailId.Length - 3; i++)
+                                {
+                                    sb[i] = 'x';
+                                }
+                                string strEmailRtn = sb.ToString();
+
+                                if (!string.IsNullOrWhiteSpace(strSMTPNetcore))
+                                {
+                                    string response = SendEmail(strUrl, strAPIKey, strFromEmail, strFromEmailName, strToEmailId, ds.Tables[0].Rows[0]["cm_name"].ToString().Trim(), "Your OTP to access TradeWeb", strMsgTxt);
+
+                                    if (!blnOTP)
+                                    {
+                                        var (Status, Message) = InsertOTP(clientCd, strSotp, strToEmailId, "EI", Product, Mode, intOTPValidTime, objConnection);
+                                        if (Status == "N")
+                                        {
+                                            dtTable.Rows.Add(Status, Message);
+                                            return dtTable;
+                                        }
+                                    }
+                                }
+                                else
+                                {
                                     MailMessage Msg = new MailMessage();
-                                    Msg.From = new MailAddress(strEmailUserID);
+                                    Msg.From = new MailAddress(strSenderEmail);
                                     Msg.To.Add(strToEmailId);
                                     if (!string.IsNullOrEmpty(strEmailCC))
                                         Msg.CC.Add(strEmailCC);
-                                    Msg.Subject = "Your OTP to access TradeWeb";
+                                    if (!string.IsNullOrEmpty(strEmailBCC))
+                                        Msg.Bcc.Add(strEmailBCC);
+                                    Msg.Subject = !string.IsNullOrWhiteSpace(strSubject) ? strSubject : "Your OTP to access TradeWeb";
                                     Msg.Body = strMsgTxt;
                                     Msg.IsBodyHtml = true;
                                     SmtpClient smtp = new SmtpClient();
@@ -12847,41 +9230,35 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                                     }
 
                                     smtp.Send(Msg);
-
-                                    strEmailResp = "Email sent successfully.";
-                                    if (dtTable.Rows.Count > 0)
-                                    {
-                                        if (dtTable.Rows[0]["Status"].ToString().Trim() == "Y")
-                                        {
-                                            dtTable.Rows[0]["Message"] += " OTP sent to your registered email " + strEmailRtn;
-                                        }
-                                    }
-                                    else
-                                    {
-                                        dtTable.Rows.Add("Y", "OTP sent to your registered email " + strEmailRtn);
-                                    }
-
-                                    /*if (!blnOTP)
-                                    {
-                                        strsql = "Update OTP_Master set OTP_Status = 'E' where OTP_ClientCode='" + clientCd.ToUpper() + "' and OTP_Product = '" + Product + "' and OTP_Type = '" + Mode + "' and OTP_Status = 'P'";
-                                        ExecuteSQL(strsql);
-
-                                        strsql = "Insert into OTP_Master values('" + clientCd.ToUpper() + "', 'EI', '" + strSotp.Trim() + "','" + strToEmailId + "', CONVERT(CHAR(8),GETDATE(),112), CONVERT(VARCHAR(8), GETDATE(), 108), CONVERT(CHAR(8), DATEADD(MINUTE, " + intOTPValidTime + ", GETDATE()), 112),CONVERT(VARCHAR(8), DATEADD(MINUTE, " + intOTPValidTime + ", GETDATE()), 108),'P','" + Product + "', '" + Mode + "','','','',0,0,0)";
-                                        ExecuteSQL(strsql);
-                                    }*/
                                 }
-                                catch (Exception e)
+
+                                strEmailResp = "Email sent successfully.";
+
+                                UpdateConfirmWebStatus(clientCd, objConnection);
+
+                                if (dtTable.Rows.Count > 0)
                                 {
-                                    if (!blnOTP)
+                                    if (dtTable.Rows[0]["Status"].ToString().Trim() == "Y")
                                     {
-                                        dtTable.Rows.Add("N", "Error Sending Email.");
+                                        dtTable.Rows[0]["Message"] += " OTP sent to your registered email " + strEmailRtn;
                                     }
-                                    else
-                                    {
-                                        dtTable.Rows[0]["Message"] += " Error Sending Email.";
-                                    }
-                                    return dtTable;
                                 }
+                                else
+                                {
+                                    dtTable.Rows.Add("Y", "OTP sent to your registered email " + strEmailRtn);
+                                }
+                            }
+                            catch (Exception)
+                            {
+                                if (!blnOTP)
+                                {
+                                    dtTable.Rows.Add("N", "Error Sending Email.");
+                                }
+                                else
+                                {
+                                    dtTable.Rows[0]["Message"] += " Error Sending Email.";
+                                }
+                                return dtTable;
                             }
                         }
                         catch (Exception)
@@ -12900,9 +9277,193 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                 }
                 return dtTable;
             }
+            catch (Exception)
+            {
+                throw;
+            }
+        }
+
+        public string SendEmail(string url, string apiKey, string fromEmail, string fromName, string toEmail, string toName, string subject, string body, string cc = "", string bcc = "")
+        {
+            string strJson = "";
+
+            try
+            {
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+                request.Method = "POST";
+                request.Accept = "application/json";
+                request.ContentType = "application/json";
+                request.Headers.Add("api_key", apiKey);
+
+                var postEmail = new PostEmail();
+
+                var content = new PostEmail.Content();
+                content.type = "html";
+
+                content.value = body;
+
+                var mailTo = new PostEmail.To();
+                mailTo.email = toEmail.Replace(",", ";"); // Email ID
+                mailTo.name = toName; // Email Name
+
+                var personalizations = new PostEmail.Personalization();
+                personalizations.to = new List<PostEmail.To>();
+                personalizations.to.Add(mailTo);
+
+                if (bcc != "")
+                {
+                    var emailbcc = new PostEmail.Bcc();
+                    emailbcc.email = bcc;
+                    personalizations.bcc = new List<PostEmail.Bcc>();
+                    personalizations.bcc.Add(emailbcc);
+                }
+
+                if (cc != "")
+                {
+                    var emailcc = new PostEmail.Cc();
+                    emailcc.email = cc;
+                    personalizations.cc = new List<PostEmail.Cc>();
+                    personalizations.cc.Add(emailcc);
+                }
+
+                var req1 = new PostEmail.EmailReq();
+                req1.reply_to = "";
+
+                var from = new PostEmail.From();
+                from.email = fromEmail;
+                from.name = fromName;
+                req1.from = from;
+
+                req1.subject = subject.Replace("<BR>", Environment.NewLine);
+                req1.content = new List<PostEmail.Content>();
+                req1.content.Add(content);
+
+                req1.personalizations = new List<PostEmail.Personalization>();
+                req1.personalizations.Add(personalizations);
+
+                strJson = JsonConvert.SerializeObject(req1);
+
+                //var emailRequest = new
+                //{
+                //    from = new
+                //    {
+                //        email = fromEmail,
+                //        name = fromName
+                //    },
+
+                //    subject = subject,
+
+                //    content = new[]
+                //    {
+                //    new
+                //    {
+                //        type = "html",      // Use "text" if sending plain text
+                //        value = body
+                //    }
+                //},
+
+                //    personalizations = new[]
+                //    {
+                //    new
+                //    {
+                //        to = new[]
+                //        {
+                //            new
+                //            {
+                //                email = toEmail,
+                //                name = toName
+                //            }
+                //        },
+                //        cc = string.IsNullOrWhiteSpace(cc)
+                //        ? null
+                //        : new[]
+                //        {
+                //            new { email = cc }
+                //        },
+
+                //        bcc = string.IsNullOrWhiteSpace(bcc)
+                //        ? null
+                //        : new[]
+                //        {
+                //            new { email = bcc }
+                //        }
+                //    }
+                //}
+                //};
+
+                //strJson = JsonConvert.SerializeObject(emailRequest);
+
+                byte[] bytes = Encoding.UTF8.GetBytes(strJson);
+
+                using (Stream stream = request.GetRequestStream())
+                {
+                    stream.Write(bytes, 0, bytes.Length);
+                }
+
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                using (Stream responseStream = response.GetResponseStream())
+                using (StreamReader reader = new StreamReader(responseStream))
+                {
+                    return reader.ReadToEnd();
+                }
+            }
+            catch (WebException ex)
+            {
+                var httpResponse = ex.Response as HttpWebResponse;
+
+                int? statusCode = httpResponse != null ? (int)httpResponse.StatusCode : (int?)null;
+                string statusDescription = httpResponse?.StatusDescription;
+
+                string responseBody = "";
+
+                if (httpResponse != null)
+                {
+                    using (var sr = new StreamReader(httpResponse.GetResponseStream()))
+                    {
+                        responseBody = sr.ReadToEnd();
+                    }
+                }
+
+                string strLogResJson = JsonConvert.SerializeObject(new { statusCode, statusDescription, responseBody });
+                string strLogReqJson = JsonConvert.SerializeObject(new { url, fromEmail, fromName, toEmail, toName, subject, body, cc, bcc, strJson, strLogResJson });
+                string strLogException = JsonConvert.SerializeObject(new
+                {
+                    ex.Message,
+                    ex.Source,
+                    ex.TargetSite?.Name,
+                    ex.StackTrace,
+                    InnerException = ex.InnerException?.ToString()
+                });
+
+                using (SqlConnection conn = new SqlConnection(GetConnectionStr()))
+                {
+                    conn.Open();
+                    InsertLog(0, "SendEmailNetcore", "", strLogReqJson, strLogResJson, strLogException, "", conn);
+                }
+
+                throw;
+            }
             catch (Exception ex)
             {
-                throw ex;
+                string strLogReqJson = JsonConvert.SerializeObject(new { url, fromEmail, fromName, toEmail, toName, subject, body, cc, bcc, strJson, });
+                string strLogException = JsonConvert.SerializeObject(new
+                {
+                    ex.Message,
+                    ex.Source,
+                    ex.TargetSite?.Name,
+                    ex.StackTrace,
+                    InnerException = ex.InnerException?.ToString()
+                });
+
+                using (SqlConnection conn = new SqlConnection(GetConnectionStr()))
+                {
+                    conn.Open();
+                    InsertLog(0, "SendEmailNetcore", "", strLogReqJson, "", strLogException, "", conn);
+                }
+
+                throw;
             }
         }
 
@@ -13006,16 +9567,16 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
 
                             objTrans.Commit();
                         }
-                        catch (Exception ex)
+                        catch (Exception)
                         {
                             objTrans.Rollback();
-                            throw ex;
+                            throw;
                         }
                     }
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    throw ex;
+                    throw;
                 }
             }
         }
@@ -13035,7 +9596,6 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
 
             return currentDateTime;
         }
-
 
         public string SerializeToXml<T>(T obj, bool omitXmlDeclaration = false, bool indent = false, string encoding = "utf-8")
         {
@@ -13071,7 +9631,6 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
             }
             public override Encoding Encoding => encoding;
         }
-
 
         public string CheckPasswordCondition(string newPassword, string dpid, string clientCode)
         {
@@ -13213,7 +9772,7 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                     return "Password maximum length should be " + pwdMaxLenght + " characters.";
                 }
             }
-            catch (Exception ex) { }
+            catch (Exception) { }
 
             return "";
         }
@@ -13582,24 +10141,6 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
             return "Something went wrong!";
         }
 
-        public string InsertUpdateOTPmaster(string userId, string otpFor, string strOTP, string mobile_Email, string modeType, string product, int intOTPValidTime)
-        {
-            try
-            {
-                string strsql = "";
-                CreateOTPMasterTable();
-
-                strsql = "Update OTP_Master set OTP_Status = 'E' where OTP_ClientCode='" + userId.ToUpper() + "' and OTP_Product = '" + product + "' and OTP_Type = '" + modeType + "' and OTP_Status = 'P' and OTP_SentTo = '" + mobile_Email + "' ";
-                ExecuteSQL(strsql);
-                strsql = "Insert into OTP_Master values('" + userId.ToUpper() + "', '" + otpFor + "', '" + strOTP.Trim() + "','" + mobile_Email + "', CONVERT(CHAR(8),GETDATE(),112), CONVERT(VARCHAR(8), GETDATE(), 108), CONVERT(CHAR(8), DATEADD(MINUTE, " + intOTPValidTime + ", GETDATE()), 112),CONVERT(VARCHAR(8), DATEADD(MINUTE, " + intOTPValidTime + ", GETDATE()), 108),'P','" + product + "', '" + modeType + "','','','',0,0,0)";
-                ExecuteSQL(strsql);
-            }
-            catch (Exception e)
-            {
-            }
-            return "success";
-        }
-
         public string VerifyOtp_OtpMaster(string userId, string strOTP, string mobile_Email, string modeType, string product)
         {
             try
@@ -13642,7 +10183,7 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                     return "OTP Mismatched";
                 }
             }
-            catch (Exception e)
+            catch (Exception)
             {
             }
             return "success";
@@ -13660,50 +10201,6 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
 
                 return rsa.VerifyData(payloadBytes, signatureBytes, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
             }
-        }
-
-        public CommonXMLResponse CreateCommonXML(XmlDocument xml, string role, string userId)
-        {
-            // Extract and parse J_Ui element
-            var jUiObject = ParseJsonFromXml<JUiModel>(xml, "J_Ui", out string jUiError);
-            if (jUiObject == null)
-            {
-                return new CommonXMLResponse { Success = false, Message = jUiError, ModuleName = "", FunctionName = "" };
-            }
-
-            // Extract and parse J_Api element (if exists)
-            var jApiObject = ParseJsonFromXml<JApi>(xml, "J_Api", out string jApiError);
-            if (jApiError != null)
-            {
-                return new CommonXMLResponse { Success = false, Message = jApiError, ModuleName = "", FunctionName = "" };
-            }
-
-            if (jApiObject != null)
-            {
-                if (role != "ComAPI")
-                {
-                    jApiObject.UserId = userId.Trim();
-                }
-                UpdateXmlNodeWithJson(xml, "J_Api", jApiObject);
-            }
-
-            // Handle X_Filter (prevent null exception)
-            var filterXml = xml.GetElementsByTagName("X_Filter")[0]?.InnerXml;
-            if (!string.IsNullOrWhiteSpace(filterXml))
-            {
-                XDocument xdoc = XDocument.Parse($"<root>{filterXml}</root>");
-                xml.DocumentElement["X_Filter"].InnerXml = xdoc.Root.ToString(SaveOptions.DisableFormatting)
-                    .Replace("<root>", "").Replace("</root>", "");
-            }
-
-            return new CommonXMLResponse
-            {
-                Success = true,
-                Message = "",
-                ModuleName = jUiObject.ActionName.Trim() ?? "",
-                FunctionName = jUiObject.Option.Trim() ?? "",
-                ReportDisplay = jUiObject.ReportDisplay.Trim() ?? ""
-            };
         }
 
         private T ParseJsonFromXml<T>(XmlDocument xml, string tagName, out string errorMessage) where T : class
@@ -13892,9 +10389,9 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                     WebDBDate = WebQueryDate
                 };
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                throw ex;
+                throw;
             }
         }
 
@@ -13929,8 +10426,8 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                 //removing milliseconds for comparision
                 LastWriteTime = new DateTime(LastWriteTime.Year, LastWriteTime.Month, LastWriteTime.Day, LastWriteTime.Hour, LastWriteTime.Minute, LastWriteTime.Second);
 
-                var db = new DataContext();
-                SqlConnection sqlCon = conn ?? new SqlConnection(db.Database.GetDbConnection().ConnectionString);
+                //var db = new DataContext();
+                SqlConnection sqlCon = conn ?? new SqlConnection(_connStr);
                 bool blnShouldClose = false;
 
                 if (conn == null)
@@ -13959,12 +10456,47 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                     {
                         try
                         {
+                            Match match = Regex.Match(batch, @"CREATE\s+(?<type>PROCEDURE|FUNCTION|TYPE)\s+(?:(?:\[(?<schema>\w+)\]|(?<schema>\w+))\.)?(?:\[(?<name>\w+)\]|(?<name>\w+))", RegexOptions.IgnoreCase);
+
+                            if (match.Success)
+                            {
+                                string objectType = match.Groups["type"].Value.ToUpper();
+                                string schema = match.Groups["schema"].Success ? match.Groups["schema"].Value : "dbo";
+                                string objectName = $"{schema}.{match.Groups["name"].Value}";
+
+                                string checkQuery = "";
+                                if (objectType == "TYPE")
+                                {
+                                    checkQuery = @"SELECT COUNT(*) FROM sys.table_types WHERE name = @Name AND schema_id = SCHEMA_ID(@Schema)";
+                                }
+                                else
+                                {
+                                    checkQuery = @"SELECT COUNT(*) FROM sys.objects WHERE object_id = OBJECT_ID(@ObjectName)";
+                                }
+                                using SqlCommand checkCmd = new SqlCommand(checkQuery, conn);
+                                if (objectType == "TYPE")
+                                {
+                                    checkCmd.Parameters.AddWithValue("@Name", match.Groups["name"].Value);
+                                    checkCmd.Parameters.AddWithValue("@Schema", schema);
+                                }
+                                else
+                                {
+                                    checkCmd.Parameters.AddWithValue("@ObjectName", objectName);
+                                }
+                                int exists = Convert.ToInt32(checkCmd.ExecuteScalar());
+
+                                if (exists > 0)
+                                {
+                                    continue;
+                                }
+                            }
+
                             using SqlCommand command = new SqlCommand(batch, sqlCon);
                             command.ExecuteNonQuery();
                         }
-                        catch (SqlException ex)
+                        catch (SqlException)
                         {
-                            throw ex;
+                            throw;
                         }
                     }
                 }
@@ -13985,9 +10517,9 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                 }
                 return;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                throw ex;
+                throw;
             }
         }
 
@@ -14153,7 +10685,7 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                 Strsql = "update RefreshTokens set IsRevoked = 1 where UserCode = '" + UserId + "' and UserType = '" + LoginAs + "' and IsRevoked = 0";
                 ExecuteSQL(Strsql);
 
-                Strsql = "Insert into RefreshTokens values('" + UserId + "', '" + LoginAs + "', '" + Role + "', '" + strRefToken + "', DATEADD(minute, " + ExpiryTime + ", GETDATE()), '0', '', '', '', 0, 0, 0)";
+                Strsql = "Insert into RefreshTokens values('" + UserId + "', '" + LoginAs + "', '" + Role + "', '" + strRefToken + "', DATEADD(minute, " + ExpiryTime + ", GETUTCDATE()), '0', '', '', '', 0, 0, 0)";
                 ExecuteSQL(Strsql);
 
                 return strRefToken;
@@ -14221,11 +10753,11 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                 {
                     if (VersionRes.DBDetails != null)
                     {
-                        var db = new DataContext();
+                        //var db = new DataContext();
                         //SqlConnection sqlCon = new SqlConnection(strConnection);
                         if (sqlCon == null)
                         {
-                            sqlCon = new SqlConnection(db.Database.GetDbConnection().ConnectionString);
+                            sqlCon = new SqlConnection(_connStr);
                         }
                         if (sqlCon.State == ConnectionState.Closed)
                         {
@@ -14526,18 +11058,6 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
             {
                 return "HO";
             }
-        }
-
-        public byte[] Base64UrlDecode(string base64Url)
-        {
-            // Convert from Base64Url to Base64
-            string padded = base64Url.Replace('-', '+').Replace('_', '/');
-            switch (padded.Length % 4)
-            {
-                case 2: padded += "=="; break;
-                case 3: padded += "="; break;
-            }
-            return Convert.FromBase64String(padded);
         }
 
         public LoginRole GetLoginRole(string loginAs, string product)
@@ -15047,65 +11567,493 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
             }
         }
 
-        public void CommonInsertEailTemplate(string compCode, string clientCode, string docType, string machineName, string emailParamCode, string toEmail, string subject, string bodyText, byte[] document, string fileName)
+        public string Encrypt(string plainText, string Key)
         {
-            string connectionString = GetConnectionStr();
-            string strSql = @"
-                 INSERT INTO Digital_Emaildetails
-                 (
-                     dd_companycode,
-                     dd_clientcd,
-                     dd_dt,
-                     dd_DocumentType,
-                     dd_computername,
-                     dd_EmailParamCode,
-                     dd_toEmailid,
-                     dd_subject,
-                     dd_bodyText,
-                     dd_document,
-                     dd_filename
-                 )
-                 VALUES
-                 (
-                     @dd_companycode,
-                     @dd_clientcd,
-                     @dd_dt,
-                     @dd_DocumentType,
-                     @dd_computername,
-                     @dd_EmailParamCode,
-                     @dd_toEmailid,
-                     @dd_subject,
-                     @dd_bodyText,
-                     @dd_document,
-                     @dd_filename
-                 )";
+            byte[] iv = new byte[16];
+            RandomNumberGenerator.Fill(iv);   // generate random IV
 
-            using (SqlConnection conn = new SqlConnection(connectionString))
+            using (Aes aes = Aes.Create())
             {
-                using (SqlCommand cmd = new SqlCommand(strSql, conn))
-                {
-                    cmd.Parameters.AddWithValue("@dd_companycode", compCode ?? string.Empty);
-                    cmd.Parameters.AddWithValue("@dd_clientcd", clientCode ?? string.Empty);
-                    cmd.Parameters.AddWithValue("@dd_dt", DateTime.UtcNow.ToString("yyyyMMdd"));
-                    cmd.Parameters.AddWithValue("@dd_DocumentType", docType ?? string.Empty);
-                    cmd.Parameters.AddWithValue("@dd_computername", machineName ?? string.Empty);
-                    cmd.Parameters.AddWithValue("@dd_EmailParamCode", emailParamCode ?? string.Empty);
-                    cmd.Parameters.AddWithValue("@dd_toEmailid", toEmail ?? string.Empty);
-                    cmd.Parameters.AddWithValue("@dd_subject", subject ?? string.Empty);
-                    cmd.Parameters.AddWithValue("@dd_bodyText", bodyText ?? string.Empty);
-                    cmd.Parameters.AddWithValue("@dd_document", document);
-                    cmd.Parameters.AddWithValue("@dd_filename", fileName ?? string.Empty);
+                aes.KeySize = 256;
+                aes.Mode = CipherMode.CBC;
+                aes.Padding = PaddingMode.PKCS7;
+                aes.Key = Convert.FromBase64String(Key);
+                aes.IV = iv;
 
-                    if (conn.State == ConnectionState.Closed)
+                using var encryptor = aes.CreateEncryptor();
+                using var ms = new MemoryStream();
+                using var cs = new CryptoStream(ms, encryptor, CryptoStreamMode.Write);
+
+                byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
+                cs.Write(plainBytes, 0, plainBytes.Length);
+                cs.FlushFinalBlock();
+
+                byte[] cipherBytes = ms.ToArray();
+
+                // return IV:CipherText (both Base64)
+                return Convert.ToBase64String(iv) + ":" + Convert.ToBase64String(cipherBytes);
+            }
+        }
+
+        public string Decrypt(string input, string Key)
+        {
+            var parts = input.Split(':');
+
+            if (parts.Length != 2)
+                throw new Exception("Invalid encrypted format. Expected IV:CipherText");
+
+            byte[] iv = Convert.FromBase64String(parts[0]);
+            byte[] cipherBytes = Convert.FromBase64String(parts[1]);
+
+            using (Aes aes = Aes.Create())
+            {
+                aes.KeySize = 256;
+                aes.Mode = CipherMode.CBC;
+                aes.Padding = PaddingMode.PKCS7;
+                aes.Key = Convert.FromBase64String(Key);
+                aes.IV = iv;
+
+                using var decryptor = aes.CreateDecryptor();
+                using var ms = new MemoryStream(cipherBytes);
+                using var cs = new CryptoStream(ms, decryptor, CryptoStreamMode.Read);
+                using var sr = new StreamReader(cs, Encoding.UTF8);
+
+                return sr.ReadToEnd();
+            }
+        }
+
+        public List<T> ConvertToList<T>(DataTable dt) where T : new()
+        {
+            var columnNames = dt.Columns.Cast<DataColumn>()
+                                        .Select(c => c.ColumnName.ToLower())
+                                        .ToList();
+
+            var properties = typeof(T).GetProperties();
+
+            var list = new List<T>();
+
+            foreach (DataRow row in dt.Rows)
+            {
+                T obj = new T();
+
+                foreach (var prop in properties)
+                {
+                    if (columnNames.Contains(prop.Name.ToLower()))
                     {
-                        conn.Open();
+                        try
+                        {
+                            var value = row[prop.Name];
+                            if (value == DBNull.Value) value = null;
+
+                            prop.SetValue(obj, value);
+                        }
+                        catch { }
                     }
-                    cmd.ExecuteNonQuery();
+                }
+
+                list.Add(obj);
+            }
+
+            return list;
+        }
+
+        public double ToDouble(object value, double defaultValue = 0d)
+        {
+            if (value == null || value == DBNull.Value)
+                return defaultValue;
+
+            var str = Convert.ToString(value);
+
+            return double.TryParse(str,
+                                   NumberStyles.Any,
+                                   CultureInfo.InvariantCulture,
+                                   out double result)
+                   ? result
+                   : defaultValue;
+        }
+
+        public int GetPdfPageCount(Stream pdfStream)
+        {
+            pdfStream.Position = 0; // important
+
+            using (PdfReader reader = new PdfReader(pdfStream))
+            {
+                return reader.NumberOfPages;
+            }
+        }
+
+        public async Task<HttpResponseMessage> GetResponseAsync(string strURLLink)
+        {
+            var handler = new HttpClientHandler
+            {
+                SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+            };
+
+            var client = new HttpClient(handler);
+
+            return await client.GetAsync(strURLLink);
+        }
+
+        public void InsertThirdPartyServiceData(ThirdPartyModel fModel, string reqDetail, string outputResponse)
+        {
+            string outputString = outputResponse ?? "";
+            outputString = outputString.Replace("'", " ");
+            LogInfo.WriteErrorLog("DAO InsertThirdPartyServiceData Response 1 " + outputString);
+            Dictionary<string, object> iData = new Dictionary<string, object>();
+            iData.Add("ProjectName", fModel.ProjectName ?? "");
+            iData.Add("APIVendorName", fModel.APIVendorName ?? "");
+            //iData.Add("Request", fModel.Request.ToString());
+            iData.Add("Request", reqDetail);
+            iData.Add("Response", outputString);
+            iData.Add("UpdateTimeStamp", "GetDate()");
+
+            int i = InsertData("", "tbl_GenericAPILog", iData);
+        }
+
+        public void InsertThirdPartyServiceData(ThirdPartyServiceMultiPartModel fModel, string reqDetail, string outputResponse)
+        {
+            string outputString = outputResponse ?? "";
+            outputString = outputString.Replace("'", " ");
+            Dictionary<string, object> iData = new Dictionary<string, object>();
+            iData.Add("ProjectName", fModel.ProjectName ?? "");
+            iData.Add("APIVendorName", fModel.APIVendorName ?? "");
+            //iData.Add("Request", fModel.Request.ToString());
+            iData.Add("Request", reqDetail);
+            iData.Add("Response", outputString);
+            iData.Add("UpdateTimeStamp", "GetDate()");
+
+            int i = InsertData("", "tbl_GenericAPILog", iData);
+        }
+
+        public int InsertData(string functionName, string strTableName, Dictionary<string, object> values)
+        {
+            string insertQuery = SqlInsert(strTableName, values);
+            return Convert.ToInt32(SelectSqlExecuteScalar(insertQuery + " Select Scope_Identity()"));
+            //return 1;
+        }
+
+        public static string SqlInsert(string table, Dictionary<string, object> values)
+        {
+            var equals = new List<string>();
+            var parameters = new List<SqlParameter>();
+            StringBuilder sql = new StringBuilder("INSERT INTO " + table + " (");
+            StringBuilder sqlvalues = new StringBuilder("VALUES (");
+            int i = 0;
+            foreach (var item in values)
+            {
+
+                sql.Append(item.Key);
+                if (item.Value.ToString() == string.Empty)
+                {
+                    sqlvalues.Append("'");
+                    sqlvalues.Append("");
+                    sqlvalues.Append("'");
+                }
+                else
+                {
+                    if (item.Value.ToString() == "GetDate()")
+                    {
+                        sqlvalues.Append("GetDate()");
+                    }
+                    else if (item.Value.ToString().Contains("@Attach") || item.Value.ToString().Contains("@UserPhoto"))
+                    {
+                        if (item.Value.ToString().Substring(1).ToUpper() == item.Key.ToString().ToUpper() || item.Key.ToUpper().ToString().Contains("ATTACHMENT") || (item.Key.ToString().ToUpper().Contains("DOCUMENT")) || (item.Key.ToString().ToUpper().Contains("IMAGE")))
+                        {
+                            sqlvalues.Append(item.Value);
+                        }
+                        else
+                        {
+                            sqlvalues.Append("'");
+                            sqlvalues.Append(item.Value);
+                            sqlvalues.Append("', ");
+                        }
+                    }
+
+                    else
+                    {
+                        sqlvalues.Append("'");
+                        sqlvalues.Append(item.Value);
+                        sqlvalues.Append("'");
+                    }
+                }
+                if (i != values.Count - 1)
+                {
+                    sql.Append(", ");
+                    sqlvalues.Append(", ");
+                }
+                i++;
+            }
+            sql.Append(") ");
+            sql.Append(sqlvalues.ToString());
+            sql.Append(')');
+            return sql.ToString();
+
+        }
+
+        public dynamic SelectSqlExecuteScalar(string strStatement)
+        {
+            var result = new object();
+            try
+            {
+                using SqlConnection con = new SqlConnection(_connStr);
+                con.Open();
+                using (SqlCommand MyCmd = new SqlCommand(strStatement, con))
+                {
+                    LogInfo.WriteErrorLog("Sql Query Going To Execute is :" + strStatement);
+                    MyCmd.CommandType = CommandType.Text;
+                    result = MyCmd.ExecuteScalar();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogInfo.WriteErrorLog("Exception is :: " + ex.GetBaseException());
+                throw;
+            }
+            return result;
+        }
+
+        public string encryptIPO(string pInput, string strKey)
+        {
+            string result = "";
+            Byte[] bytesToBeEncrypted = Encoding.UTF8.GetBytes(GenerateSHA256String(pInput));
+            Byte[] passwordBytes = Encoding.UTF8.GetBytes(strKey);
+            passwordBytes = SHA256.Create().ComputeHash(passwordBytes);
+            Byte[] encryptedBytes = null;
+            Byte[] saltBytes = new Byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
+            using (MemoryStream ms = new MemoryStream())
+            {
+                using (RijndaelManaged AES = new RijndaelManaged())
+                {
+                    AES.KeySize = 256;
+                    AES.BlockSize = 128;
+                    Rfc2898DeriveBytes key = new Rfc2898DeriveBytes(passwordBytes, saltBytes, 1000);
+                    AES.Key = key.GetBytes(AES.KeySize / 8);
+                    AES.IV = key.GetBytes(AES.BlockSize / 8);
+                    AES.Mode = CipherMode.CBC;
+                    using (CryptoStream cs = new CryptoStream(ms, AES.CreateEncryptor(), CryptoStreamMode.Write))
+                    {
+                        cs.Write(bytesToBeEncrypted, 0, bytesToBeEncrypted.Length);
+                        cs.Close();
+                    }
+                    encryptedBytes = ms.ToArray();
+                    result = Convert.ToBase64String(encryptedBytes);
+                }
+            }
+            return result;
+        }
+        public string GenerateSHA256String(string inputString)
+        {
+            SHA256 sha256 = SHA256Managed.Create();
+            Byte[] bytes = Encoding.UTF8.GetBytes(inputString);
+            Byte[] hash = sha256.ComputeHash(bytes);
+            StringBuilder stringBuilder = new StringBuilder();
+            for (int i = 0; i <= hash.Length - 1; i++)
+            {
+                stringBuilder.Append(hash[i].ToString("X2"));
+            }
+            return stringBuilder.ToString();
+        }
+
+        private void UpdateConfirmWebStatus(string clientCd, SqlConnection objConnection)
+        {
+            if (Convert.ToInt16(fnFireQueryTradeWeb(
+                    "sysobjects a,syscolumns b",
+                    "count(0)",
+                    "a.id=b.id and b.name = 'cm_confirmwebyn' and a.name",
+                    "Client_master",
+                    true,
+                    objConnection)) == 0)
+            {
+                return;
+            }
+
+            DataTable dtClient = OpenDataTable(
+                "select cm_freezeyn, cm_confirmwebyn from client_master with (NoLock) where cm_cd='" + clientCd + "'",
+                objConnection);
+
+            DataTable dtClientNominee = OpenDataTable(
+                "select ISNULL(cn_polexpval,'') cn_polexpval from Client_Nominee with (NoLock) where cn_cd='" + clientCd + "'",
+                objConnection);
+
+            string strClosedDate = dtClientNominee.Rows.Count > 0
+                ? dtClientNominee.Rows[0]["cn_polexpval"].ToString().Trim()
+                : string.Empty;
+
+            if (dtClient.Rows.Count > 0)
+            {
+                DataRow drClient = dtClient.Rows[0];
+
+                string strConfirmWebYN = drClient["cm_confirmwebyn"].ToString().Trim();
+                string strFreezeYN = drClient["cm_freezeyn"].ToString().Trim();
+
+                if (string.Equals(strConfirmWebYN, "L") &&
+                    !string.Equals(strFreezeYN, "Y") &&
+                    string.IsNullOrEmpty(strClosedDate))
+                {
+                    ExecuteSQL(
+                        "update client_master set cm_confirmwebyn='Y' where cm_cd='" + clientCd + "'",
+                        objConnection);
                 }
             }
         }
 
+        private static readonly HashSet<string> RefNameFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "RefName", "TemplateName" };
 
+        private static readonly Regex RefNamePattern = new Regex(@"^[A-Za-z0-9 _\-]{1,100}$", RegexOptions.Compiled);
+
+        private static readonly HashSet<string> PlainFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "EmailSubject", "ReportingEmailSubject" };
+
+        private static readonly HashSet<string> HtmlFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "BodyText", "ReportingEmailBody" };
+
+        private static readonly HashSet<string> EmailFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "ReportingEmailID", "CCEmail", "BCCEmailid" };
+
+        /// Sanitizes X_Data in place. Returns validation errors (empty = OK).
+        public List<string> SanitizeXData(XmlNode root)
+        {
+            var errors = new List<string>();
+            var elements = root.SelectNodes(".//*").Cast<XmlElement>().ToList();
+
+            foreach (var el in elements)
+            {
+                if (el.ChildNodes.OfType<XmlElement>().Any())
+                    continue;   // container like <items>
+
+                string original = el.InnerText;
+
+                if (RefNameFields.Contains(el.Name))
+                {
+                    if (!RefNamePattern.IsMatch(original ?? ""))
+                        errors.Add($"{el.Name} must be 1-100 characters: letters, numbers, spaces, hyphens or underscores only.");
+                }
+                else if (PlainFields.Contains(el.Name))
+                {
+                    string clean = StripHtml(original);
+                    if (!string.IsNullOrWhiteSpace(original) && string.IsNullOrWhiteSpace(clean))
+                        errors.Add($"{el.Name} contains invalid content.");
+                    else
+                        el.InnerText = clean;
+                }
+                else if (HtmlFields.Contains(el.Name))
+                {
+                    string clean = SanitizeHtml(original);
+                    if (!string.IsNullOrWhiteSpace(original) && string.IsNullOrWhiteSpace(clean))
+                        errors.Add($"{el.Name} contains invalid content.");
+                    else
+                        el.InnerText = clean;
+                }
+                else if (EmailFields.Contains(el.Name) && !AreValidEmails(original))
+                {
+                    errors.Add($"{el.Name} contains an invalid email address.");
+                }
+            }
+            return errors;
+        }
+
+        private static string StripHtml(string input)
+        {
+            if (string.IsNullOrEmpty(input)) return input;
+
+            var s = new HtmlSanitizer();
+            s.AllowedTags.Clear();
+            s.AllowedAttributes.Clear();
+            s.AllowedCssProperties.Clear();
+            s.AllowedSchemes.Clear();
+
+            // Sanitize() returns HTML-serialized text (& becomes &amp;), so decode it back to plain text
+            string text = WebUtility.HtmlDecode(s.Sanitize(input));
+
+            return Regex.Replace(text, @"[\r\n]+", " ").Trim();   // also blocks header-style newlines
+        }
+
+        public static string SanitizeHtml(string input)
+        {
+            if (string.IsNullOrEmpty(input)) return input;
+
+            var s = new HtmlSanitizer();
+            s.AllowedAttributes.Add("style");
+            foreach (var a in new[] { "bgcolor", "cellpadding", "cellspacing", "align", "valign", "width", "height", "border" })
+                s.AllowedAttributes.Add(a);
+            foreach (var c in new[] { "color", "background-color", "font-family", "font-size", "font-weight",
+                              "text-align", "padding", "margin", "border", "width", "height" })
+                s.AllowedCssProperties.Add(c);
+
+            // 1. Run the normal HTML Sanitizer logic
+            string sanitized = s.Sanitize(input);
+
+            // 2. FIX: Convert structural double quotes inside HTML tags to single quotes.
+            // This turns: <div style="color: red;"> into <div style='color: red;'>
+            // Which safely coexists inside a standard double-quoted JSON property string.
+            string safeSqlHtml = Regex.Replace(sanitized, @"<[^>]+>", match =>
+            {
+                return match.Value.Replace("\"", "''");
+            });
+
+            return safeSqlHtml;
+        }
+
+        private static bool AreValidEmails(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return true;   // optional field
+
+            foreach (var part in value.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string candidate = part.Trim();
+                try
+                {
+                    // Address != candidate rejects display-name forms like "Name <a@b.com>"
+                    if (new MailAddress(candidate).Address != candidate) return false;
+                }
+                catch (FormatException) { return false; }
+            }
+            return true;
+        }
+
+        public string S(DataRow r, string col, string fallback = "")
+        {
+            if (!r.Table.Columns.Contains(col)) return fallback;
+
+            var v = r[col];
+            if (v == null || v == DBNull.Value) return fallback;
+            if (v is DateTime d) return d.ToString("dd/MM/yyyy");
+
+            var s = Convert.ToString(v)?.Trim() ?? "";
+            return s.Length == 0 ? fallback : s;
+        }
+
+        public byte[] Protect(byte[] pdfBytes, string userPassword, string ownerPassword)
+        {
+            var reader = new PdfReader(pdfBytes);
+            try
+            {
+                using (var output = new MemoryStream())
+                {
+                    var stamper = new PdfStamper(reader, output);
+                    try
+                    {
+                        stamper.Writer.CloseStream = false; // keep MemoryStream usable after Close()
+
+                        stamper.SetEncryption(
+                            PdfWriter.ENCRYPTION_AES_128,   // or ENCRYPTION_AES_256
+                            userPassword,                   // needed to open the file
+                            ownerPassword,                  // needed to change permissions
+                            PdfWriter.ALLOW_PRINTING);      // permissions; use 0 to deny everything
+                    }
+                    finally
+                    {
+                        stamper.Close(); // must close before reading the output
+                    }
+                    return output.ToArray();
+                }
+            }
+            finally
+            {
+                reader.Close();
+            }
+        }
     }
 
 }

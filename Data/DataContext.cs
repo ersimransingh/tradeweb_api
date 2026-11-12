@@ -29,7 +29,7 @@ namespace TradeWeb.API.Data
         }
 
         // TODO : Configure connection.
-        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        /*protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
             if (!optionsBuilder.IsConfigured)
             {
@@ -49,7 +49,7 @@ namespace TradeWeb.API.Data
                 }
                 optionsBuilder.UseSqlServer(connection);
             }
-        }
+        }*/
         // TODO : Read appsetting.json file to make a connection from DB
         public class DataSettingsManager
         {

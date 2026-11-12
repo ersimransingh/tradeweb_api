@@ -1,4 +1,4 @@
-//#import "@preview/oxifmt:0.2.1": strfmt
+﻿//#import "@preview/oxifmt:0.2.1": strfmt
 
 // oxifmt v0.2.1
 
@@ -798,7 +798,7 @@ parameter := argument '$'
         rows: 1,
         gutter: 1pt,
         align: center,
-        grid.cell(image("../Assets/CompanyLogo.png", width: 50%)),
+        grid.cell(image("../Assets/CompanyLogo.png")),
       
         grid[
           #text(companyJson.CompanyName, weight: "bold", size: 4mm) \
@@ -851,12 +851,19 @@ parameter := argument '$'
           pagebreak()
         }
       }
+	  
+ 	        v(1fr)
+            
+
+		let rptName = companyJson.at("ReportFooter", default: "").trim()
+		text(rptName, 9pt)
+	  
 }
 
 
+#let fontName = companyJson.at("FontName", default: "Arial").trim()
+#set text(8pt, font: fontName)
 
-
-#set text(8pt, font: "Arial")
 #show table.cell.where(y: 0): set text(weight: "bold")
 #set table(
   fill: (x, y) => if y == 0 { gray.lighten(40%) },

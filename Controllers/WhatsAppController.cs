@@ -3,13 +3,12 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
-using Newtonsoft.Json;
 using System;
 using System.Data;
-using TradeWeb.API.Data;
 using TradeWeb.API.Models;
 using TradeWeb.API.Repository;
 using TradeWeb.Service;
+using Newtonsoft.Json;
 
 namespace TradeWeb.API.Controllers
 {
@@ -18,13 +17,13 @@ namespace TradeWeb.API.Controllers
     public class WhatsAppController : Controller
     {
         #region Class level declarations.
-        private readonly UserManager<AppUser> _userManager;
+        //private readonly UserManager<AppUser> _userManager;
         private readonly IConfiguration _configuration;
         private readonly UtilityCommon objUtility;
         private readonly WhatsAppRepository objRepository;
         private readonly IWhatsAppRepository _whatsAppRepository;
         private readonly IHttpContextAccessor _httpContextAccessor;
-        private readonly SignInManager<AppUser> _signInManager;
+        //private readonly SignInManager<AppUser> _signInManager;
         private readonly IWebHostEnvironment _environment;
 
         private string strsql = "";
@@ -34,13 +33,13 @@ namespace TradeWeb.API.Controllers
         #endregion
 
         #region Constructor
-        public WhatsAppController(UserManager<AppUser> userManager, IConfiguration configuration, UtilityCommon objUtility, IHttpContextAccessor httpContextAccessor, SignInManager<AppUser> signInManager, IWhatsAppRepository whatsAppRepository, IWebHostEnvironment environment)
+        public WhatsAppController(IConfiguration configuration, UtilityCommon objUtility, IHttpContextAccessor httpContextAccessor, IWhatsAppRepository whatsAppRepository, IWebHostEnvironment environment)
         {
-            _userManager = userManager;
+            //_userManager = userManager;
             _configuration = configuration;
             this.objUtility = objUtility;
             _httpContextAccessor = httpContextAccessor;
-            _signInManager = signInManager;
+            //_signInManager = signInManager;
             _whatsAppRepository = whatsAppRepository;
             _environment = environment;
         }

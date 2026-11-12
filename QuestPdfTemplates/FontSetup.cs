@@ -1,6 +1,6 @@
+﻿using QuestPDF.Drawing;
 using System;
 using System.IO;
-using QuestPDF.Drawing;
 
 namespace TradeWeb.API.QuestPdfTemplates
 {

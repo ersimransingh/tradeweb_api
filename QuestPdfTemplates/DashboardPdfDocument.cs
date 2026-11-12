@@ -1,12 +1,12 @@
+﻿using QuestPDF.Fluent;
+using QuestPDF.Helpers;
+using QuestPDF.Infrastructure;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using QuestPDF.Fluent;
-using QuestPDF.Helpers;
-using QuestPDF.Infrastructure;
 using TradeWeb.API.Models;
 
 namespace TradeWeb.API.QuestPdfTemplates
@@ -268,72 +268,72 @@ namespace TradeWeb.API.QuestPdfTemplates
                 .Shadow(new BoxShadowStyle { OffsetX = 0, OffsetY = 1, Blur = 3, Spread = 0, Color = Colors.Grey.Lighten2 })
                 .Padding(12)
                 .Column(col =>
-            {
-                col.Item().Text(tab.TabName ?? "").Bold().FontSize(12).FontColor(ThemePrimary);
-                col.Item().PaddingTop(4).PaddingBottom(8).Height(1.5f).Background(ThemePrimary);
-
-                var view = TabView.Build(tab);
-                if (view.Columns.Count == 0)
                 {
-                    col.Item().PaddingTop(3).Text("No data available").FontSize(8).FontColor(Colors.Grey.Medium);
-                    return;
-                }
+                    col.Item().Text(tab.TabName ?? "").Bold().FontSize(12).FontColor(ThemePrimary);
+                    col.Item().PaddingTop(4).PaddingBottom(8).Height(1.5f).Background(ThemePrimary);
 
-                // Table always gets the tab's full width, whether or not it has charts.
-                col.Item().Element(c => ComposeReportTable(c, view, TabContentWidth));
-
-                var charts = tab.Setting?.PdfCharts ?? new List<PdfChartConfig>();
-                if (charts.Count == 0)
-                    return;
-
-                var rows = tab.Rows ?? new List<Dictionary<string, JsonElement>>();
-
-                // Charts sit on their own line(s) below the table (not beside it) - a wide
-                // table sitting next to a short chart stack left a large dead gap where the
-                // table's cell had already finished but the row stayed tall to match the
-                // charts. The grid is always 3 slots wide - every card is sized as if the
-                // row were full (TabContentWidth / 3), even when fewer than 3 charts are
-                // present, so a lone chart takes a single 1/2-width slot and leaves the
-                // rest of the row blank instead of stretching to fill it. A 3rd+ chart
-                // wraps to another row of up to 2.
-                // Was 3 - squeezed each chart (and its pie labels/legend) down to a size
-                // where text got cramped; 2 per row gives each chart noticeably more room.
-                const float chartGap = 12f;
-                const float chartInset = 6f;
-                const int chartsPerRow = 2;
-                float chartCardWidth = (TabContentWidth - (chartsPerRow - 1) * chartGap) / chartsPerRow;
-
-                // The SVG must be generated at exactly the size QuestPDF hands it after
-                // padding is subtracted (Border() draws on the edge without consuming extra
-                // layout space) - its Svg element fits to width and then requires the
-                // matching height, so a mismatched container height can never be satisfied
-                // (throws a layout error).
-                float chartSvgWidth = chartCardWidth - 2 * chartInset;
-                float chartSvgHeight = chartSvgWidth * 180f / 260f; // ChartSvgBuilder's baseline aspect ratio
-
-                for (int i = 0; i < charts.Count; i += chartsPerRow)
-                {
-                    var rowCharts = charts.Skip(i).Take(chartsPerRow).ToList();
-
-                    col.Item().PaddingTop(10).Row(row =>
+                    var view = TabView.Build(tab);
+                    if (view.Columns.Count == 0)
                     {
-                        for (int j = 0; j < rowCharts.Count; j++)
-                        {
-                            if (j > 0)
-                                row.ConstantItem(chartGap);
+                        col.Item().PaddingTop(3).Text("No data available").FontSize(8).FontColor(Colors.Grey.Medium);
+                        return;
+                    }
 
-                            row.ConstantItem(chartCardWidth)
-                                .Background(ThemeCardBackground).Border(1).BorderColor(ThemeBorder).CornerRadius(6, Unit.Point)
-                                .Padding(chartInset).Height(chartSvgHeight).Element(c =>
+                    // Table always gets the tab's full width, whether or not it has charts.
+                    col.Item().Element(c => ComposeReportTable(c, view, TabContentWidth));
+
+                    var charts = tab.Setting?.PdfCharts ?? new List<PdfChartConfig>();
+                    if (charts.Count == 0)
+                        return;
+
+                    var rows = tab.Rows ?? new List<Dictionary<string, JsonElement>>();
+
+                    // Charts sit on their own line(s) below the table (not beside it) - a wide
+                    // table sitting next to a short chart stack left a large dead gap where the
+                    // table's cell had already finished but the row stayed tall to match the
+                    // charts. The grid is always 3 slots wide - every card is sized as if the
+                    // row were full (TabContentWidth / 3), even when fewer than 3 charts are
+                    // present, so a lone chart takes a single 1/2-width slot and leaves the
+                    // rest of the row blank instead of stretching to fill it. A 3rd+ chart
+                    // wraps to another row of up to 2.
+                    // Was 3 - squeezed each chart (and its pie labels/legend) down to a size
+                    // where text got cramped; 2 per row gives each chart noticeably more room.
+                    const float chartGap = 12f;
+                    const float chartInset = 6f;
+                    const int chartsPerRow = 2;
+                    float chartCardWidth = (TabContentWidth - (chartsPerRow - 1) * chartGap) / chartsPerRow;
+
+                    // The SVG must be generated at exactly the size QuestPDF hands it after
+                    // padding is subtracted (Border() draws on the edge without consuming extra
+                    // layout space) - its Svg element fits to width and then requires the
+                    // matching height, so a mismatched container height can never be satisfied
+                    // (throws a layout error).
+                    float chartSvgWidth = chartCardWidth - 2 * chartInset;
+                    float chartSvgHeight = chartSvgWidth * 180f / 260f; // ChartSvgBuilder's baseline aspect ratio
+
+                    for (int i = 0; i < charts.Count; i += chartsPerRow)
+                    {
+                        var rowCharts = charts.Skip(i).Take(chartsPerRow).ToList();
+
+                        col.Item().PaddingTop(10).Row(row =>
+                        {
+                            for (int j = 0; j < rowCharts.Count; j++)
                             {
-                                var svg = BuildChartSvg(rowCharts[j], rows, view, chartSvgWidth, chartSvgHeight);
-                                if (svg != null)
-                                    c.Svg(svg);
-                            });
-                        }
-                    });
-                }
-            });
+                                if (j > 0)
+                                    row.ConstantItem(chartGap);
+
+                                row.ConstantItem(chartCardWidth)
+                                    .Background(ThemeCardBackground).Border(1).BorderColor(ThemeBorder).CornerRadius(6, Unit.Point)
+                                    .Padding(chartInset).Height(chartSvgHeight).Element(c =>
+                                    {
+                                        var svg = BuildChartSvg(rowCharts[j], rows, view, chartSvgWidth, chartSvgHeight);
+                                        if (svg != null)
+                                            c.Svg(svg);
+                                    });
+                            }
+                        });
+                    }
+                });
         }
 
         private void ComposeReportTable(IContainer container, TabView view, float referenceBudget)

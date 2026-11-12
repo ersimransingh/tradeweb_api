@@ -3,19 +3,19 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Data;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Net;
-using System.Security.Claims;
-using System.Threading.Tasks;
 using TradeWeb.API.Data;
 using TradeWeb.API.Repository;
 using TradeWeb.Service;
+using Microsoft.AspNetCore.Mvc.Filters;
+using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
+using System.Security.Claims;
 
 namespace TradeWeb.API.Controllers
 {

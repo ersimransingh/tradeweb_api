@@ -34,7 +34,7 @@ namespace TradeWeb.API.Controllers
 
         #region Agreement Api
         // TODO : Get Family Page_Load Data
-        //[Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
+        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
         [HttpGet("GetAgreementPdf", Name = "GetAgreementPdf")]
         public IActionResult GetAgreementPdf()
         {

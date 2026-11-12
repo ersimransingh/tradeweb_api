@@ -1,14 +1,15 @@
-using Fernet;
+﻿using Fernet;
+using MailKit;
+using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Data.SqlClient;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.VisualBasic;
 using Microsoft.VisualBasic.CompilerServices;
@@ -19,64 +20,143 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Net.Mail;
+using System.Net.Sockets;
+using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using System.Security;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
-using TradeWeb.API.Data;
+using TradeWeb.API.Filters;
 using TradeWeb.API.Models;
-using TradeWeb.API.QuestPdfServicesClass;
 using TradeWeb.API.Repository;
-using TradeWeb.Entity;
+using TradeWeb.API.Service;
 using TradeWeb.Service;
+using static TradeWeb.API.Startup;
 using Formatting = Newtonsoft.Json.Formatting;
 
 namespace TradeWeb.API.Controllers
 {
+    public class ValidateUser : ActionFilterAttribute
+    {
+        private readonly string _expectedRole;
+
+        public ValidateUser(string expectedRole)
+        {
+            _expectedRole = expectedRole;
+        }
+
+        public override async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
+        {
+            var token = context.HttpContext.Request.Headers["Authorization"].FirstOrDefault()?.Split(" ").Last();
+
+            var userInfo = GetUserInfoFromToken(token);
+            var userId = userInfo?.Username;
+            var role = userInfo?.Role;
+
+            if (_expectedRole == "TradeWeb" && role != "EstroWeb" && role != "Admin" && role != "Branch")
+            {
+                await next(); // Skip validation and continue
+                return;
+            }
+
+            // Resolve TokenStore from the DI container manually
+            var tokenStore = context.HttpContext.RequestServices.GetRequiredService<TokenStore>();
+
+            if (_expectedRole == "TradeMobile")
+            {
+                if (!string.IsNullOrEmpty(userId) && !tokenStore.IsTokenValid(userId, token) && role != "TradeMobileFP")
+                {
+                    context.HttpContext.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    await context.HttpContext.Response.WriteAsync("Invalid Token: Concurrent login detected.");
+                    return;
+                }
+            }
+            else if (_expectedRole == "TradeWeb")
+            {
+                if (!string.IsNullOrEmpty(userId) && !tokenStore.IsTokenValid(userId, token))
+                {
+                    context.Result = new UnauthorizedObjectResult("Concurrent login detected or session expired.");
+                    return;
+                }
+            }
+
+            await next(); // Proceed to the next middleware
+        }
+
+        private JwtUserInfo GetUserInfoFromToken(string token)
+        {
+            var handler = new JwtSecurityTokenHandler();
+            var jsonToken = handler.ReadToken(token) as JwtSecurityToken;
+
+            return new JwtUserInfo
+            {
+                Username = jsonToken?.Claims.FirstOrDefault(c => c.Type == "username")?.Value,
+                Role = jsonToken?.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value
+            };
+        }
+
+        public class JwtUserInfo
+        {
+            public string Username { get; set; }
+            public string Role { get; set; }
+        }
+    }
+
     [Route("api/[controller]")]
     [ApiController]
     public class MainController : BaseController
     {
         #region Class level declarations.
-        private readonly Microsoft.AspNetCore.Identity.UserManager<AppUser> _userManager;
+        //private readonly Microsoft.AspNetCore.Identity.UserManager<AppUser> _userManager;
         private readonly IConfiguration _configuration;
         private readonly UtilityCommon objUtility;
         private readonly ITradeWebRepository _tradeWebRepository;
         private readonly IHttpContextAccessor _httpContextAccessor;
-        private readonly SignInManager<AppUser> _signInManager;
+        //private readonly SignInManager<AppUser> _signInManager;
         private readonly IWebHostEnvironment _environment;
         private readonly TokenStore _tokenStore;
+        private readonly string _connStr;
+        private readonly E2EKeyService _e2eKeyService;
+        private readonly DigitalEmailService _svc;              // new
+        private readonly Channel<DigitalEmailJob> _channel;     // new
 
         private string strsql = "";
         ConvertData returnJson = new ConvertData();
         DataTable returnDt = new DataTable();
         private string strAPIVersion = "2.0.0.1";
-
+        public const string UtcDateTimeFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
 
         #endregion
 
         #region Constructor
-        public MainController(Microsoft.AspNetCore.Identity.UserManager<AppUser> userManager, IConfiguration configuration, UtilityCommon objUtility, IHttpContextAccessor httpContextAccessor, SignInManager<AppUser> signInManager, ITradeWebRepository tradeWebRepository, IWebHostEnvironment environment, TokenStore tokenStore)
+        public MainController(IConfiguration configuration, UtilityCommon objUtility, IHttpContextAccessor httpContextAccessor, ITradeWebRepository tradeWebRepository, IWebHostEnvironment environment, TokenStore tokenStore, ConnectionString connectionString, E2EKeyService e2eKeyService,
+            DigitalEmailService svc, Channel<DigitalEmailJob> channel)
         {
-            _userManager = userManager;
+            //_userManager = userManager;
             _configuration = configuration;
             this.objUtility = objUtility;
             _httpContextAccessor = httpContextAccessor;
-            _signInManager = signInManager;
+            //_signInManager = signInManager;
             _tradeWebRepository = tradeWebRepository;
             _environment = environment;
             _tokenStore = tokenStore;
+            _connStr = connectionString.Default;
+            _e2eKeyService = e2eKeyService;
+            _svc = svc;
+            _channel = channel;
         }
         #endregion
 
@@ -146,18 +226,14 @@ namespace TradeWeb.API.Controllers
             }
         }*/
 
-        #region API Methods
-
-        #region Login
-
-
         public class EncryptResponseAttribute : ActionFilterAttribute
         {
             private readonly byte[] _key;
             private readonly bool _blnEncrypt;
             private readonly byte[] _cryptoKey;
+            private readonly E2EKeyService _e2eKeyService;
 
-            public EncryptResponseAttribute(IConfiguration config, UtilityCommon objutility)
+            public EncryptResponseAttribute(IConfiguration config, UtilityCommon objutility, E2EKeyService e2eKeyService)
             {
                 string encKey = objutility.Decrypt(config["fernetKey"]);
                 _key = Base64UrlDecode(encKey);
@@ -170,10 +246,33 @@ namespace TradeWeb.API.Controllers
                 {
                     _blnEncrypt = objutility.GetSysParmSt("APIENCDATA", "") == "Y";
                 }
+
+                _e2eKeyService = e2eKeyService;
             }
 
             public override void OnActionExecuted(ActionExecutedContext context)
             {
+                // E2E encryption takes precedence when the client sent an ECDH public key.
+                if (context.HttpContext.Items.TryGetValue(E2EDecryptFilter.E2EContextKey, out var e2eObj) && e2eObj is E2EContext e2eContext)
+                {
+                    if (context.Result is ObjectResult objectResult)
+                    {
+                        string plainJson = objectResult.Value is string s
+                            ? s
+                            : JsonConvert.SerializeObject(objectResult.Value, Formatting.None);
+
+                        string encryptedToken = E2EEncryptionHelper.Encrypt(e2eContext.AesKey, plainJson);
+
+                        context.HttpContext.Response.Headers[E2EEncryptionHelper.PublicKeyHeader] = Convert.ToBase64String(_e2eKeyService.PublicKey);
+
+                        context.Result = new JsonResult(new { data = encryptedToken })
+                        {
+                            StatusCode = objectResult.StatusCode ?? StatusCodes.Status200OK
+                        };
+                    }
+                    return;
+                }
+
                 var blnSkip = context.HttpContext.Items["Option"]?.ToString() == "InitializeLogin";
                 var blnMobile = context.HttpContext.Items["TradeMobile"]?.ToString() == "Y";
                 if (blnSkip)
@@ -182,16 +281,16 @@ namespace TradeWeb.API.Controllers
                     return;
                 }
 
-                if (_blnEncrypt && context.Result is ObjectResult objectResult)
+                if (_blnEncrypt && context.Result is ObjectResult objectResultLegacy)
                 {
                     string plainJson;
-                    if (objectResult.Value is string s)
+                    if (objectResultLegacy.Value is string s)
                     {
                         plainJson = s;
                     }
                     else
                     {
-                        plainJson = JsonConvert.SerializeObject(objectResult.Value, Formatting.None);
+                        plainJson = JsonConvert.SerializeObject(objectResultLegacy.Value, Formatting.None);
                     }
 
                     string encryptedToken = "";
@@ -210,7 +309,7 @@ namespace TradeWeb.API.Controllers
                     // preserve the original status code
                     context.Result = new JsonResult(new { data = encryptedToken })
                     {
-                        StatusCode = objectResult.StatusCode ?? StatusCodes.Status200OK
+                        StatusCode = objectResultLegacy.StatusCode ?? StatusCodes.Status200OK
                     };
                 }
             }
@@ -238,7 +337,7 @@ namespace TradeWeb.API.Controllers
             {
                 try
                 {
-                    var getData = "12/05/2026 10:00 AM";
+                    var getData = "05/11/2026 15:15 PM";
 
                     return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
 
@@ -251,919 +350,508 @@ namespace TradeWeb.API.Controllers
             return BadRequest();
         }
 
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpPost("UserProfile", Name = "UserProfile")]
-        public IActionResult Home_UserProfile()
+        [AllowAnonymous]
+        [HttpGet("E2EPublicKey", Name = "E2EPublicKey")]
+        public IActionResult E2EPublicKey()
         {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var tokenS = GetToken();
-                    var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
-                    var getData = _tradeWebRepository.GetUserDetais(userId);
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
+            return Ok(new { publicKey = Convert.ToBase64String(_e2eKeyService.PublicKey) });
         }
 
-        /// <summary>
-        /// Login validate USER
-        /// </summary>
-        /// <param name="userId"></param>/param>
-        /// <returns></returns>
-        [HttpPost("Login_validate_USER", Name = "Login_validate_USER")]
-        public IActionResult Login_validate_USER(string userId)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    userId = objUtility.mfnReplaceForSQLInjection(userId);
-                    var getData = _tradeWebRepository.Login_validate_USER(userId);
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
+        //[HttpPost("Login_validate_Password", Name = "Login_validate_Password")]
+        //public async Task<IActionResult> Login_validate_Password(string userId, string password, string ePassword, string key, string loginAs, string product, string ICPV, string feature = null)
+        //{
+        //    if (ModelState.IsValid)
+        //    {
+        //        try
+        //        {
+        //            string strDebug = string.IsNullOrWhiteSpace(_configuration["DebugLog"]) ? "" : _configuration["DebugLog"].Trim();
+        //            if (strDebug == "Y")
+        //            {
+        //                var jsonObject = new
+        //                {
+        //                    userId,
+        //                    password,
+        //                    ePassword,
+        //                    key,
+        //                    loginAs,
+        //                    product,
+        //                    ICPV
+        //                };
 
+        //                string jsonString = JsonConvert.SerializeObject(jsonObject);
+        //                objUtility.InsertLog(jsonString, "");
+        //            }
 
-        /// <summary>
-        /// Login validate Password
-        /// </summary>
-        /// <param name="userId"></param>
-        /// <param name="password"></param>
-        /// <returns></returns>
-        [HttpPost("Login_validate_Password", Name = "Login_validate_Password")]
-        public IActionResult Login_validate_Password(string userId, string password, string ePassword, string key, string loginAs, string product, string ICPV, string feature = null)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    string strDebug = string.IsNullOrWhiteSpace(_configuration["DebugLog"]) ? "" : _configuration["DebugLog"].Trim();
-                    if (strDebug == "Y")
-                    {
-                        var jsonObject = new
-                        {
-                            userId,
-                            password,
-                            ePassword,
-                            key,
-                            loginAs,
-                            product,
-                            ICPV
-                        };
+        //            userId = objUtility.mfnReplaceForSQLInjection(userId);
+        //            password = objUtility.mfnReplaceForSQLInjection(password);
+        //            ePassword = objUtility.mfnReplaceForSQLInjection(ePassword);
+        //            key = objUtility.mfnReplaceForSQLInjection(key);
+        //            loginAs = objUtility.mfnReplaceForSQLInjection(loginAs);
+        //            product = objUtility.mfnReplaceForSQLInjection(product);
+        //            string strICPV = string.IsNullOrWhiteSpace(ICPV) ? "" : ICPV;
+        //            string strFeature = string.IsNullOrWhiteSpace(feature) ? "" : feature;
+        //            string strParmICPV = objUtility.fnchkTable("WebParameter") ? objUtility.GetWebParameter("ICPV") : "";
+        //            bool keyBased = false;
+        //            bool branch = false;
+        //            var role = "";
+        //            string strMobileVer = "";
 
-                        string jsonString = JsonConvert.SerializeObject(jsonObject);
-                        objUtility.InsertLog(jsonString, "");
-                    }
+        //            if (!string.IsNullOrWhiteSpace(loginAs) && loginAs.Substring(0, 1) == "M")
+        //            {
+        //                if (loginAs.Contains("~"))
+        //                {
+        //                    string[] parts = loginAs.Split('~');
+        //                    strMobileVer = parts[1];
+        //                    loginAs = parts[0];
+        //                }
 
-                    userId = objUtility.mfnReplaceForSQLInjection(userId);
-                    password = objUtility.mfnReplaceForSQLInjection(password);
-                    ePassword = objUtility.mfnReplaceForSQLInjection(ePassword);
-                    key = objUtility.mfnReplaceForSQLInjection(key);
-                    loginAs = objUtility.mfnReplaceForSQLInjection(loginAs);
-                    product = objUtility.mfnReplaceForSQLInjection(product);
-                    string strICPV = string.IsNullOrWhiteSpace(ICPV) ? "" : ICPV;
-                    string strFeature = string.IsNullOrWhiteSpace(feature) ? "" : feature;
-                    string strParmICPV = objUtility.fnchkTable("WebParameter") ? objUtility.GetWebParameter("ICPV") : "";
-                    bool keyBased = false;
-                    bool branch = false;
-                    var role = "";
-                    string strMobileVer = "";
+        //                if (strMobileVer != "2.0.0.1" && objUtility.GetWebParameter("SMS2FA").Trim() != "")
+        //                {
+        //                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "You are currently using an older version. Please update to the latest version.", returnDt, ""));
+        //                }
+        //            }
 
-                    if (!string.IsNullOrWhiteSpace(loginAs) && loginAs.Substring(0, 1) == "M")
-                    {
-                        if (loginAs.Contains("~"))
-                        {
-                            string[] parts = loginAs.Split('~');
-                            strMobileVer = parts[1];
-                            loginAs = parts[0];
-                        }
+        //            if (string.IsNullOrWhiteSpace(product))
+        //            {
+        //                product = "T";
+        //            }
+        //            product = product.ToUpper().Trim();
 
-                        if (strMobileVer != "2.0.0.1" && objUtility.GetWebParameter("SMS2FA").Trim() != "")
-                        {
-                            return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "You are currently using an older version. Please update to the latest version.", returnDt, ""));
-                        }
-                    }
+        //            if (!string.IsNullOrWhiteSpace(key) && (objUtility.isBPT() || (strICPV == "Y" && strParmICPV == "Y")))
+        //            {
+        //                keyBased = true;
+        //            }
+        //            if (string.IsNullOrWhiteSpace(loginAs))
+        //            {
+        //                loginAs = "C";
+        //            }
+        //            if (loginAs.Trim() == "B")
+        //            {
+        //                branch = true;
+        //            }
+        //            var autResp = _tradeWebRepository.Login_API_Authorize(key, product, loginAs, feature);
+        //            if (autResp == null || autResp == "")
+        //            {
+        //                if (!string.IsNullOrWhiteSpace(key))
+        //                {
+        //                    string encKey = _configuration["encKey"];
+        //                    encKey = objUtility.Decrypt(encKey);
+        //                    encKey = encKey + DateTime.Now.ToString("yyyyMMdd");
+        //                    var keybytes = Encoding.UTF8.GetBytes(encKey);
+        //                    var iv = Encoding.UTF8.GetBytes(encKey);
+        //                    var encrypted = Convert.FromBase64String(key);
+        //                    var decriptedFromJavascript = DecryptStringFromBytes(encrypted, keybytes, iv);
+        //                    key = string.Format(decriptedFromJavascript);
+        //                }
+        //                autResp = _tradeWebRepository.Login_API_Authorize(key, product, loginAs, feature);
+        //                if (autResp == null || autResp == "")
+        //                {
+        //                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "You are not authorise to use TradeWebAPI Web Service,Please contact SecMark.", returnDt, ""));
+        //                }
+        //            }
+        //            switch (autResp)
+        //            {
+        //                case "BPI":
+        //                    role = "Admin";
+        //                    break;
+        //                case "TBL":
+        //                    role = "Admin";
+        //                    break;
+        //                case "INP":
+        //                    role = "GainLoss";
+        //                    break;
+        //                case "TBI":
+        //                    role = "Branch";
+        //                    break;
+        //                case "PBI":
+        //                    role = "Performance";
+        //                    break;
+        //                case "SUB":
+        //                    role = "Subscription";
+        //                    break;
+        //                case "TMB":
+        //                    role = "TradeMobile";
+        //                    break;
+        //                case "CBI":
+        //                    role = "CrossNet";
+        //                    break;
+        //                case "EBI":
+        //                    role = "EstroNet";
+        //                    break;
+        //                case "FUP":
+        //                    role = "FundPayout";
+        //                    break;
+        //                case "CLM":
+        //                    role = "CrossModification";
+        //                    break;
+        //                case "TPI":
+        //                    role = "ReKYC";
+        //                    break;
+        //                case "RKM":
+        //                    role = "ReKYC";
+        //                    break;
+        //                case "COM":
+        //                    role = "CommonAPI";
+        //                    break;
+        //                case "CMP":
+        //                    role = "ComAPI";
+        //                    break;
+        //                case "EBW":
+        //                    role = "EstroWeb";
+        //                    break;
+        //                case "CBW":
+        //                    role = "CrossWeb";
+        //                    break;
+        //            }
+        //            if (objUtility.mfnGetSysSplFeature("RKC") || objUtility.mfnGetSysSplFeature("RKM") || role == "ReKYC")
+        //            {
+        //                objUtility.CreateReKYCTables();
+        //                if (objUtility.GetWebParameter("TRADEPLUSTEMPDB") != "")
+        //                {
+        //                    string strDatabase = objUtility.GetWebParameter("TRADEPLUSTEMPDB").Trim();
+        //                    /*var dbCon = new DataContext();
+        //                    string connectionString = dbCon.Database.GetDbConnection().ConnectionString;*/
+        //                    Microsoft.Data.SqlClient.SqlConnectionStringBuilder builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(_connStr)
+        //                    {
+        //                        InitialCatalog = strDatabase
+        //                    };
+        //                    string newConnectionString = builder.ToString();
 
-                    if (string.IsNullOrWhiteSpace(product))
-                    {
-                        product = "T";
-                    }
-                    product = product.ToUpper().Trim();
+        //                    using (Microsoft.Data.SqlClient.SqlConnection sqlCon = new Microsoft.Data.SqlClient.SqlConnection(newConnectionString))
+        //                    {
+        //                        sqlCon.Open();
+        //                        objUtility.CheckSP("json", sqlCon);
+        //                        objUtility.CheckSP("ReKYC2", sqlCon);
+        //                    }
+        //                }
+        //                objUtility.CheckSP("ReKYC");
 
-                    if (!string.IsNullOrWhiteSpace(key) && (objUtility.isBPT() || (strICPV == "Y" && strParmICPV == "Y")))
-                    {
-                        keyBased = true;
-                    }
-                    if (string.IsNullOrWhiteSpace(loginAs))
-                    {
-                        loginAs = "C";
-                    }
-                    if (loginAs.Trim() == "B")
-                    {
-                        branch = true;
-                    }
-                    var autResp = _tradeWebRepository.Login_API_Authorize(key, product, loginAs, feature);
-                    if (autResp == null || autResp == "")
-                    {
-                        if (!string.IsNullOrWhiteSpace(key))
-                        {
-                            string encKey = _configuration["encKey"];
-                            encKey = objUtility.Decrypt(encKey);
-                            encKey = encKey + DateTime.Now.ToString("yyyyMMdd");
-                            var keybytes = Encoding.UTF8.GetBytes(encKey);
-                            var iv = Encoding.UTF8.GetBytes(encKey);
-                            var encrypted = Convert.FromBase64String(key);
-                            var decriptedFromJavascript = DecryptStringFromBytes(encrypted, keybytes, iv);
-                            key = string.Format(decriptedFromJavascript);
-                        }
-                        autResp = _tradeWebRepository.Login_API_Authorize(key, product, loginAs, feature);
-                        if (autResp == null || autResp == "")
-                        {
-                            return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "You are not authorise to use TradeWebAPI Web Service,Please contact SecMark.", returnDt, ""));
-                        }
-                    }
-                    switch (autResp)
-                    {
-                        case "BPI":
-                            role = "Admin";
-                            break;
-                        case "TBL":
-                            role = "Admin";
-                            break;
-                        case "INP":
-                            role = "GainLoss";
-                            break;
-                        case "TBI":
-                            role = "Branch";
-                            break;
-                        case "PBI":
-                            role = "Performance";
-                            break;
-                        case "SUB":
-                            role = "Subscription";
-                            break;
-                        case "TMB":
-                            role = "TradeMobile";
-                            break;
-                        case "CBI":
-                            role = "CrossNet";
-                            break;
-                        case "EBI":
-                            role = "EstroNet";
-                            break;
-                        case "FUP":
-                            role = "FundPayout";
-                            break;
-                        case "CLM":
-                            role = "CrossModification";
-                            break;
-                        case "TPI":
-                            role = "ReKYC";
-                            break;
-                        case "RKM":
-                            role = "ReKYC";
-                            break;
-                        case "COM":
-                            role = "CommonAPI";
-                            break;
-                        case "CMP":
-                            role = "ComAPI";
-                            break;
-                        case "EBW":
-                            role = "EstroWeb";
-                            break;
-                        case "CBW":
-                            role = "CrossWeb";
-                            break;
-                    }
-                    if (objUtility.mfnGetSysSplFeature("RKC") || objUtility.mfnGetSysSplFeature("RKM") || role == "ReKYC")
-                    {
-                        objUtility.CreateReKYCTables();
-                        if (objUtility.GetWebParameter("TRADEPLUSTEMPDB") != "")
-                        {
-                            string strDatabase = objUtility.GetWebParameter("TRADEPLUSTEMPDB").Trim();
-                            var dbCon = new DataContext();
-                            string connectionString = dbCon.Database.GetDbConnection().ConnectionString;
-                            Microsoft.Data.SqlClient.SqlConnectionStringBuilder builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString)
-                            {
-                                InitialCatalog = strDatabase
-                            };
-                            string newConnectionString = builder.ToString();
+        //            }
+        //            objUtility.CreateMrgpTables();
+        //            if (loginAs == "C" && product == "E") //For EstroWeb
+        //            {
+        //                if (objUtility.mfnGetSysSplFeatureDP("TBL") && role == "EstroWeb")
+        //                {
+        //                    objUtility.CreateTables(loginAs, product, "EstroWeb");
+        //                    objUtility.CheckSP("EstroWeb");
+        //                }
+        //                else if (objUtility.mfnGetSysSplFeatureDP("TBO") && role == "EstroWeb")
+        //                {
+        //                    objUtility.CreateTables(loginAs, product, "EstroWebOffline");
+        //                    objUtility.CheckSP("EstroWebO");
+        //                }
+        //                else
+        //                {
+        //                    objUtility.CreateTables(loginAs, product, "Estro");
+        //                    objUtility.CheckSP("Estro");
+        //                }
+        //            }
+        //            else if ((loginAs == "C" || loginAs == "B") && product == "C" && (role == "CrossWeb" || role == "CrossNet")) //For CrossWeb
+        //            {
+        //                if (objUtility.mfnGetSysSplFeatureDP("TBL") || role == "CrossNet")
+        //                {
+        //                    objUtility.CreateTables(loginAs, product, "CrossWeb");
+        //                    if (objUtility.GetWebParameter("TRADEPLUSTEMPDB") != "")
+        //                    {
+        //                        string strDatabase = objUtility.GetWebParameter("TRADEPLUSTEMPDB").Trim();
+        //                        //var dbCon = new DataContext();
+        //                        //string connectionString = dbCon.Database.GetDbConnection().ConnectionString;
+        //                        Microsoft.Data.SqlClient.SqlConnectionStringBuilder builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(_connStr)
+        //                        {
+        //                            InitialCatalog = strDatabase
+        //                        };
+        //                        string newConnectionString = builder.ToString();
 
-                            using (Microsoft.Data.SqlClient.SqlConnection sqlCon = new Microsoft.Data.SqlClient.SqlConnection(newConnectionString))
-                            {
-                                sqlCon.Open();
-                                objUtility.CheckSP("json", sqlCon);
-                                objUtility.CheckSP("ReKYC2", sqlCon);
-                            }
-                        }
-                        objUtility.CheckSP("ReKYC");
+        //                        using (Microsoft.Data.SqlClient.SqlConnection sqlCon = new Microsoft.Data.SqlClient.SqlConnection(newConnectionString))
+        //                        {
+        //                            sqlCon.Open();
+        //                            objUtility.CheckSP("json", sqlCon);
+        //                        }
+        //                    }
+        //                    objUtility.CheckSP("CrossWeb");
+        //                }
+        //                else if (objUtility.mfnGetSysSplFeatureDP("TBO"))
+        //                {
+        //                    objUtility.CreateTables(loginAs, product, "CrossWebOffline");
+        //                    objUtility.CheckSP("CrossWebO");
+        //                }
+        //            }
+        //            else if (loginAs == "B" && product == "#")
+        //            {
+        //                if (objUtility.isRatnakar())
+        //                {
+        //                    objUtility.CreateTables(loginAs, product, "TradeWeb");
+        //                    if (objUtility.GetWebParameter("TRADEPLUSTEMPDB") != "")
+        //                    {
+        //                        string strDatabase = objUtility.GetWebParameter("TRADEPLUSTEMPDB").Trim();
+        //                        //var dbCon = new DataContext();
+        //                        //string connectionString = dbCon.Database.GetDbConnection().ConnectionString;
+        //                        Microsoft.Data.SqlClient.SqlConnectionStringBuilder builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(_connStr)
+        //                        {
+        //                            InitialCatalog = strDatabase
+        //                        };
+        //                        string newConnectionString = builder.ToString();
 
-                    }
-                    objUtility.CreateMrgpTables();
-                    if (loginAs == "C" && product == "E") //For EstroWeb
-                    {
-                        if (objUtility.mfnGetSysSplFeatureDP("TBL") && role == "EstroWeb")
-                        {
-                            objUtility.CreateTables(loginAs, product, "EstroWeb");
-                            objUtility.CheckSP("EstroWeb");
-                        }
-                        else if (objUtility.mfnGetSysSplFeatureDP("TBO") && role == "EstroWeb")
-                        {
-                            objUtility.CreateTables(loginAs, product, "EstroWebOffline");
-                            objUtility.CheckSP("EstroWebO");
-                        }
-                        else
-                        {
-                            objUtility.CreateTables(loginAs, product, "Estro");
-                            objUtility.CheckSP("Estro");
-                        }
-                    }
-                    else if ((loginAs == "C" || loginAs == "B") && product == "C" && (role == "CrossWeb" || role == "CrossNet")) //For CrossWeb
-                    {
-                        if (objUtility.mfnGetSysSplFeatureDP("TBL") || role == "CrossNet")
-                        {
-                            objUtility.CreateTables(loginAs, product, "CrossWeb");
-                            if (objUtility.GetWebParameter("TRADEPLUSTEMPDB") != "")
-                            {
-                                string strDatabase = objUtility.GetWebParameter("TRADEPLUSTEMPDB").Trim();
-                                var dbCon = new DataContext();
-                                string connectionString = dbCon.Database.GetDbConnection().ConnectionString;
-                                Microsoft.Data.SqlClient.SqlConnectionStringBuilder builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString)
-                                {
-                                    InitialCatalog = strDatabase
-                                };
-                                string newConnectionString = builder.ToString();
+        //                        using (Microsoft.Data.SqlClient.SqlConnection sqlCon = new Microsoft.Data.SqlClient.SqlConnection(newConnectionString))
+        //                        {
+        //                            sqlCon.Open();
+        //                            objUtility.CheckSP("json", sqlCon);
+        //                        }
+        //                    }
+        //                    objUtility.CheckSP("TradeWeb");
+        //                }
+        //            }
+        //            /*else if ((loginAs == "C" || loginAs == "M") && product == "T" && (role == "Admin" || role == "TradeMobile"))
+        //            {
+        //                objUtility.CreateTables(loginAs, product, "TradeWeb");
+        //                if (objUtility.GetWebParameter("TRADEPLUSTEMPDB") != "")
+        //                {
+        //                    string strDatabase = objUtility.GetWebParameter("TRADEPLUSTEMPDB").Trim();
+        //                    var dbCon = new DataContext();
+        //                    string connectionString = dbCon.Database.GetDbConnection().ConnectionString;
+        //                    Microsoft.Data.SqlClient.SqlConnectionStringBuilder builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString)
+        //                    {
+        //                        InitialCatalog = strDatabase
+        //                    };
+        //                    string newConnectionString = builder.ToString();
 
-                                using (Microsoft.Data.SqlClient.SqlConnection sqlCon = new Microsoft.Data.SqlClient.SqlConnection(newConnectionString))
-                                {
-                                    sqlCon.Open();
-                                    objUtility.CheckSP("json", sqlCon);
-                                }
-                            }
-                            objUtility.CheckSP("CrossWeb");
-                        }
-                        else if (objUtility.mfnGetSysSplFeatureDP("TBO"))
-                        {
-                            objUtility.CreateTables(loginAs, product, "CrossWebOffline");
-                            objUtility.CheckSP("CrossWebO");
-                        }
-                    }
-                    else if (loginAs == "B" && product == "#")
-                    {
-                        if (objUtility.isRatnakar())
-                        {
-                            objUtility.CreateTables(loginAs, product, "TradeWeb");
-                            if (objUtility.GetWebParameter("TRADEPLUSTEMPDB") != "")
-                            {
-                                string strDatabase = objUtility.GetWebParameter("TRADEPLUSTEMPDB").Trim();
-                                var dbCon = new DataContext();
-                                string connectionString = dbCon.Database.GetDbConnection().ConnectionString;
-                                Microsoft.Data.SqlClient.SqlConnectionStringBuilder builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString)
-                                {
-                                    InitialCatalog = strDatabase
-                                };
-                                string newConnectionString = builder.ToString();
+        //                    using (Microsoft.Data.SqlClient.SqlConnection sqlCon = new Microsoft.Data.SqlClient.SqlConnection(newConnectionString))
+        //                    {
+        //                        sqlCon.Open();
+        //                        objUtility.CheckSP("json", sqlCon);
+        //                    }
+        //                }
+        //                objUtility.CheckSP("TradeWeb");
+        //            }*/
+        //            if (!string.IsNullOrEmpty(ePassword))
+        //            {
+        //                string encKey = _configuration["epwdKey"];
+        //                encKey = objUtility.Decrypt(encKey);
+        //                var keybytes = Encoding.UTF8.GetBytes(encKey);
+        //                var iv = Encoding.UTF8.GetBytes(encKey);
+        //                var encrypted = Convert.FromBase64String(ePassword);
+        //                password = DecryptStringFromBytes(encrypted, keybytes, iv);
+        //            }
+        //            try
+        //            {
+        //                string encKey = _configuration["epwdKey"];
+        //                encKey = objUtility.Decrypt(encKey);
+        //                var keybytes = Encoding.UTF8.GetBytes(encKey);
+        //                var iv = Encoding.UTF8.GetBytes(encKey);
+        //                var encrypted = Convert.FromBase64String(userId);
+        //                var decUserId = DecryptStringFromBytes(encrypted, keybytes, iv);
+        //                if (decUserId != "keyError")
+        //                {
+        //                    userId = decUserId;
+        //                }
+        //            }
+        //            catch (Exception) { }
+        //            if (string.IsNullOrWhiteSpace(userId) || (!keyBased && string.IsNullOrWhiteSpace(password)))
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "Invalid Username or Password", returnDt, ""));
+        //            }
 
-                                using (Microsoft.Data.SqlClient.SqlConnection sqlCon = new Microsoft.Data.SqlClient.SqlConnection(newConnectionString))
-                                {
-                                    sqlCon.Open();
-                                    objUtility.CheckSP("json", sqlCon);
-                                }
-                            }
-                            objUtility.CheckSP("TradeWeb");
-                        }
-                    }
-                    /*else if ((loginAs == "C" || loginAs == "M") && product == "T" && (role == "Admin" || role == "TradeMobile"))
-                    {
-                        objUtility.CreateTables(loginAs, product, "TradeWeb");
-                        if (objUtility.GetWebParameter("TRADEPLUSTEMPDB") != "")
-                        {
-                            string strDatabase = objUtility.GetWebParameter("TRADEPLUSTEMPDB").Trim();
-                            var dbCon = new DataContext();
-                            string connectionString = dbCon.Database.GetDbConnection().ConnectionString;
-                            Microsoft.Data.SqlClient.SqlConnectionStringBuilder builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString)
-                            {
-                                InitialCatalog = strDatabase
-                            };
-                            string newConnectionString = builder.ToString();
+        //            loginResponseWithDT userList = new loginResponseWithDT();
+        //            userList = branch == true ? _tradeWebRepository.BranchUserDetails(userId, password, role) : _tradeWebRepository.UserDetails(userId, password, keyBased, product, role);
 
-                            using (Microsoft.Data.SqlClient.SqlConnection sqlCon = new Microsoft.Data.SqlClient.SqlConnection(newConnectionString))
-                            {
-                                sqlCon.Open();
-                                objUtility.CheckSP("json", sqlCon);
-                            }
-                        }
-                        objUtility.CheckSP("TradeWeb");
-                    }*/
-                    if (!string.IsNullOrEmpty(ePassword))
-                    {
-                        string encKey = _configuration["epwdKey"];
-                        encKey = objUtility.Decrypt(encKey);
-                        var keybytes = Encoding.UTF8.GetBytes(encKey);
-                        var iv = Encoding.UTF8.GetBytes(encKey);
-                        var encrypted = Convert.FromBase64String(ePassword);
-                        password = DecryptStringFromBytes(encrypted, keybytes, iv);
-                    }
-                    try
-                    {
-                        string encKey = _configuration["epwdKey"];
-                        encKey = objUtility.Decrypt(encKey);
-                        var keybytes = Encoding.UTF8.GetBytes(encKey);
-                        var iv = Encoding.UTF8.GetBytes(encKey);
-                        var encrypted = Convert.FromBase64String(userId);
-                        var decUserId = DecryptStringFromBytes(encrypted, keybytes, iv);
-                        if (decUserId != "keyError")
-                        {
-                            userId = decUserId;
-                        }
-                    }
-                    catch (Exception) { }
-                    if (string.IsNullOrWhiteSpace(userId) || (!keyBased && string.IsNullOrWhiteSpace(password)))
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "Invalid Username or Password", returnDt, ""));
-                    }
+        //            if (!string.IsNullOrEmpty(userList.message))
+        //            {
+        //                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, userList.message, returnDt, ""));
+        //            }
+        //            else if (userList.data.Rows.Count > 0)
+        //            {
+        //                int expTime = Convert.ToInt32(_configuration["tokenExpireTime"]);
+        //                var datetimeExp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("India Standard Time"));
+        //                string checkCondition = "N", sms2FA = "", product2FA = role;
+        //                string[] allowedRoles = { "Admin", "CrossNet", "EstroNet", "CrossWeb", "EstroWeb", "TradeMobile", "Branch" };
+        //                string userType = userList.data.Rows[0]["UserType"].ToString();
+        //                //if (role == "TradeMobile")
+        //                //{
+        //                if (loginAs == "B" && (role == "CrossNet" || role == "EstroNet" || role == "Branch"))
+        //                {
+        //                    sms2FA = objUtility.GetSysParmSt("SMS2FA", "").Trim();
+        //                    if (sms2FA != "")
+        //                    {
+        //                        if (role == "Branch")
+        //                        {
+        //                            product2FA = "TradeNet";
+        //                        }
+        //                    }
+        //                }
+        //                else
+        //                {
+        //                    sms2FA = objUtility.GetWebParameter("SMS2FA").Trim();
+        //                }
 
-                    loginResponseWithDT userList = new loginResponseWithDT();
-                    userList = branch == true ? _tradeWebRepository.BranchUserDetails(userId, password, role) : _tradeWebRepository.UserDetails(userId, password, keyBased, product, role);
+        //                string str2FA = objUtility.GetWebParameter("2FA").Trim();
+        //                if (str2FA != "")
+        //                {
+        //                    if (role == "Admin" && str2FA != "W" && str2FA != "B")
+        //                    {
+        //                        sms2FA = "";
+        //                    }
+        //                    else if (role == "TradeMobile" && str2FA != "M" && str2FA != "B")
+        //                    {
+        //                        sms2FA = "";
+        //                    }
+        //                }
 
-                    if (!string.IsNullOrEmpty(userList.message))
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, userList.message, returnDt, ""));
-                    }
-                    else if (userList.data.Rows.Count > 0)
-                    {
-                        int expTime = Convert.ToInt32(_configuration["tokenExpireTime"]);
-                        var datetimeExp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, UtilityCommon.GetIndianTimeZone());
-                        string checkCondition = "N", sms2FA = "", product2FA = role;
-                        string[] allowedRoles = { "Admin", "CrossNet", "EstroNet", "CrossWeb", "EstroWeb", "TradeMobile", "Branch" };
-                        string userType = userList.data.Rows[0]["UserType"].ToString();
-                        //if (role == "TradeMobile")
-                        //{
-                        if (loginAs == "B" && (role == "CrossNet" || role == "EstroNet" || role == "Branch"))
-                        {
-                            sms2FA = objUtility.GetSysParmSt("SMS2FA", "").Trim();
-                            if (sms2FA != "")
-                            {
-                                if (role == "Branch")
-                                {
-                                    product2FA = "TradeNet";
-                                }
-                            }
-                        }
-                        else
-                        {
-                            sms2FA = objUtility.GetWebParameter("SMS2FA").Trim();
-                        }
+        //                if (userType == "checker")
+        //                {
+        //                    sms2FA = "";
+        //                }
 
-                        string str2FA = objUtility.GetWebParameter("2FA").Trim();
-                        if (str2FA != "")
-                        {
-                            if (role == "Admin" && str2FA != "W" && str2FA != "B")
-                            {
-                                sms2FA = "";
-                            }
-                            else if (role == "TradeMobile" && str2FA != "M" && str2FA != "B")
-                            {
-                                sms2FA = "";
-                            }
-                        }
+        //                if (!string.IsNullOrEmpty(sms2FA) && allowedRoles.Contains(role))
+        //                {
+        //                    string dpid = "", tempUserId = userId;
+        //                    string[] userStr = userId.Split("|");
+        //                    if (loginAs == "C" && product == "E" && role == "EstroWeb")
+        //                    {
+        //                        product2FA = "EstroWeb";
+        //                        if (userStr.Length > 1)
+        //                        {
+        //                            dpid = userStr[0];
+        //                            userId = userStr[1];
+        //                        }
+        //                    }
+        //                    else if (loginAs == "C" && product == "C" && role == "CrossWeb")
+        //                    {
+        //                        product2FA = "CrossWeb";
+        //                        if (userStr.Length > 1)
+        //                        {
+        //                            dpid = userStr[0];
+        //                            userId = userStr[1];
+        //                        }
+        //                    }
+        //                    else if (loginAs == "C" && product == "T")
+        //                    {
+        //                        product2FA = "TradeWeb";
+        //                    }
 
-                        if (userType == "checker")
-                        {
-                            sms2FA = "";
-                        }
+        //                    /*strsql = "select count(0) from OTP_Master with (NoLock) where OTP_ClientCode='" + userId + "' and OTP_Product='" + product2FA + "' and OTP_Type = '2FA' and CAST(OTP_SentDate AS DATETIME) + CAST(OTP_SentTime AS DATETIME) >= DATEADD(MINUTE, -15, GETDATE())";
+        //                    DataTable dtCheck = objUtility.OpenDataTable(strsql);
+        //                    if (dtCheck.Rows.Count > 0)
+        //                    {
+        //                        if (Convert.ToInt32(dtCheck.Rows[0][0]) >= 10)
+        //                        {
+        //                            return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "Too many Attempts", returnDt, ""));
+        //                        }
+        //                    }*/
 
-                        if (!string.IsNullOrEmpty(sms2FA) && allowedRoles.Contains(role))
-                        {
-                            string dpid = "", tempUserId = userId;
-                            string[] userStr = userId.Split("|");
-                            if (loginAs == "C" && product == "E" && role == "EstroWeb")
-                            {
-                                product2FA = "EstroWeb";
-                                if (userStr.Length > 1)
-                                {
-                                    dpid = userStr[0];
-                                    userId = userStr[1];
-                                }
-                            }
-                            else if (loginAs == "C" && product == "C" && role == "CrossWeb")
-                            {
-                                product2FA = "CrossWeb";
-                                if (userStr.Length > 1)
-                                {
-                                    dpid = userStr[0];
-                                    userId = userStr[1];
-                                }
-                            }
-                            else if (loginAs == "C" && product == "T")
-                            {
-                                product2FA = "TradeWeb";
-                            }
+        //                    DataTable dtResponse = await objUtility.TradeMobileSendOTP(userId, product2FA, "2FA", role);
+        //                    userId = tempUserId;
+        //                    string strStatus = dtResponse.Rows[0]["Status"].ToString();
+        //                    string strMessage = dtResponse.Rows[0]["Message"].ToString();
 
-                            /*strsql = "select count(0) from OTP_Master with (NoLock) where OTP_ClientCode='" + userId + "' and OTP_Product='" + product2FA + "' and OTP_Type = '2FA' and CAST(OTP_SentDate AS DATETIME) + CAST(OTP_SentTime AS DATETIME) >= DATEADD(MINUTE, -15, GETDATE())";
-                            DataTable dtCheck = objUtility.OpenDataTable(strsql);
-                            if (dtCheck.Rows.Count > 0)
-                            {
-                                if (Convert.ToInt32(dtCheck.Rows[0][0]) >= 10)
-                                {
-                                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "Too many Attempts", returnDt, ""));
-                                }
-                            }*/
+        //                    if (strStatus == "Y")
+        //                    {
+        //                        string decryptJwtKey = objUtility.Decrypt(_configuration["Jwt:Key"].ToString());
+        //                        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(decryptJwtKey));
+        //                        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+        //                        int tokenExpTime = 5;
+        //                        var claims = new[] {
+        //                                new Claim(JwtRegisteredClaimNames.Sub, userId.ToUpper()),
+        //                                new Claim(JwtRegisteredClaimNames.Jti, userId.ToUpper()),
+        //                                new Claim(type: "username", value: userId.ToUpper()),
+        //                                new Claim(type: "loginas", value: loginAs),
+        //                                new Claim(type: "product", value: product),
+        //                                new Claim(type: "loginrole", value: role),
+        //                                new Claim(type: "branch", value: branch ? "Y" : "N"),
+        //                                new Claim(type: "userData", value: JsonConvert.SerializeObject(userList.data)),
+        //                                new Claim(ClaimTypes.Role, "TradeWeb2FA"),
+        //                                new Claim(type: "otpproduct", value: product2FA),
+        //                            };
+        //                        var token = new JwtSecurityToken(_configuration["Jwt:Issuer"],
+        //                            _configuration["Jwt:Issuer"],
+        //                            claims,
+        //                            expires: DateTime.UtcNow.AddMinutes(tokenExpTime),
+        //                            signingCredentials: credentials);
 
-                            DataTable dtResponse = objUtility.TradeMobileSendOTP(userId, product2FA, "2FA", role);
-                            userId = tempUserId;
-                            string strStatus = dtResponse.Rows[0]["Status"].ToString();
-                            string strMessage = dtResponse.Rows[0]["Message"].ToString();
+        //                        string str2FAToken = new JwtSecurityTokenHandler().WriteToken(token);
+        //                        DataTable dtUserData = userList.data;
+        //                        dtUserData.Columns.Add("LoginType", typeof(string));
+        //                        dtUserData.Columns.Add("LoginMessage", typeof(string));
+        //                        dtUserData.Rows[0]["LoginType"] = "2FA";
+        //                        dtUserData.Rows[0]["LoginMessage"] = strMessage;
 
-                            if (strStatus == "Y")
-                            {
-                                string decryptJwtKey = objUtility.Decrypt(_configuration["Jwt:Key"].ToString());
-                                var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(decryptJwtKey));
-                                var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
-                                int tokenExpTime = 5;
-                                var claims = new[] {
-                                        new Claim(JwtRegisteredClaimNames.Sub, userId.ToUpper()),
-                                        new Claim(JwtRegisteredClaimNames.Jti, userId.ToUpper()),
-                                        new Claim(type: "username", value: userId.ToUpper()),
-                                        new Claim(type: "loginas", value: loginAs),
-                                        new Claim(type: "product", value: product),
-                                        new Claim(type: "loginrole", value: role),
-                                        new Claim(type: "branch", value: branch ? "Y" : "N"),
-                                        new Claim(type: "userData", value: JsonConvert.SerializeObject(userList.data)),
-                                        new Claim(ClaimTypes.Role, "TradeWeb2FA"),
-                                        new Claim(type: "otpproduct", value: product2FA),
-                                    };
-                                var token = new JwtSecurityToken(_configuration["Jwt:Issuer"],
-                                    _configuration["Jwt:Issuer"],
-                                    claims,
-                                    expires: DateTime.UtcNow.AddMinutes(tokenExpTime),
-                                    signingCredentials: credentials);
+        //                        tokenResponse result2fa = new tokenResponse
+        //                        {
+        //                            status = true,
+        //                            message = "success",
+        //                            status_code = (int)HttpStatusCode.OK,
+        //                            token = str2FAToken,
+        //                            tokenExpireTime = datetimeExp.AddMinutes(5).ToString("yyyy/MM/dd HH:mm:ss"),
+        //                            data = dtUserData
+        //                        };
+        //                        return Ok(JsonConvert.SerializeObject(result2fa, Formatting.Indented));
+        //                    }
+        //                    else
+        //                    {
+        //                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, strMessage, returnDt, ""));
+        //                    }
+        //                }
+        //                //}
 
-                                string str2FAToken = new JwtSecurityTokenHandler().WriteToken(token);
-                                DataTable dtUserData = userList.data;
-                                dtUserData.Columns.Add("LoginType", typeof(string));
-                                dtUserData.Columns.Add("LoginMessage", typeof(string));
-                                dtUserData.Rows[0]["LoginType"] = "2FA";
-                                dtUserData.Rows[0]["LoginMessage"] = strMessage;
+        //                if (product.Trim() == "T")
+        //                {
+        //                    FillConfigParametersString();
+        //                }
+        //                else
+        //                {
+        //                    _configuration["IsTradeWeb"] = product.Trim();
+        //                    if (loginAs == "C" && product == "E" && objUtility.mfnGetSysSplFeatureDP("TBL") == false)
+        //                    {
+        //                        string[] strUserID = userId.Split("|");
+        //                        //userId = strUserID.Length > 1 ? strUserID[1] : strUserID[0];
+        //                        _configuration["IsEstroOffLine"] = "Y";
+        //                        _configuration["SessionDPID"] = strUserID[0];
+        //                    }
+        //                    else if (loginAs == "C" && product == "C" && objUtility.mfnGetSysSplFeatureDP("TBL") == false)
+        //                    {
+        //                        string[] strUserID = userId.Split("|");
+        //                        _configuration["IsCrossOffLine"] = "Y";
+        //                        _configuration["SessionDPID"] = strUserID[0];
+        //                    }
+        //                }
+        //                var guidVal = Guid.NewGuid();
+        //                if ((role == "Admin" || role == "TradeMobile") && branch == false)
+        //                {
+        //                    objUtility.ExecuteSQL("update Login_Session set ls_token = '" + guidVal + "', ls_logintype = '" + (role == "Admin" ? "C" : "M") + "', ls_logintm = '" + DateTime.Now.ToString("HH:mm:ss") + "'  Where ls_code = '" + userId + "' And ls_logindt = '" + DateTime.Now.ToString("yyyyMMdd") + "'  And len(ls_token) < 3");
+        //                }
+        //                string strUserAccess = "";
+        //                if (branch)
+        //                {
+        //                    if (role == "Branch")
+        //                    {
+        //                        strUserAccess = objUtility.GetUserAccess(objUtility.fnFireQueryTradeWeb("User_master", "um_specialrights", "um_user_id", userId, true));
+        //                    }
+        //                    else
+        //                    {
+        //                        strUserAccess = "Branch";
+        //                    }
+        //                }
 
-                                tokenResponse result2fa = new tokenResponse
-                                {
-                                    status = true,
-                                    message = "success",
-                                    status_code = (int)HttpStatusCode.OK,
-                                    token = str2FAToken,
-                                    tokenExpireTime = datetimeExp.AddMinutes(5).ToString("yyyy/MM/dd HH:mm:ss"),
-                                    data = dtUserData
-                                };
-                                return Ok(JsonConvert.SerializeObject(result2fa, Formatting.Indented));
-                            }
-                            else
-                            {
-                                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, strMessage, returnDt, ""));
-                            }
-                        }
-                        //}
+        //                var tokenString = branch == true ? GenerateJSONWebTokenUser(new TradeWebLoginModel { username = userId, password = password, role = role, guid = guidVal.ToString(), tokenExpTime = expTime, useraccess = strUserAccess }) : GenerateJSONWebToken(new TradeWebLoginModel { username = userId, password = password, role = role, guid = guidVal.ToString(), tokenExpTime = expTime });
 
-                        if (product.Trim() == "T")
-                        {
-                            FillConfigParametersString();
-                        }
-                        else
-                        {
-                            _configuration["IsTradeWeb"] = product.Trim();
-                            if (loginAs == "C" && product == "E" && objUtility.mfnGetSysSplFeatureDP("TBL") == false)
-                            {
-                                string[] strUserID = userId.Split("|");
-                                //userId = strUserID.Length > 1 ? strUserID[1] : strUserID[0];
-                                _configuration["IsEstroOffLine"] = "Y";
-                                _configuration["SessionDPID"] = strUserID[0];
-                            }
-                            else if (loginAs == "C" && product == "C" && objUtility.mfnGetSysSplFeatureDP("TBL") == false)
-                            {
-                                string[] strUserID = userId.Split("|");
-                                _configuration["IsCrossOffLine"] = "Y";
-                                _configuration["SessionDPID"] = strUserID[0];
-                            }
-                        }
-                        var guidVal = Guid.NewGuid();
-                        if ((role == "Admin" || role == "TradeMobile") && branch == false)
-                        {
-                            objUtility.ExecuteSQL("update Login_Session set ls_token = '" + guidVal + "', ls_logintype = '" + (role == "Admin" ? "C" : "M") + "', ls_logintm = '" + DateTime.Now.ToString("HH:mm:ss") + "'  Where ls_code = '" + userId + "' And ls_logindt = '" + DateTime.Now.ToString("yyyyMMdd") + "'  And len(ls_token) < 3");
-                        }
-                        string strUserAccess = "";
-                        if (branch)
-                        {
-                            if (role == "Branch")
-                            {
-                                strUserAccess = objUtility.GetUserAccess(objUtility.fnFireQueryTradeWeb("User_master", "um_specialrights", "um_user_id", userId, true));
-                            }
-                            else
-                            {
-                                strUserAccess = "Branch";
-                            }
-                        }
-
-                        var tokenString = branch == true ? GenerateJSONWebTokenUser(new TradeWebLoginModel { username = userId, password = password, role = role, guid = guidVal.ToString(), tokenExpTime = expTime, useraccess = strUserAccess }) : GenerateJSONWebToken(new TradeWebLoginModel { username = userId, password = password, role = role, guid = guidVal.ToString(), tokenExpTime = expTime });
-
-                        tokenResponse result = new tokenResponse();
-                        result.status = true;
-                        result.message = "success";
-                        result.status_code = (int)HttpStatusCode.OK;
-                        result.token = tokenString;
-                        result.tokenExpireTime = datetimeExp.AddMinutes(expTime).ToString("yyyy/MM/dd HH:mm:ss");
-                        result.data = userList.data;
-                        var jsonData = JsonConvert.SerializeObject(result, Formatting.Indented);
-                        return Ok(jsonData);
-                    }
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, userList.message, userList, ""));
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-
-        [HttpPost("Login_SSO", Name = "Login_SSO")]
-        public IActionResult Login_SSO([FromBody] object reqObject)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var jsonString = ((System.Text.Json.JsonElement)reqObject).GetRawText();
-                    var valdJsonObj = JsonConvert.DeserializeObject<dynamic>(jsonString.ToString());
-                    string TradeWebUName = valdJsonObj["TradeWebUName"];
-                    string PANNo = valdJsonObj["PANNo"];
-                    string ID = valdJsonObj["ID"];
-                    string PDate = valdJsonObj["PDate"];
-                    string UserID = valdJsonObj["UserID"];
-                    string SessionId = valdJsonObj["SessionId"];
-                    string Link = valdJsonObj["Link"];
-                    string DefaultMenu = valdJsonObj["DefaultMenu"];
-                    string sUserId = valdJsonObj["sUserId"]; // Form request value
-                    string sToken = valdJsonObj["sToken"]; // Form request value
-                    string userID = valdJsonObj["userID"];
-                    string token = valdJsonObj["token"];
-                    string product = valdJsonObj["product"];
-                    string loginAs = valdJsonObj["loginAs"];
-                    string key = valdJsonObj["key"];
-
-                    if (string.IsNullOrWhiteSpace(loginAs) && !string.IsNullOrWhiteSpace(UserID))
-                    {
-                        loginAs = objUtility.GetLoginAs(UserID);
-                    }
-
-                    string Strsql = string.Empty;
-                    //// Using Query string with PanNo and userName
-                    if (TradeWebUName != null && PANNo != null)
-                    {
-                        string strUname = string.Empty;
-                        string strPanno = string.Empty;
-                        strUname = objUtility.mfnReplaceForSQLInjection(objUtility.DecodeFrom64(TradeWebUName));
-                        strPanno = objUtility.mfnReplaceForSQLInjection(objUtility.DecodeFrom64(PANNo));
-
-                        Strsql = "select LTrim(RTrim(cm_cd)) ClientCode, LTrim(RTrim(cm_Name)) ClientName, 'user' UserType from client_master with (nolock) where cm_cd='" + strUname.ToString().Trim() + "' and cm_panno='" + strPanno.ToString().Trim() + "'";
-                        DataTable dt = new DataTable();
-                        dt = objUtility.OpenDataTable(Strsql);
-                        if (dt.Rows.Count != 0)
-                        {
-                            var response = LoginSSOResponse(key, product, loginAs, strUname, dt);
-                            return Ok(response);
-                        }
-                    }
-
-                    //// Using Query string with UserID and PDate(current date)
-                    else if (ID != null && PDate != null)
-                    {
-                        string strID = objUtility.mfnReplaceForSQLInjection(objUtility.DecodeFrom64(ID));
-                        string strPDate = objUtility.DecodeFrom64(PDate);
-
-                        if (_configuration["IsTradeWeb"] == "C" || _configuration["IsTradeWeb"] == "E")
-                        {
-                            //if (Convert.ToString(Session["LiveCross"]).Trim() == "Y")
-                            //{
-                            //    Strsql = "select cm_cd,cm_pwd,convert(char,convert(datetime,getdate()),103) as DT from client_master with (nolock) where cm_cd='" + strID.ToString().Trim() + "'";
-                            //}
-                            //else
-                            //{
-                            Strsql = "select LTrim(RTrim(cm_cd)) ClientCode, LTrim(RTrim(cm_Name)) ClientName, 'user' UserType,convert(char,convert(datetime,getdate()),103) as DT from client_master with (nolock) where cm_companycode+cm_cd='" + strID.ToString().Trim() + "'";
-                            //}
-                        }
-                        else if (_configuration["IsTradeWeb"] == "T" || _configuration["IsTradeWeb"] == "O")
-                        {
-                            Strsql = "select LTrim(RTrim(cm_cd)) ClientCode, LTrim(RTrim(cm_Name)) ClientName, 'user' UserType,convert(char,convert(datetime,getdate()),103) as DT from client_master with (nolock) where cm_cd='" + strID.ToString().Trim() + "'";
-                        }
-                        DataTable dt = new DataTable();
-                        dt = objUtility.OpenDataTable(Strsql);
-
-                        if (dt.Rows.Count != 0)
-                        {
-                            if (strPDate == dt.Rows[0]["DT"].ToString().Replace("/", "").Trim())
-                            {
-                                dt.Columns.Remove("DT");
-                                dt.AcceptChanges();
-                                if (_configuration["IsTradeWeb"] == "O")
-                                {
-                                    string guid = Guid.NewGuid().ToString("N");
-                                    //Response.Cookies.Add(new HttpCookie("AuthTradeWeb", guid));
-                                    Strsql = "update login_session set ls_logoutdt = '" + DateTime.Now.ToString("yyyyMMdd") + "', ls_logouttm = '" + DateTime.Now.ToString("HH:mm:ss") + "' where ls_token = (select top 1 ls_token from Login_Session where ls_code = '" + objUtility.mfnReplaceForSQLInjection(strID).ToUpper() + "' and ls_logintype = 'C' and ls_logoutdt = '' and ls_logouttm = '' order by ls_srno desc)";
-                                    objUtility.ExecuteSQL(Strsql);
-                                    Strsql = "insert into Login_Session values('" + objUtility.mfnReplaceForSQLInjection(strID).ToUpper() + "', 'C', '" + Strings.Left(ReturnsHost().ToString(), 30) + "', '" + guid + "', '" + DateTime.Now.ToString("yyyyMMdd") + "','" + DateTime.Now.ToString("HH:mm:ss") + "','','')";
-                                    objUtility.ExecuteSQL(Strsql);
-                                }
-                                var response = LoginSSOResponse(key, product, loginAs, strID, dt);
-                                return Ok(response);
-                            }
-                        }
-                    }
-
-                    //// For FTSOSURL   *** Using Query string with UserID, SessionID, Link, Default Value
-                    string strparm = objUtility.GetWebParameter("FTSOSURL");
-                    if (!String.IsNullOrEmpty(strparm))
-                    {
-                        if (UserID != null && SessionId != null)
-                        {
-                            char seperator = '?';
-                            string[] separateURL = strparm.Split(seperator);
-                            string struserid = objUtility.mfnReplaceForSQLInjection(UserID);
-                            System.Collections.Specialized.NameValueCollection queryString = System.Web.HttpUtility.ParseQueryString(separateURL[1]);
-                            queryString["UserId"] = UserID;
-                            queryString["SessionId"] = SessionId;
-                            queryString["Link"] = string.IsNullOrEmpty(queryString["Link"]) ? Link : queryString["Link"];
-                            string strlnk = separateURL[0] + "?" + queryString.ToString();
-                            string strresponse = objUtility.WebRequestTestStr(strlnk);
-                            if (!string.IsNullOrEmpty(strresponse))
-                            {
-                                XmlDocument doc = new XmlDocument();
-                                doc.LoadXml(strresponse);
-                                string strresponse1 = doc.InnerText;
-                                if (strresponse1.Contains("10000AUTHENTICATION"))
-                                {
-                                    Strsql = "select LTrim(RTrim(cm_cd)) ClientCode, LTrim(RTrim(cm_Name)) ClientName, 'user' UserType  from client_master with (nolock) where cm_cd='" + struserid.ToString().Trim() + "'";
-                                    DataTable dt = new DataTable();
-                                    dt = objUtility.OpenDataTable(Strsql);
-                                    if (dt.Rows.Count > 0)
-                                    {
-                                        var response = LoginSSOResponse(key, product, loginAs, UserID, dt);
-                                        return Ok(response);
-                                        //var DefaultMenuDecoded = HttpUtility.UrlDecode(DefaultMenu);
-                                        //if (string.IsNullOrEmpty(DefaultMenu))
-                                        //{
-                                        //    Response.Redirect("~/MasterPages/Home.aspx");
-                                        //}
-                                        //else
-                                        //{
-                                        //    if (File.Exists(Server.MapPath("~" + DefaultMenuDecoded)))
-                                        //    {
-                                        //        Response.Redirect("~" + DefaultMenuDecoded);
-                                        //    }
-                                        //    else
-                                        //    {
-                                        //        Response.Redirect("~/MasterPages/Home.aspx");
-                                        //    }
-                                        //}
-                                    }
-                                }
-                                else
-                                {
-                                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "Session has Expired", ""));
-                                }
-                            }
-                        }
-                    }
-
-                    //// For SSOURL kmbala   *** Reqest Form with sUserId, sToken 
-                    else if (objUtility.GetWebParameter("SSOURLkmbala") != "")
-                    {
-                        if (!string.IsNullOrEmpty(sUserId) && !string.IsNullOrEmpty(sToken))
-                        {
-                            string strSUserID = sUserId;
-                            string strSToken = sToken;
-
-                            string URI = objUtility.GetWebParameter("SSOURLkmbala");
-                            URI = URI.Replace("<sUserId>", strSUserID);
-                            URI = URI.Replace("<sToken>", strSToken);
-                            var result = "";
-                            try
-                            {
-                                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
-                                var httpRequest = (HttpWebRequest)WebRequest.Create(URI);
-                                httpRequest.Method = "POST";
-
-                                var httpResponse = (HttpWebResponse)httpRequest.GetResponse();
-                                using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
-                                {
-                                    result = streamReader.ReadToEnd();
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", ex.Message.ToString(), ""));
-                            }
-                            if (result.Trim() == "TRUE")
-                            {
-                                var response = LoginSSOResponse(key, product, loginAs, sUserId, new DataTable());
-                                return Ok(response);
-                            }
-                            else
-                            {
-                                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "Token has Expired", ""));
-                            }
-                        }
-                    }
-
-                    //// For SSOURL SYMPNY   *** Using Query string with userID, token, Link, 
-                    else if (objUtility.GetWebParameter("SSOURLSYMPNY") != "")
-                    {
-                        if (!string.IsNullOrEmpty(userID) && !string.IsNullOrEmpty(token))
-                        {
-                            string URI = objUtility.GetWebParameter("SSOURLSYMPNY");
-                            string strUserID = userID;
-                            string strToken = token;
-                            try
-                            {
-                                JObject jObj = new JObject
-                                    {
-                                        new JProperty("UserId", strUserID),
-                                        new JProperty("Token", strToken)
-                                    };
-                                string strJson = jObj.ToString();
-
-                                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
-                                var httpRequest = (HttpWebRequest)WebRequest.Create(URI);
-                                httpRequest.ContentType = "application/json";
-                                httpRequest.Method = "POST";
-                                httpRequest.Headers.Add("Authorization", strToken);
-                                using (StreamWriter streamWriter = new StreamWriter(httpRequest.GetRequestStream()))
-                                {
-                                    streamWriter.Write(strJson);
-                                }
-                                var httpResponse = (HttpWebResponse)httpRequest.GetResponse();
-                                httpResponse.Close();
-                                if (httpResponse.StatusCode == HttpStatusCode.OK)
-                                {
-                                    var response = LoginSSOResponse(key, product, loginAs, userID, new DataTable());
-                                    return Ok(response);
-                                }
-                            }
-                            catch (WebException ex)
-                            {
-                                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "Token has Expired", ""));
-                            }
-                        }
-                    }
-
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "UserId not found.", ""));
-                }
-                catch (Exception ex)
-                {
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "TradeWeb2FA")]
-        [HttpPost("Login_2FA", Name = "Login_2FA")]
-        public IActionResult Login_2FA(string otp)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var tokenS = GetToken();
-                    var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
-                    var loginAs = tokenS.Claims.First(claim => claim.Type == "loginas").Value;
-                    var product = tokenS.Claims.First(claim => claim.Type == "product").Value;
-                    var otpProduct = tokenS.Claims.First(claim => claim.Type == "otpproduct").Value;
-                    var role = tokenS.Claims.First(claim => claim.Type == "loginrole").Value;
-                    var branch = tokenS.Claims.First(claim => claim.Type == "branch").Value == "Y" ? true : false;
-                    var userData = JsonConvert.DeserializeObject<DataTable>(tokenS.Claims.First(claim => claim.Type == "userData").Value);
-                    var password = "";
-
-                    string checkOTP = "";
-                    string strIdentity = "", tempUserId = userId;
-                    string[] userStr = userId.Split("|");
-                    if (userStr.Length > 1)
-                    {
-                        userId = userStr[1];
-                    }
-                    string Strsql = "select top 1 OTP_Identity,OTP_OTP,OTP_ValidTillDate,OTP_ValidTillTime from OTP_Master with (NoLock) where OTP_ClientCode='" + userId + "' and OTP_Status='P' and OTP_Product='" + otpProduct + "' and OTP_Type = '2FA' order by OTP_Identity desc";
-                    DataTable dt = objUtility.OpenDataTable(Strsql);
-                    if (dt.Rows.Count > 0)
-                    {
-                        checkOTP = dt.Rows[0]["OTP_OTP"].ToString().Trim();
-                        strIdentity = dt.Rows[0]["OTP_Identity"].ToString().Trim();
-                    }
-                    userId = tempUserId;
-                    if (!string.IsNullOrWhiteSpace(otp) && !string.IsNullOrWhiteSpace(checkOTP) && otp == checkOTP)
-                    {
-                        DateTime dtNow = objUtility.GetSqlCurrentDateTime();
-                        DateTime dt3 = objUtility.stod(dt.Rows[0]["OTP_ValidTillDate"].ToString());
-                        TimeSpan time = TimeSpan.Parse(dt.Rows[0]["OTP_ValidTillTime"].ToString());
-                        DateTime dtExpiry = dt3 + time;
-                        if (dtNow > dtExpiry)
-                        {
-                            Strsql = "update OTP_Master set OTP_Status='E' where OTP_Identity='" + strIdentity + "'";
-                            objUtility.ExecuteSQL(Strsql);
-                            return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "OTP has been expired", returnDt, ""));
-                        }
-
-                        int expTime = Convert.ToInt32(_configuration["tokenExpireTime"]);
-                        var datetimeExp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, UtilityCommon.GetIndianTimeZone());
-
-                        if (product.Trim() == "T")
-                        {
-                            FillConfigParametersString();
-                        }
-                        else
-                        {
-                            _configuration["IsTradeWeb"] = product.Trim();
-                            if (loginAs == "C" && product == "E" && objUtility.mfnGetSysSplFeatureDP("TBL") == false)
-                            {
-                                string[] strUserID = userId.Split("|");
-                                _configuration["IsEstroOffLine"] = "Y";
-                                _configuration["SessionDPID"] = strUserID[0];
-                            }
-                            else if (loginAs == "C" && product == "C" && objUtility.mfnGetSysSplFeatureDP("TBL") == false)
-                            {
-                                string[] strUserID = userId.Split("|");
-                                _configuration["IsCrossOffLine"] = "Y";
-                                _configuration["SessionDPID"] = strUserID[0];
-                            }
-                        }
-                        var guidVal = Guid.NewGuid();
-                        if (role == "Admin" && branch == false)
-                            objUtility.ExecuteSQL("update Login_Session set ls_token = '" + guidVal + "', ls_logintype = 'C', ls_logintm = '" + DateTime.Now.ToString("HH:mm:ss") + "'  Where ls_code = '" + userId + "' And ls_logindt = '" + DateTime.Now.ToString("yyyyMMdd") + "'  And len(ls_token) < 3");
-
-                        string strUserAccess = "";
-                        if (branch)
-                        {
-                            if (role == "Branch")
-                            {
-                                strUserAccess = objUtility.GetUserAccess(objUtility.fnFireQueryTradeWeb("User_master", "um_specialrights", "um_user_id", userId, true));
-                            }
-                            else
-                            {
-                                strUserAccess = "Branch";
-                            }
-                        }
-                        var tokenString = branch == true ? GenerateJSONWebTokenUser(new TradeWebLoginModel { username = userId, password = password, role = role, guid = guidVal.ToString(), tokenExpTime = expTime, useraccess = strUserAccess }) : GenerateJSONWebToken(new TradeWebLoginModel { username = userId, password = password, role = role, guid = guidVal.ToString(), tokenExpTime = expTime });
-
-                        Strsql = "update OTP_Master set OTP_Status='M' where OTP_Identity='" + strIdentity + "'";
-                        objUtility.ExecuteSQL(Strsql);
-
-                        tokenResponse result = new tokenResponse();
-                        result.status = true;
-                        result.message = "success";
-                        result.status_code = (int)HttpStatusCode.OK;
-                        result.token = tokenString;
-                        result.tokenExpireTime = datetimeExp.AddMinutes(expTime).ToString("yyyy/MM/dd HH:mm:ss");
-                        result.data = userData;
-                        var jsonData = JsonConvert.SerializeObject(result, Formatting.Indented);
-                        return Ok(jsonData);
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "OTP Mismached", returnDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, ex.Message.ToString(), returnDt, ""));
-                }
-            }
-            return BadRequest();
-        }
-
+        //                tokenResponse result = new tokenResponse();
+        //                result.status = true;
+        //                result.message = "success";
+        //                result.status_code = (int)HttpStatusCode.OK;
+        //                result.token = tokenString;
+        //                result.tokenExpireTime = datetimeExp.AddMinutes(expTime).ToString("yyyy/MM/dd HH:mm:ss");
+        //                result.data = userList.data;
+        //                var jsonData = JsonConvert.SerializeObject(result, Formatting.Indented);
+        //                return Ok(jsonData);
+        //            }
+        //            return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, userList.message, userList, ""));
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
+        //        }
+        //    }
+        //    return BadRequest();
+        //}
 
         [HttpGet("Login_Get_CompanyName", Name = "Login_Get_CompanyName")]
         public IActionResult Login_Get_CompanyName()
@@ -1191,621 +879,8 @@ namespace TradeWeb.API.Controllers
             return BadRequest();
         }
 
-        /// <summary>
-        /// Login validate Password
-        /// </summary>
-        /// <param name="userId"></param>
-        /// <returns></returns>
-        [HttpPost("Login_GetOTP", Name = "Login_GetOTP")]
-        public IActionResult Login_GetOTP(string userId, string otpType)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    if (string.IsNullOrEmpty(userId))
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "UserId should not be blank!", ""));
-                    }
-                    userId = objUtility.mfnReplaceForSQLInjection(userId.Trim());
-                    var getData = _tradeWebRepository.Login_GetPassword(userId, otpType);
-                    if (getData.status == "success")
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", getData, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        [HttpPost("Login_Password_GenerateOTP", Name = "Login_Password_GenerateOTP")]
-        public IActionResult Login_Password_GenerateOTP(string userId, string mode)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    userId = objUtility.mfnReplaceForSQLInjection(userId);
-                    mode = objUtility.mfnReplaceForSQLInjection(mode);
-                    var result = _tradeWebRepository.Login_Password_GenerateOTP(userId, mode);
-                    if (result != "failed")
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", result, ""));
-                    }
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        [HttpPost("Login_Password_Update", Name = "Login_Password_Update")]
-        public IActionResult Login_Password_Update(string userId, string OTP, string oldPassword, string newPassword)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    userId = objUtility.mfnReplaceForSQLInjection(userId);
-                    OTP = objUtility.mfnReplaceForSQLInjection(OTP);
-                    oldPassword = objUtility.mfnReplaceForSQLInjection(oldPassword);
-                    newPassword = objUtility.mfnReplaceForSQLInjection(newPassword);
-                    var result = _tradeWebRepository.Login_Password_Update(userId, OTP, oldPassword, newPassword);
-                    if (result != "failed")
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", result, ""));
-                    }
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpPost("ChangePassword", Name = "ChangePasswordWeb")]
-        public IActionResult ChangePassword(ChangePassword request)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var tokenS = GetToken();
-                    var clientcd = tokenS.Claims.First(claim => claim.Type == "username").Value;
-                    var compCode = tokenS.Claims.First(claim => claim.Type == "companyCode").Value;
-                    request.newPassword = objUtility.mfnReplaceForSQLInjection(request.newPassword);
-                    request.currentPassword = objUtility.mfnReplaceForSQLInjection(request.currentPassword);
-                    var getData = _tradeWebRepository.ChangePassword(clientcd, compCode, request.currentPassword, request.newPassword);
-                    if (getData != null)
-                    {
-                        if (getData.Contains("succes"))
-                        {
-                            return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                        }
-                        else
-                        {
-                            return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", getData, ""));
-                        }
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, ex.Message.ToString(), returnDt, ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        [HttpGet("UserRole", Name = "UserRole")]
-        public IActionResult UserRole()
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    JwtSecurityToken token = GetToken();
-                    var userId = token.Claims.First(claim => claim.Type == "username").Value;
-
-                    var result = _tradeWebRepository.UserRole(userId);
-                    if (result != "failed")
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", result, ""));
-                    }
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        [HttpGet("Login2Factor", Name = "Login2Factor")]
-        public IActionResult Login2Factor(string userId)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    userId = objUtility.mfnReplaceForSQLInjection(userId);
-                    var result = _tradeWebRepository.Login_GetPassword(userId, "2FA");
-                    if (result != "failed")
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", result, ""));
-                        //return Ok(result);
-                    }
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        [HttpGet("XtreamLivePOS", Name = "XtreamLivePOS")]
-        public IActionResult XtreamLivePOS()
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    JwtSecurityToken token = GetToken();
-                    var userId = token.Claims.First(claim => claim.Type == "username").Value;
-
-                    var result = _tradeWebRepository.XtreamLivePOS(userId);
-                    if (result != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", result, ""));
-                    }
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        [HttpGet("AdditionalMenu", Name = "AdditionalMenu")]
-        public IActionResult AdditionalMenu()
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    JwtSecurityToken token = GetToken();
-                    var userId = token.Claims.First(claim => claim.Type == "username").Value;
-
-                    var result = _tradeWebRepository.AdditionalMenu(userId);
-                    if (result != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", result, ""));
-                    }
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        [HttpGet("Product", Name = "Product")]
-        public IActionResult GetProduct()
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var result = _tradeWebRepository.Product();
-                    if (result != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", result, ""));
-                    }
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        #endregion
-
-        #region Ledger Api
-
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpGet("Ledger_Year", Name = "Ledger_Year")]
-        public IActionResult Ledger_Year()
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var getData = _tradeWebRepository.Ledger_Year();
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="type"></param>
-        /// <param name="fromDate"></param>
-        /// <param name="toDate"></param>
-        /// <returns></returns>
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpGet("Ledger_Summary", Name = "Ledger_Summary")]
-        public IActionResult Ledger_Summary(string type, string fromDate, string toDate)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    JwtSecurityToken token = GetToken();
-                    var CompCode = token.Claims.First(claim => claim.Type == "companyCode").Value;
-                    var userId = token.Claims.First(claim => claim.Type == "username").Value;
-                    type = objUtility.mfnReplaceForSQLInjection(type);
-                    fromDate = objUtility.mfnReplaceForSQLInjection(fromDate);
-                    toDate = objUtility.mfnReplaceForSQLInjection(toDate);
-                    var dataList = _tradeWebRepository.Ledger_Summary(userId, type, fromDate, toDate);
-                    var strDataList = Newtonsoft.Json.JsonConvert.SerializeObject(dataList).Replace(@"\", String.Empty);
-                    if (dataList != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", dataList, ""));
-                    }
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpPost("Ledger_Detail", Name = "Ledger_Detail")]
-        public IActionResult Ledger_Detail(LedgerDetailsModel model /*string fromDate, string toDate, string type_cesCd*/)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var tokenS = GetToken();
-                    var userName = tokenS.Claims.First(claim => claim.Type == "username").Value;
-
-                    var getData = _tradeWebRepository.Ledger_Detail(userName, model, objUtility.mfnReplaceForSQLInjection(model.FromDate), objUtility.mfnReplaceForSQLInjection(model.ToDate));
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpPost("Ledger_Type", Name = "Ledger_Type")]
-        public IActionResult Ledger_Type()
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-
-                    var getData = _tradeWebRepository.Ledger_Type();
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        #endregion
-
-        #region OutStanding Api
-        /// <summary>
-        ///  OutStanding data 
-        /// </summary>
-        /// <param name="AsOnDt"></param>
-        /// <returns></returns>
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpGet("OutStandingPosition", Name = "OutStandingPosition")]
-        public IActionResult OutStandingPosition(string AsOnDt)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var tokenS = GetToken();
-                    var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
-                    AsOnDt = objUtility.mfnReplaceForSQLInjection(AsOnDt);
-                    var getData = _tradeWebRepository.OutStandingPosition(userId, AsOnDt);
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        /// <summary>
-        /// OutStanding details data
-        /// </summary>
-        /// <param name="CESCd"></param>
-        /// <param name="seriesId"></param>
-        /// <returns></returns>
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpGet("OutStandingPosition_Detail", Name = "OutStandingPosition_Detail")]
-        public IActionResult OutStandingPosition_Detail(string CESCd, string seriesId)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    var tokenS = GetToken();
-                    var userId = tokenS.Claims.First(claim => claim.Type == "username").Value;
-                    CESCd = objUtility.mfnReplaceForSQLInjection(CESCd);
-                    seriesId = objUtility.mfnReplaceForSQLInjection(seriesId);
-                    var getData = _tradeWebRepository.OutStandingPosition_Detail(userId, seriesId, CESCd);
-                    if (getData != null)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-        #endregion
-
-        #region ReKYC API
-
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "ReKYC,Admin")]
-        [HttpPost("ReKYC", Name = "ReKYC")]
-        public IActionResult ReKYC(ReKYCModel req)
-        {
-            if (ModelState.IsValid)
-            {
-                long srNo = 0;
-                try
-                {
-                    srNo = objUtility.InsertLog(System.Text.Json.JsonSerializer.Serialize(req), "");
-                    if (!objUtility.mfnGetSysSplFeature("TPI") && !objUtility.mfnGetSysSplFeature("RKC"))
-                    {
-                        objUtility.UpdateLog(srNo, "You are not authorise to use TradeWebAPI Web Service,Please contact SecMark.", "");
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "You are not authorise to use TradeWebAPI Web Service,Please contact SecMark.", returnDt, ""));
-                    }
-                    CommonModel model = new CommonModel();
-                    ReKYCRequest rekycReq = new ReKYCRequest();
-
-                    model.ProjectName = "TradeWebAPI";
-                    model.ModuleName = "ReKYC";
-                    model.FunctionName = req.FunctionName.Trim();
-                    model.RequestString = req.RequestString.ToString();
-                    model.UserID = "API";
-                    model.RequestSource = "M";
-                    model.RequestUniqueID = "1";
-                    JArray result = _tradeWebRepository.Execute(model);
-                    if (result != null)
-                    {
-                        if (model.FunctionName == "PostClientClosureMaker")
-                        {
-                            string remark = result[0]["Remark"].ToString();
-                            JObject jsonObj = JObject.Parse(req.RequestString.ToString());
-                            string userId = jsonObj["ClientCode"]?.ToString();
-                            string esignUrl = jsonObj["EsignReturnUrl"]?.ToString();
-                            string newBOID = jsonObj["BOID"]?.ToString();
-                            string accountType = jsonObj["ClosureType"]?.ToString();
-                            string cmrBase64 = jsonObj["CMRAttachment"]?.ToString();
-                            var step = _tradeWebRepository.ReKYC_GetSteps(userId, "rm_step", "Account Closure");
-                            step = step == "" ? 0 : step;
-                            step = Convert.ToInt32(step);
-                            XDocument xdocData = XDocument.Parse($"<X_Data></X_Data>");
-                            xdocData.Root.Add(new XElement("ClientCode", userId));
-                            xdocData.Root.Add(new XElement("AccountType", accountType));
-                            xdocData.Root.Add(new XElement("HoldingBal", jsonObj["HoldingBalance"].ToString()));
-                            var xml = "<dsXml>" + xdocData.Root.ToString(SaveOptions.DisableFormatting) + "</dsXml>";
-
-                            if (step < 3 || remark.Contains("submit"))
-                            {
-                                var pdfData = Generate_AccountClosurePDF(xml, esignUrl, newBOID, userId, accountType, cmrBase64);
-                                EsignResponse esignResponse = new EsignResponse();
-                                if (pdfData != null)
-                                {
-                                    esignResponse.EsignUrl = pdfData.EsignUrl;
-                                    esignResponse.UnsignedPdf = pdfData.UnsignedPdf;
-                                    esignResponse.Status = pdfData.Status;
-                                    esignResponse.ClientCode = userId;
-                                    esignResponse.Remark = pdfData.Remark;
-                                    if (esignResponse.Status == "Y")
-                                    {
-                                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", esignResponse, ""));
-                                    }
-                                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", esignResponse, ""));
-                                }
-                                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "Not found", result, ""));
-                            }
-                            else if (step == 3)
-                            {
-                                string refN = _tradeWebRepository.ReKYC_MasterTable(userId, "Pending", "N", 2, "Account Closure PDF created, Call Esign Request for Account Closure unsigned pdf", "Account Closure");
-                                var strQuery = $"select * from Client_ModifyAttach (NoLock) where ma_cmcd = '{userId}' and ma_filename = 'UnSignedPdf' and ma_refno=" + refN + " And rm_RequestType = 'Account Closure' ";
-                                var tempDb = objUtility.OpenDataTable(strQuery);
-                                if (tempDb.Rows.Count > 0)
-                                {
-                                    var pdfBase64 = System.Convert.ToBase64String((byte[])tempDb.Rows[0]["ma_proof"]);
-                                    System.Data.DataSet ds = _tradeWebRepository.XMLCommonSPCall(xml, "SP_AccountTransferPDF");
-                                    if (ds.Tables[0].Rows.Count > 0)
-                                    {
-                                        string mobNo = ds.Tables[0].Rows[0]["MobileNo"].ToString();
-                                        string fullName = ds.Tables[0].Rows[0]["FullName"].ToString();
-                                        string yob = ds.Tables[0].Rows[0]["BirthYear"].ToString();
-                                        var esign_detail = _tradeWebRepository.UploadPdfForEsignSetu(refN, pdfBase64, mobNo, fullName, yob, esignUrl, userId + "_AccountClosure.pdf", userId, "Account Closure");
-                                        EsignResponse esignResponse = new EsignResponse();
-                                        esignResponse.EsignUrl = esign_detail;
-                                        esignResponse.UnsignedPdf = pdfBase64;
-                                        esignResponse.Status = "Y";
-                                        esignResponse.ClientCode = userId;
-                                        esignResponse.Remark = "Pdf uploaded on server, Please Esign the pdf.";
-                                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", esignResponse, ""));
-                                    }
-                                }
-                            }
-                            else if (step == 4)
-                            {
-                                string desc = _tradeWebRepository.ReKYC_GetSteps(userId, "rm_desc", "Account Closure");
-                                string refN = _tradeWebRepository.ReKYC_MasterTable(userId, "Pending", "N", 4, desc, "Account Closure");
-                                string strSql = string.Empty;
-                                strSql = "Select * From Client_ModifyAttach (NoLock) where ma_cmcd = '" + userId + "' and ma_status = 'N' and ma_filename = 'EsignRequest' and ma_refNo = " + refN;
-                                DataTable dt = objUtility.OpenDataTable(strSql);
-                                if (dt.Rows.Count > 0)
-                                {
-                                    EsignResponse esignResponse = new EsignResponse();
-                                    var getEsignReq = Newtonsoft.Json.Linq.JObject.Parse(Encoding.UTF8.GetString((byte[])dt.Rows[0]["ma_proof"]).ToString());
-                                    var signers = (string)getEsignReq["signers"][0]["url"];
-                                    var pdfBase64 = System.Convert.ToBase64String((byte[])dt.Rows[0]["ma_proof"]);
-                                    esignResponse.EsignUrl = signers;
-                                    esignResponse.UnsignedPdf = pdfBase64;
-                                    esignResponse.Status = "Y";
-                                    esignResponse.ClientCode = userId;
-                                    esignResponse.Remark = "You have not done esign, Please do esign for complete your Rekyc";
-                                    return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", esignResponse, ""));
-                                }
-                                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "failed", result, ""));
-                            }
-                            return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "failed", result, ""));
-                        }
-                        objUtility.UpdateLog(srNo, JsonConvert.SerializeObject(result), "");
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", result, ""));
-                    }
-                    else
-                    {
-                        objUtility.UpdateLog(srNo, "No Record Found", "");
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    objUtility.UpdateLog(srNo, "", ex.Message.ToString());
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        #endregion
-
-        #region TradeWeb CommonGrid API
-
-        //[Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        //[HttpPost("TradeWeb", Name = "TradeWeb")]
-        //public IActionResult TradeWebGrid(TradeWebDataGridRequest req)
-        //{
-        //    if (ModelState.IsValid)
-        //    {
-        //        try
-        //        {
-        //            var tokenS = GetToken();
-        //            var clientCode = tokenS.Claims.First(claim => claim.Type == "username").Value;
-
-        //            TradeWebDataGridResponse getData = _tradeWebRepository.TradeWebCommonGrid(clientCode, req);
-
-        //            if (string.IsNullOrWhiteSpace(getData.Message))
-        //            {
-        //                return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData.Data, ""));
-        //            }
-        //            else
-        //            {
-        //                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, getData.Message, returnDt, ""));
-        //            }
-        //        }
-        //        catch (Exception ex)
-        //        {
-        //            return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-        //        }
-        //    }
-        //    return BadRequest();
-        //}
-
         [HttpPost("SendEmail", Name = "SendEmail")]
-        public IActionResult SendEmail([FromBody] EmailSmsReqModel reqObject)
+        public async Task<IActionResult> SendEmail([FromBody] EmailSmsReqModel reqObject)
         {
             if (ModelState.IsValid)
             {
@@ -1928,16 +1003,22 @@ namespace TradeWeb.API.Controllers
                                 }
                                 strURLLink = strURLLink.Replace("<SENDERID3>", strSENDER);
                             }
-                            if (objUtility.GetWebParameter("SECURITYPROT").Trim() == "TLS12")
-                            {
-                                ServicePointManager.SecurityProtocol = (SecurityProtocolType)192 | (SecurityProtocolType)768 | (SecurityProtocolType)3072 | (SecurityProtocolType)48;
-                            }
-                            HttpWebRequest http = (HttpWebRequest)WebRequest.Create(strURLLink);
-                            HttpWebResponse response = (HttpWebResponse)http.GetResponse();
-                            StreamReader sr = new StreamReader(response.GetResponseStream());
-                            string content = sr.ReadToEnd();
+                            //if (objUtility.GetWebParameter("SECURITYPROT").Trim() == "TLS12")
+                            //{
+                            //    ServicePointManager.SecurityProtocol = (SecurityProtocolType)192 | (SecurityProtocolType)768 | (SecurityProtocolType)3072 | (SecurityProtocolType)48;
+                            //}
+                            //HttpWebRequest http = (HttpWebRequest)WebRequest.Create(strURLLink);
+                            //HttpWebResponse response = (HttpWebResponse)http.GetResponse();
+                            //StreamReader sr = new StreamReader(response.GetResponseStream());
+                            //string content = sr.ReadToEnd();
+                            //string strresponse = content;
+                            //sr.Close();
+
+                            HttpResponseMessage response = await objUtility.GetResponseAsync(strURLLink);
+
+                            string content = await response.Content.ReadAsStringAsync();
+
                             string strresponse = content;
-                            sr.Close();
 
                             if (response.StatusCode == HttpStatusCode.OK)
                             {
@@ -2023,7 +1104,7 @@ namespace TradeWeb.API.Controllers
                         {
                             try
                             {
-                                var jsonString = ((System.Text.Json.JsonElement)reqObject.requestObject).GetRawText();
+                                /*var jsonString = ((System.Text.Json.JsonElement)reqObject.requestObject).GetRawText();
                                 var jsonObject = JsonConvert.DeserializeObject<dynamic>(jsonString.ToString());
                                 string toEmailId = jsonObject["ToEmailId"];
                                 string ccEmailId = jsonObject["CCEmailId"];
@@ -2091,7 +1172,104 @@ namespace TradeWeb.API.Controllers
                                     return true;
                                 };
                                 System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
-                                smtp.Send(Msg);
+                                smtp.Send(Msg);*/
+
+                                var jsonString = ((System.Text.Json.JsonElement)reqObject.requestObject).GetRawText();
+
+                                var jsonObject = JsonConvert.DeserializeObject<dynamic>(jsonString);
+
+                                string toEmailId = jsonObject["ToEmailId"];
+                                string ccEmailId = jsonObject["CCEmailId"];
+                                string bccEmailId = jsonObject["BCCEmailId"];
+
+                                string[] toEmailIdStr = toEmailId.Split(",", StringSplitOptions.RemoveEmptyEntries);
+                                string[] ccEmailIdStr = ccEmailId.Split(",", StringSplitOptions.RemoveEmptyEntries);
+                                string[] bccEmailIdStr = bccEmailId.Split(",", StringSplitOptions.RemoveEmptyEntries);
+
+                                string subject = jsonObject["Subject"];
+                                string emailBody = jsonObject["Body"];
+
+                                var jsonAttachment = jsonObject["Attachment"];
+
+                                string strHost = strSMTPParamVal.Split('/')[0];
+                                int intPort = Convert.ToInt32(strSMTPParamVal.Split('/')[1]);
+                                string strUserID = strSMTPParamVal.Split('/')[2];
+                                string strPWD = strSMTPParamVal.Split('/')[3];
+                                string strEmail = strSMTPParamVal.Split('/')[4];
+                                string strSSL = strSMTPParamVal.Split('/')[5];
+
+                                var message = new MimeMessage();
+
+                                message.From.Add(new MailboxAddress("", strEmail));
+
+                                foreach (string toEmail in toEmailIdStr)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(toEmail))
+                                    {
+                                        message.To.Add(MailboxAddress.Parse(toEmail.Trim()));
+                                    }
+                                }
+
+                                foreach (string ccEmail in ccEmailIdStr)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(ccEmail))
+                                    {
+                                        message.Cc.Add(MailboxAddress.Parse(ccEmail.Trim()));
+                                    }
+                                }
+
+                                foreach (string bccEmail in bccEmailIdStr)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(bccEmail))
+                                    {
+                                        message.Bcc.Add(MailboxAddress.Parse(bccEmail.Trim()));
+                                    }
+                                }
+
+                                message.Subject = subject;
+
+                                var bodyBuilder = new BodyBuilder();
+
+                                bodyBuilder.HtmlBody = emailBody;
+
+                                if (jsonAttachment != null)
+                                {
+                                    var attchObject = JsonConvert.DeserializeObject<dynamic>(jsonAttachment.ToString());
+
+                                    foreach (var attFile in attchObject)
+                                    {
+                                        string fileName = attFile.FileName.ToString();
+                                        string base64 = attFile.Base64.ToString();
+
+                                        byte[] bytes = Convert.FromBase64String(base64);
+
+                                        bodyBuilder.Attachments.Add(fileName, bytes);
+                                    }
+                                }
+
+                                message.Body = bodyBuilder.ToMessageBody();
+
+                                using (var smtp = new MailKit.Net.Smtp.SmtpClient())
+                                {
+                                    // SSL bypass for TESTING/UAT only
+                                    smtp.ServerCertificateValidationCallback =
+                                        (sender, certificate, chain, sslPolicyErrors) => true;
+
+                                    smtp.Connect(
+                                        strHost,
+                                        intPort,
+                                        strSSL == "N"
+                                            ? SecureSocketOptions.None
+                                            : SecureSocketOptions.StartTls
+                                    );
+
+                                    smtp.Authenticate(strUserID, strPWD);
+
+                                    smtp.Send(message);
+
+                                    smtp.Disconnect(true);
+                                }
+
                                 return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", "Email has been sent successfully.", ""));
                             }
                             catch (Exception ex)
@@ -2112,544 +1290,11 @@ namespace TradeWeb.API.Controllers
             return BadRequest();
         }
 
-        //[Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin")]
-        [HttpPost("fillDropDown", Name = "fillDropDown")]
-        public IActionResult fillDropDown(string pageName, string ddlName, object jsonObj)
-        {
-            if (ModelState.IsValid)
-            {
-                try
-                {
-                    //var tokenS = GetToken();
-                    //var clientCode = tokenS.Claims.First(claim => claim.Type == "username").Value;
-                    DataTable dt = new DataTable();
-                    dt.Columns.Add("KeyName", typeof(string));
-                    dt.Columns.Add("KeyValue", typeof(string));
-                    string Strsql = " select em_name from Entity_Master where em_cd=(select min(em_cd) from Entity_master Where Len(Ltrim(Rtrim(em_cd))) = 1)";
-
-                    if (_configuration["IsTradeWeb"] == "T" || _configuration["IsTradeWeb"] == "O")
-                    {
-                        if (Convert.ToInt16(objUtility.fnFireQueryTradeWeb("Entity_master", "count(0)", " em_cd='B' and em_name like 'SYKES & RAY EQUITIES%' and 1", "1", true)) > 0)
-                            Strsql = " select em_name from Entity_Master with (nolock) where em_cd='B'";
-                        else
-                            Strsql = " select em_name from Entity_Master with (nolock) where em_cd =(select min(em_cd) from Entity_master)";
-                    }
-                    System.Data.DataSet ObjDataSet = objUtility.OpenDataSet(Strsql);
-                    dt.Rows.Add("Available in My Demat A/c", "Dp");
-                    if (ObjDataSet.Tables[0].Rows.Count > 0)
-                    {
-                        dt.Rows.Add("Lying with " + ObjDataSet.Tables[0].Rows[0]["em_name"].ToString().Trim() + " for various Reasons", "Ben");
-                    }
-                    else
-                    {
-                        dt.Rows.Add("Lying with your various Reasons", "Ben");
-                    }
-                    if (dt.Rows.Count > 0)
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", dt, ""));
-                    }
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "notfound", "No record found.", ""));
-                }
-                catch (Exception ex)
-                {
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        #endregion
-
-        [HttpGet("GetExchSeg", Name = "GetExchSeg")]
-        public IActionResult GetExchSeg()
-        {
-            try
-            {
-                var getData = _tradeWebRepository.GetExchSeg();
-                if (getData != null)
-                {
-                    return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                }
-                else
-                {
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                }
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-            }
-        }
-
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "CommonAPI")]
-        [HttpPost("CommonAPI", Name = "CommonAPI")]
-        public IActionResult CommonAPI(CommonAPIRequest req)
-        {
-            if (ModelState.IsValid)
-            {
-                long srNo = 0;
-                string connetionString = objUtility.GetConnectionStr();
-                try
-                {
-                    using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                    {
-                        conn.Open();
-                        srNo = objUtility.InsertLog(0, "COMMONAPI", "", System.Text.Json.JsonSerializer.Serialize(req), "", "", "", conn);
-                    }
-                    var tokenS = GetToken();
-                    var clientCode = tokenS.Claims.First(claim => claim.Type == "username").Value;
-
-                    bool blnAuth = _tradeWebRepository.CommonAPI_Authorize(req.ModuleName.Trim());
-
-                    if (!blnAuth)
-                    {
-                        objUtility.UpdateLog(srNo, "You are not authorise to use TradeWebAPI Web Service,Please contact SecMark.", "");
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "You are not authorise to use TradeWebAPI Web Service,Please contact SecMark.", returnDt, ""));
-                    }
-
-                    CommonModel model = new CommonModel();
-                    ReKYCRequest rekycReq = new ReKYCRequest();
-
-                    model.ProjectName = req.ProjectName.Trim();
-                    model.ModuleName = req.ModuleName.Trim();
-                    model.FunctionName = req.FunctionName.Trim();
-                    model.RequestString = req.RequestString.ToString();
-                    model.UserID = clientCode;
-                    model.RequestSource = "M";
-                    model.RequestUniqueID = "1";
-
-                    JArray result = _tradeWebRepository.Execute(model);
-                    CommonAPIResponse response = result[0].ToObject<CommonAPIResponse>();
-
-                    using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                    {
-                        conn.Open();
-                        if (response != null)
-                        {
-                            objUtility.UpdateLog(srNo, "", JsonConvert.SerializeObject(response), "", conn);
-                            if (response.ResponseFlag == "S")
-                            {
-                                return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", response.DATA, ""));
-                            }
-                            else
-                            {
-                                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", response.ResponseMessage, ""));
-                            }
-                        }
-                        else
-                        {
-                            objUtility.UpdateLog(srNo, "", "No Record Found", "", conn);
-                            return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                    {
-                        conn.Open();
-                        if (srNo > 0)
-                        {
-                            objUtility.UpdateLog(srNo, "", "", ex.Message.ToString(), conn);
-                        }
-                        else
-                        {
-                            objUtility.InsertLog(0, "COMMONAPI", "", System.Text.Json.JsonSerializer.Serialize(req), "", ex.Message.ToString(), "", conn);
-                        }
-                    }
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-                }
-            }
-            return BadRequest();
-        }
-
-        [HttpGet("GetDPID", Name = "GetDPID")]
-        public IActionResult GetDPID()
-        {
-            try
-            {
-                var getData = _tradeWebRepository.GetDPID();
-                if (getData != null)
-                {
-                    return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                }
-                else
-                {
-                    return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "No Record Found", returnDt, ""));
-                }
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
-            }
-        }
-
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "EstroWeb")]
-        [HttpPost, Route("EstroWeb")]
-        [Consumes("application/xml")]
-        public async Task<IActionResult> EstroWeb()
-        {
-            if (ModelState.IsValid)
-            {
-                long logSrNo = 0;
-                string logRespMessage = "", logErrorMessage = "";
-                string connetionString = objUtility.GetConnectionStr();
-                try
-                {
-                    string userId = "", companyCode = "";
-                    JwtSecurityToken token = GetToken();
-                    var userName = token.Claims.First(claim => claim.Type == "username").Value;
-                    string[] strUserID = userName.Split("|");
-                    if (strUserID.Length > 1)
-                    {
-                        userId = strUserID[1];
-                        companyCode = strUserID[0];
-                    }
-                    else
-                    {
-                        userId = strUserID[0];
-                    }
-                    using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
-                    {
-                        var xmlStr = await reader.ReadToEndAsync();
-                        XmlDocument xml = new XmlDocument();
-                        xml.LoadXml(xmlStr);
-                        ///// *********  For XML object J_Ui *********
-                        string jsonString = xml.GetElementsByTagName("J_Ui")[0].InnerText;
-
-                        if (string.IsNullOrWhiteSpace(jsonString))
-                        {
-                            return BadRequest("J_Ui element is empty");
-                        }
-                        // Replace smart quotes if any
-                        jsonString = "{" + jsonString.Replace("\u201C", "\"").Replace("\u201D", "\"") + "}";
-                        JUiModel jUiObject;
-                        try
-                        {
-                            // Deserialize the JSON string into a C# object
-                            jUiObject = JsonConvert.DeserializeObject<JUiModel>(jsonString);
-                        }
-                        catch (JsonException ex)
-                        {
-                            return BadRequest($"Invalid JSON in J_Ui element: {ex.Message}");
-                        }
-                        jsonString = xml.GetElementsByTagName("J_Api")[0].InnerText;
-
-                        if (!string.IsNullOrWhiteSpace(jsonString))
-                        {
-                            // Replace smart quotes if any
-                            jsonString = "{" + jsonString.Replace("\u201C", "\"").Replace("\u201D", "\"") + "}";
-                            JApi jApiObject;
-                            try
-                            {
-                                jApiObject = JsonConvert.DeserializeObject<JApi>(jsonString);
-                                jApiObject.UserId = userId.Trim();
-                                xml.DocumentElement["J_Api"].InnerText = JsonConvert.SerializeObject(jApiObject).Replace("{", "").Replace("}", "");
-                            }
-                            catch (JsonException ex)
-                            {
-                                return BadRequest($"Invalid JSON in J_Api element: {ex.Message}");
-                            }
-                        }
-                        string strModuleName = jUiObject.ActionName.Trim();
-                        string strFunctionName = jUiObject.Option.Trim();
-
-                        if (strFunctionName == "ChangePassword")
-                        {
-                            var dataXML = xml.GetElementsByTagName("X_Data")[0]?.InnerXml;
-                            XDocument xdocData = XDocument.Parse($"<root>{dataXML}</root>");
-                            string clientCode = userId; //xdocData.Root.Element("ClientCode")?.Value;
-                            string oldPassword = xdocData.Root.Element("OldPassword")?.Value;
-                            string newPassword = xdocData.Root.Element("NewPassword")?.Value;
-                            if (string.IsNullOrEmpty(clientCode))
-                            {
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "ClientCode should not be blank.", data = null, datarows = null }, Formatting.Indented));
-                            }
-                            else if (string.IsNullOrEmpty(oldPassword))
-                            {
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "Old Password should not be blank.", data = null, datarows = null }, Formatting.Indented));
-                            }
-                            else if (string.IsNullOrEmpty(newPassword))
-                            {
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "New Password should not be blank.", data = null, datarows = null }, Formatting.Indented));
-                            }
-                            /////// **** Check password validation and policies ****
-                            string pwdCondition = objUtility.CheckPasswordCondition(newPassword, companyCode, clientCode);
-                            if (!string.IsNullOrEmpty(pwdCondition))
-                            {
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = pwdCondition, data = null, datarows = null }, Formatting.Indented));
-                            }
-                            oldPassword = objUtility.mfnReplaceForSQLInjection(oldPassword);
-                            newPassword = objUtility.mfnReplaceForSQLInjection(newPassword);
-                            if (objUtility.GetWebParameter("TWEBENCPWD") == "Y")
-                            {
-                                oldPassword = objUtility.Encrypt(oldPassword);
-                                newPassword = objUtility.Encrypt(newPassword);
-                            }
-                            xdocData.Root.Element("OldPassword").Value = oldPassword;
-                            xdocData.Root.Element("NewPassword").Value = newPassword;
-                            xdocData.Root.Element("ClientCode")?.Remove();
-                            xdocData.Root.Add(new XElement("ClientCode", userId));
-                            xml.DocumentElement["X_Data"].InnerXml = xdocData.Root.ToString(SaveOptions.DisableFormatting).Replace("<root>", "").Replace("</root>", "");
-                            string strXMLCP = objUtility.SerializeToXml(xml, omitXmlDeclaration: true, indent: false, encoding: "utf-16");
-                            using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                            {
-                                conn.Open();
-                                logSrNo = objUtility.InsertLog(0, "EstroWeb", "", strXMLCP, "", "", clientCode, conn);
-                            }
-                            var getDataCP = _tradeWebRepository.CommonAPIrepoCall(strModuleName, strFunctionName, strXMLCP);
-                            if (getDataCP != null)
-                            {
-                                if (getDataCP.Data?.Tables[0]?.Rows.Count > 0)
-                                {
-                                    if (getDataCP.Data.Tables[0].Rows[0][0].Contains("success"))
-                                    {
-                                        logRespMessage = "Password changed successfully";
-                                        objUtility.AfterChangePasswordTblEntry(newPassword, companyCode, clientCode);
-                                        return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "", data = getDataCP.Data, datarows = getDataCP.DataRows }, Formatting.Indented));
-                                    }
-                                }
-                                logErrorMessage = "Old Password not matched";
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "Old password not matched.", data = null, datarows = null }, Formatting.Indented));
-                            }
-                            else
-                            {
-                                logErrorMessage = "Old Password not matched";
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "Old password not matched.", data = null, datarows = null }, Formatting.Indented));
-                            }
-                        }
-                        var filterxml = xml.GetElementsByTagName("X_Filter")[0]?.InnerXml;
-                        XDocument xdoc = XDocument.Parse($"<root>{filterxml}</root>");
-                        xdoc.Root.Element("ClientCode")?.Remove();
-                        xdoc.Root.Add(new XElement("ClientCode", userId));
-                        if (_configuration["IsEstroOffLine"] == "Y")
-                        {
-                            xdoc.Root.Element("CompanyCode")?.Remove();
-                            xdoc.Root.Add(new XElement("CompanyCode", companyCode));
-                        }
-                        xml.DocumentElement["X_Filter"].InnerXml = xdoc.Root.ToString(SaveOptions.DisableFormatting).Replace("<root>", "").Replace("</root>", "");
-
-                        string strXML = objUtility.SerializeToXml(xml, omitXmlDeclaration: true, indent: false, encoding: "utf-16");
-                        using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                        {
-                            conn.Open();
-                            logSrNo = objUtility.InsertLog(0, "EstroWeb", "", strXML, "", "", userId, conn);
-                        }
-                        var getData = _tradeWebRepository.CommonAPIrepoCall(strModuleName, strFunctionName, strXML);
-                        if (getData != null)
-                        {
-                            logRespMessage = "Success";
-                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "", data = getData.Data, datarows = getData.DataRows }, Formatting.Indented));
-                        }
-                        else
-                        {
-                            logRespMessage = "No record found";
-                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "No records found", data = null, datarows = null }, Formatting.Indented));
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logErrorMessage = ex.Message.ToString();
-                    return BadRequest(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = ex.Message.ToString(), data = null, datarows = null }, Formatting.Indented));
-                }
-                finally
-                {
-                    using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                    {
-                        conn.Open();
-                        objUtility.UpdateLog(logSrNo, "", logRespMessage, logErrorMessage, conn);
-                    }
-                }
-            }
-            return BadRequest();
-        }
-
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "CrossWeb")]
-        [HttpPost, Route("CrossWeb")]
-        [Consumes("application/xml")]
-        public async Task<IActionResult> CrossWeb()
-        {
-            if (ModelState.IsValid)
-            {
-                long logSrNo = 0;
-                string logRespMessage = "", logErrorMessage = "";
-                string connetionString = objUtility.GetConnectionStr();
-                try
-                {
-                    string userId = "", companyCode = "";
-                    JwtSecurityToken token = GetToken();
-                    var userName = token.Claims.First(claim => claim.Type == "username").Value;
-                    string[] strUserID = userName.Split("|");
-                    if (strUserID.Length > 1)
-                    {
-                        userId = strUserID[1];
-                        companyCode = strUserID[0];
-                    }
-                    else
-                    {
-                        userId = strUserID[0];
-                    }
-                    using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
-                    {
-                        var xmlStr = await reader.ReadToEndAsync();
-                        XmlDocument xml = new XmlDocument();
-                        xml.LoadXml(xmlStr);
-                        ///// *********  For XML object J_Ui *********
-                        string jsonString = xml.GetElementsByTagName("J_Ui")[0].InnerText;
-
-                        if (string.IsNullOrWhiteSpace(jsonString))
-                        {
-                            return BadRequest("J_Ui element is empty");
-                        }
-                        // Replace smart quotes if any
-                        jsonString = "{" + jsonString.Replace("\u201C", "\"").Replace("\u201D", "\"") + "}";
-                        JUiModel jUiObject;
-                        try
-                        {
-                            // Deserialize the JSON string into a C# object
-                            jUiObject = JsonConvert.DeserializeObject<JUiModel>(jsonString);
-                        }
-                        catch (JsonException ex)
-                        {
-                            return BadRequest($"Invalid JSON in J_Ui element: {ex.Message}");
-                        }
-                        jsonString = xml.GetElementsByTagName("J_Api")[0].InnerText;
-
-                        if (!string.IsNullOrWhiteSpace(jsonString))
-                        {
-                            // Replace smart quotes if any
-                            jsonString = "{" + jsonString.Replace("\u201C", "\"").Replace("\u201D", "\"") + "}";
-                            JApi jApiObject;
-                            try
-                            {
-                                jApiObject = JsonConvert.DeserializeObject<JApi>(jsonString);
-                                jApiObject.UserId = userId.Trim();
-                                xml.DocumentElement["J_Api"].InnerText = JsonConvert.SerializeObject(jApiObject).Replace("{", "").Replace("}", "");
-                            }
-                            catch (JsonException ex)
-                            {
-                                return BadRequest($"Invalid JSON in J_Api element: {ex.Message}");
-                            }
-                        }
-                        string strModuleName = jUiObject.ActionName.Trim();
-                        string strFunctionName = jUiObject.Option.Trim();
-
-                        if (strFunctionName == "ChangePassword")
-                        {
-                            var dataXML = xml.GetElementsByTagName("X_Data")[0]?.InnerXml;
-                            XDocument xdocData = XDocument.Parse($"<root>{dataXML}</root>");
-                            string clientCode = userId; //xdocData.Root.Element("ClientCode")?.Value;
-                            string oldPassword = xdocData.Root.Element("OldPassword")?.Value;
-                            string newPassword = xdocData.Root.Element("NewPassword")?.Value;
-                            if (string.IsNullOrEmpty(clientCode))
-                            {
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "ClientCode should not be blank.", data = null, datarows = null }, Formatting.Indented));
-                            }
-                            else if (string.IsNullOrEmpty(oldPassword))
-                            {
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "Old Password should not be blank.", data = null, datarows = null }, Formatting.Indented));
-                            }
-                            else if (string.IsNullOrEmpty(newPassword))
-                            {
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "New Password should not be blank.", data = null, datarows = null }, Formatting.Indented));
-                            }
-                            /////// **** Check password validation and policies ****
-                            string pwdCondition = objUtility.CheckPasswordCondition(newPassword, companyCode, clientCode);
-                            if (!string.IsNullOrEmpty(pwdCondition))
-                            {
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = pwdCondition, data = null, datarows = null }, Formatting.Indented));
-                            }
-                            oldPassword = objUtility.mfnReplaceForSQLInjection(oldPassword);
-                            newPassword = objUtility.mfnReplaceForSQLInjection(newPassword);
-                            if (objUtility.GetWebParameter("TWEBENCPWD") == "Y")
-                            {
-                                oldPassword = objUtility.Encrypt(oldPassword);
-                                newPassword = objUtility.Encrypt(newPassword);
-                            }
-                            xdocData.Root.Element("OldPassword").Value = oldPassword;
-                            xdocData.Root.Element("NewPassword").Value = newPassword;
-                            xdocData.Root.Element("ClientCode")?.Remove();
-                            xdocData.Root.Add(new XElement("ClientCode", userId));
-                            xml.DocumentElement["X_Data"].InnerXml = xdocData.Root.ToString(SaveOptions.DisableFormatting).Replace("<root>", "").Replace("</root>", "");
-                            string strXMLCP = objUtility.SerializeToXml(xml, omitXmlDeclaration: true, indent: false, encoding: "utf-16");
-                            using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                            {
-                                conn.Open();
-                                logSrNo = objUtility.InsertLog(0, "CrossWeb", "", strXMLCP, "", "", clientCode, conn);
-                            }
-                            var getDataCP = _tradeWebRepository.CommonAPIrepoCall(strModuleName, strFunctionName, strXMLCP);
-                            if (getDataCP != null)
-                            {
-                                if (getDataCP.Data?.Tables[0]?.Rows.Count > 0)
-                                {
-                                    if (getDataCP.Data.Tables[0].Rows[0][0].Contains("success"))
-                                    {
-                                        logRespMessage = "Password changed successfully";
-                                        objUtility.AfterChangePasswordTblEntry(newPassword, companyCode, clientCode);
-                                        return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "", data = getDataCP.Data, datarows = getDataCP.DataRows }, Formatting.Indented));
-                                    }
-                                }
-                                logErrorMessage = "Old Password not matched";
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "Old password not matched.", data = null, datarows = null }, Formatting.Indented));
-                            }
-                            else
-                            {
-                                logErrorMessage = "Old Password not matched";
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "Old password not matched.", data = null, datarows = null }, Formatting.Indented));
-                            }
-                        }
-                        var filterxml = xml.GetElementsByTagName("X_Filter")[0]?.InnerXml;
-                        XDocument xdoc = XDocument.Parse($"<root>{filterxml}</root>");
-                        xdoc.Root.Element("ClientCode")?.Remove();
-                        xdoc.Root.Add(new XElement("ClientCode", userId));
-                        if (_configuration["IsCrossOffLine"] == "Y")
-                        {
-                            xdoc.Root.Element("CompanyCode")?.Remove();
-                            xdoc.Root.Add(new XElement("CompanyCode", companyCode));
-                        }
-                        xml.DocumentElement["X_Filter"].InnerXml = xdoc.Root.ToString(SaveOptions.DisableFormatting).Replace("<root>", "").Replace("</root>", "");
-
-                        string strXML = objUtility.SerializeToXml(xml, omitXmlDeclaration: true, indent: false, encoding: "utf-16");
-                        using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                        {
-                            conn.Open();
-                            logSrNo = objUtility.InsertLog(0, "CrossWeb", "", strXML, "", "", userId, conn);
-                        }
-                        var getData = _tradeWebRepository.CommonAPIrepoCall(strModuleName, strFunctionName, strXML);
-                        if (getData != null)
-                        {
-                            logRespMessage = "Success";
-                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "", data = getData.Data, datarows = getData.DataRows }, Formatting.Indented));
-                        }
-                        else
-                        {
-                            logRespMessage = "No record found";
-                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "No records found", data = null, datarows = null }, Formatting.Indented));
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logErrorMessage = ex.Message.ToString();
-                    return BadRequest(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = ex.Message.ToString(), data = null, datarows = null }, Formatting.Indented));
-                }
-                finally
-                {
-                    using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                    {
-                        conn.Open();
-                        objUtility.UpdateLog(logSrNo, "", logRespMessage, logErrorMessage, conn);
-                    }
-                }
-            }
-            return BadRequest();
-        }
-
         [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin,TradeMobile,ComAPI,CrossNet,EstroNet,CrossWeb,EstroWeb,Branch")]
         [HttpPost, Route("TradeWeb")]
         [Consumes("application/xml")]
         [TypeFilter(typeof(ValidateUser), Arguments = new object[] { "TradeWeb" })]
+        [ServiceFilter(typeof(E2EDecryptFilter))]
         [ServiceFilter(typeof(EncryptResponseAttribute))]
         public async Task<IActionResult> TradeWeb()
         {
@@ -2865,61 +1510,6 @@ namespace TradeWeb.API.Controllers
                             xml.DocumentElement["X_Data"].InnerXml = xdocData.Root.ToString(SaveOptions.DisableFormatting).Replace("<root>", "").Replace("</root>", "");
                         }
 
-                        if (strFunctionName.ToUpper() == "GETAGREEMENT") //// For Agreement pdf
-                        {
-                            try
-                            {
-                                DataSet dsAggr = objUtility.OpenDataSet("SELECT ISNULL(SP_SYSVALUE,'') AS AgreementFile FROM WEBPARAMETER (NOLOCK) WHERE SP_PARMCD = 'KYCPDF'");
-                                if (dsAggr?.Tables[0]?.Rows.Count > 0)
-                                {
-                                    string kycPdfPath = dsAggr.Tables[0].Rows[0][0].ToString();
-                                    if (!string.IsNullOrEmpty(kycPdfPath))
-                                    {
-                                        string clintCode = "";
-                                        try
-                                        {
-                                            var dataXML = xml.GetElementsByTagName("X_Data")[0]?.InnerXml;
-                                            XDocument xdocData = XDocument.Parse($"<root>{dataXML}</root>");
-                                            string uid = xdocData.Root.Element("ClientCode")?.Value;
-
-                                            string encKey = _configuration["epwdKey"];
-                                            encKey = objUtility.Decrypt(encKey);
-                                            var keybytes = Encoding.UTF8.GetBytes(encKey);
-                                            var iv = Encoding.UTF8.GetBytes(encKey);
-                                            var encrypted = Convert.FromBase64String(uid);
-                                            clintCode = DecryptStringFromBytes(encrypted, keybytes, iv);
-                                        }
-                                        catch
-                                        { }
-                                        if (string.IsNullOrEmpty(clintCode))
-                                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "UserId Not Found", data = null, datarows = null }, Formatting.Indented));
-
-                                        string path = Path.Combine(kycPdfPath, clintCode) + ".pdf";
-                                        var docBytes = System.IO.File.ReadAllBytes(path);
-                                        //string docBase64 = "data:application/pdf;base64," + Convert.ToBase64String(docBytes);
-                                        string docBase64 = Convert.ToBase64String(docBytes);
-
-                                        if (docBase64 != null)
-                                        {
-                                            dsAggr.Tables[0].TableName = "rs0";
-                                            dsAggr.Tables[0].Rows[0][0] = docBase64;
-                                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "success", data = dsAggr, datarows = null }, Formatting.Indented));
-                                        }
-                                        else
-                                        {
-                                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "No Record Found", data = null, datarows = null }, Formatting.Indented));
-                                        }
-                                    }
-                                }
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "File path not found!", data = null, datarows = null }, Formatting.Indented));
-                            }
-                            catch (Exception ex)
-                            {
-                                return BadRequest(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = ex.Message.ToString(), data = null, datarows = null }, Formatting.Indented));
-                            }
-                        }
-
-
                         if (strModuleName.ToUpper() == "QUERYFORM" && strFunctionName.ToUpper() == "VALIDATEPASSWORD")
                         {
                             var dataXML = xml.GetElementsByTagName("X_Filter_Multiple")[0]?.InnerXml;
@@ -2964,6 +1554,28 @@ namespace TradeWeb.API.Controllers
                             xdoc.Root.Add(new XElement("CompanyCode", companyCode));
                         }
 
+                        var xDataNode = xml.GetElementsByTagName("X_Data")[0];
+
+                        bool isEmailTemplateSave = string.Equals(strModuleName?.Trim(), "EMAILTEMPLATE", StringComparison.OrdinalIgnoreCase) &&
+                            (string.Equals(strFunctionName?.Trim(), "ADD", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(strFunctionName?.Trim(), "EDIT", StringComparison.OrdinalIgnoreCase));
+
+                        // 1. sanitize/validate first
+                        if (xDataNode != null && isEmailTemplateSave)
+                        {
+                            var errors = objUtility.SanitizeXData(xDataNode);
+                            if (errors.Count > 0)
+                            {
+                                return Ok(new
+                                {
+                                    success = false,
+                                    message = string.Join("; ", errors),
+                                    data = (object)null,
+                                    datarows = (object)null
+                                });
+                            }
+                        }
+
                         string pdfType = "", entryName = "", getJson = "", reportType = "";
 
                         var xDataFilter = xml.GetElementsByTagName("X_Data")[0]?.InnerXml;
@@ -2982,6 +1594,10 @@ namespace TradeWeb.API.Controllers
                             if (strModuleName.ToUpper() == "LETTERGENERATION" && strFunctionName.ToUpper() == "TYPSTMAIL" && strReportDisplay.ToUpper() == "D")
                             {
                                 pdfType = xFilter.Root.Element("TemplateName")?.Value;
+                            }
+                            else if (strFunctionName.ToUpper() == "GENERATEPDF")
+                            {
+                                pdfType = xFilter.Root.Element("PdfReportName")?.Value;
                             }
                         }
 
@@ -3103,20 +1719,20 @@ namespace TradeWeb.API.Controllers
                                     }
                                 }
                             }
-
+                            
                             if (string.IsNullOrEmpty(aesKey))
                             {
                                 logErrorMessage = JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "CDSL MP Encrypt Data Error - AES key cannot be blank.", data = null, datarows = null });
                                 return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "CDSL MP Encrypt Data Error - AES key cannot be blank.", data = null, datarows = null }, Formatting.Indented));
                             }
 
-                            string strJson = JsonConvert.SerializeObject(reqJson);
+                            //string strJson = JsonConvert.SerializeObject(reqJson);
 
-                            var finljson = strJson.Replace(@"\", "");
-                            finljson = finljson.Replace("\"[{", "[{");
-                            finljson = finljson.Replace("}]\"", "}]");
+                            //var finljson = strJson.Replace(@"\", "");
+                            //finljson = finljson.Replace("\"[{", "[{");
+                            //finljson = finljson.Replace("}]\"", "}]");
 
-                            var EncryptedData = objUtility.EDIS_Encrypt(finljson, aesKey);
+                            var EncryptedData = objUtility.EDIS_Encrypt(reqJson, aesKey);
                             DataSet dsRes = new DataSet();
                             dsRes.Tables.Add("rs0");
                             dsRes.Tables[0].Columns.Add("EncryptedData", typeof(string));
@@ -3132,7 +1748,7 @@ namespace TradeWeb.API.Controllers
                             string ClientCd = xdocData.Root.Element("ClientCode")?.Value;
                             string OTPType = xdocData.Root.Element("Type")?.Value;
 
-                            DataTable dtResponse = objUtility.TradeMobileSendOTP(ClientCd, "TradeWeb", OTPType, "Admin");
+                            DataTable dtResponse = await objUtility.TradeMobileSendOTP(ClientCd, "TradeWeb", OTPType, "Admin");
                             string strStatus = dtResponse.Rows[0]["Status"].ToString();
                             string strMessage = dtResponse.Rows[0]["Message"].ToString();
 
@@ -3200,6 +1816,60 @@ namespace TradeWeb.API.Controllers
                             }
                         }
 
+                        if (strFunctionName.ToUpper() == "GETAGREEMENT") //// For Agreement pdf
+                        {
+                            try
+                            {
+                                DataSet dsAggr = objUtility.OpenDataSet("SELECT ISNULL(SP_SYSVALUE,'') AS AgreementFile FROM WEBPARAMETER (NOLOCK) WHERE SP_PARMCD = 'KYCPDF'");
+                                if (dsAggr?.Tables[0]?.Rows.Count > 0)
+                                {
+                                    string kycPdfPath = dsAggr.Tables[0].Rows[0][0].ToString();
+                                    if (!string.IsNullOrEmpty(kycPdfPath))
+                                    {
+                                        string clintCode = "";
+                                        try
+                                        {
+                                            var dataXML = xml.GetElementsByTagName("X_Data")[0]?.InnerXml;
+                                            XDocument xdocData = XDocument.Parse($"<root>{dataXML}</root>");
+                                            string uid = xdocData.Root.Element("ClientCode")?.Value;
+
+                                            string encKey = _configuration["epwdKey"];
+                                            encKey = objUtility.Decrypt(encKey);
+                                            var keybytes = Encoding.UTF8.GetBytes(encKey);
+                                            var iv = Encoding.UTF8.GetBytes(encKey);
+                                            var encrypted = Convert.FromBase64String(uid);
+                                            clintCode = DecryptStringFromBytes(encrypted, keybytes, iv);
+                                        }
+                                        catch
+                                        { }
+                                        if (string.IsNullOrEmpty(clintCode))
+                                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "UserId Not Found", data = null, datarows = null }, Formatting.Indented));
+
+                                        string path = Path.Combine(kycPdfPath, clintCode) + ".pdf";
+                                        var docBytes = System.IO.File.ReadAllBytes(path);
+                                        //string docBase64 = "data:application/pdf;base64," + Convert.ToBase64String(docBytes);
+                                        string docBase64 = Convert.ToBase64String(docBytes);
+
+                                        if (docBase64 != null)
+                                        {
+                                            dsAggr.Tables[0].TableName = "rs0";
+                                            dsAggr.Tables[0].Rows[0][0] = docBase64;
+                                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "success", data = dsAggr, datarows = null }, Formatting.Indented));
+                                        }
+                                        else
+                                        {
+                                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "No Record Found", data = null, datarows = null }, Formatting.Indented));
+                                        }
+                                    }
+                                }
+                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "File path not found!", data = null, datarows = null }, Formatting.Indented));
+                            }
+                            catch (Exception ex)
+                            {
+                                return BadRequest(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = ex.Message.ToString(), data = null, datarows = null }, Formatting.Indented));
+                            }
+                        }
+
                         var getData = _tradeWebRepository.CommonAPIrepoCall(strModuleName, strFunctionName, strXML);
 
                         if (getData?.Data?.Tables != null && getData.Data.Tables.Count > 0)
@@ -3225,7 +1895,6 @@ namespace TradeWeb.API.Controllers
                         }
                         if (strReportDisplay == "D")
                         {
-                            if (strFunctionName == "AccountOpenGenrate") pdfType = "ACCOUNTOPENINGLETTER";
                             typstResponse = _tradeWebRepository.CompileTypst(strModuleName, strFunctionName, getData.Data, pdfType);
                             logRespMessage = JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "" });
 
@@ -3265,12 +1934,6 @@ namespace TradeWeb.API.Controllers
                             typstResponse = _tradeWebRepository.CompileTypstSeperateFiles(strModuleName, strFunctionName, getData.Data, pdfType);
                             return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "", data = typstResponse, datarows = null }, Formatting.Indented));
                         }
-                        else if (strReportDisplay == "J")//// Using Table Loop
-                        {
-                            string jsonData = getData.Data.Tables[0].Rows[0]["Column1"].ToString();
-                            typstResponse = _tradeWebRepository.GenerateTypstAccountOpeningJson(strModuleName, strFunctionName, jsonData);
-                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "", data = typstResponse, datarows = null }, Formatting.Indented));
-                        }
                         else if (strReportDisplay == "Z")  /// For single and multiple zip creation
                         {
                             typstResponse = _tradeWebRepository.DownloadMultiplePdfZip(strModuleName, strFunctionName, getData.Data, pdfType);
@@ -3279,6 +1942,12 @@ namespace TradeWeb.API.Controllers
                         else if (strReportDisplay == "X")  /// For Excel Export
                         {
                             typstResponse = _tradeWebRepository.CompileExcelExport(strModuleName, strFunctionName, getData.Data);
+                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "", data = typstResponse, datarows = null }, Formatting.Indented));
+                        }
+                        else if (strFunctionName == "GeneratePDF")//// For creating Quest pdf and add in table for send auto mail // P for download pdf
+                        {
+                            typstResponse = await _tradeWebRepository.GenerateQuestPDFusingDynamicJson(pdfType, getData.Data.Tables[0], userId);
+
                             return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "", data = typstResponse, datarows = null }, Formatting.Indented));
                         }
                         if (getData != null)
@@ -3381,112 +2050,9 @@ namespace TradeWeb.API.Controllers
             return BadRequest();
         }
 
-        [Authorize(AuthenticationSchemes = "Bearer", Roles = "CrossNet")]
-        [HttpPost, Route("CrossNet")]
-        [Consumes("application/xml")]
-        public async Task<IActionResult> CrossNet()
-        {
-            if (ModelState.IsValid)
-            {
-                long logSrNo = 0;
-                string logRespMessage = "", logErrorMessage = "";
-                string connetionString = objUtility.GetConnectionStr();
-                try
-                {
-                    string userId = "";
-                    string strXML = "";
-                    string strModuleName = "";
-                    string strFunctionName = "";
-                    JwtSecurityToken token = GetToken();
-                    var userName = token.Claims.First(claim => claim.Type == "username").Value;
-                    var role = token.Claims.First(claim => claim.Type == ClaimTypes.Role).Value;
-                    string[] strUserID = userName.Split("|");
-                    userId = userName;
-                    using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
-                    {
-                        var xmlStr = await reader.ReadToEndAsync();
-                        XmlDocument xml = new XmlDocument();
-                        xml.LoadXml(xmlStr);
-
-                        CommonXMLResponse xmlResponse = objUtility.CreateCommonXML(xml, role, userId);
-                        if (xmlResponse.Success)
-                        {
-                            strXML = objUtility.SerializeToXml(xml, omitXmlDeclaration: true, indent: false, encoding: "utf-16");
-                            strModuleName = xmlResponse.ModuleName;
-                            strFunctionName = xmlResponse.FunctionName;
-                        }
-                        else
-                        {
-                            return BadRequest(xmlResponse.Message);
-                        }
-
-                        using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                        {
-                            conn.Open();
-                            logSrNo = objUtility.InsertLog(0, "CrossNet", "", strXML, "", "", userId, conn);
-                        }
-                        var getData = _tradeWebRepository.CommonAPIrepoCall(strModuleName, strFunctionName, strXML);
-                        if (getData != null)
-                        {
-                            logRespMessage = "Success";
-                            //return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "", data = getData.Data, datarows = getData.DataRows }, Formatting.Indented));
-                            if (getData.Data != null && getData.Data.Tables.Count > 0 && getData.Data.Tables[0].Columns.Count > 0 && getData.Data.Tables[0].Columns[0].ColumnName == "Column1")
-                            {
-                                object column1Json;
-                                var column1Value = getData.Data.Tables[0].Rows[0]["Column1"].ToString();
-                                try
-                                {
-                                    column1Json = JsonConvert.DeserializeObject(column1Value);
-                                }
-                                catch (JsonException)
-                                {
-                                    // Handle invalid JSON in 'Column1'
-                                    //return BadRequest(new
-                                    //{
-                                    //    success = false,
-                                    //    message = $"Invalid JSON in Column1: {ex.Message}",
-                                    //    data = (object)null,
-                                    //    datarows = getData.DataRows
-                                    //});
-                                    return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = getData.Success, message = getData.Message, data = getData.Data, datarows = getData.DataRows }, Formatting.Indented));
-                                }
-                                var result = new
-                                {
-                                    rs0 = column1Json
-                                };
-                                return Ok(JsonConvert.SerializeObject(new { success = getData.Success, message = getData.Message, data = result, datarows = getData.DataRows }, Formatting.Indented));
-                            }
-                            else
-                            {
-                                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = getData.Success, message = getData.Message, data = getData.Data, datarows = getData.DataRows }, Formatting.Indented));
-                            }
-                        }
-                        else
-                        {
-                            logRespMessage = "No record found";
-                            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "No records found", data = null, datarows = null }, Formatting.Indented));
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logErrorMessage = ex.Message.ToString();
-                    return BadRequest(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = ex.Message.ToString(), data = null, datarows = null }, Formatting.Indented));
-                }
-                finally
-                {
-                    using (Microsoft.Data.SqlClient.SqlConnection conn = new Microsoft.Data.SqlClient.SqlConnection(connetionString))
-                    {
-                        conn.Open();
-                        objUtility.UpdateLog(logSrNo, "", logRespMessage, logErrorMessage, conn);
-                    }
-                }
-            }
-            return BadRequest();
-        }
-
         [HttpPost, Route("InitializeLogin")]
         [Consumes("application/xml")]
+        [ServiceFilter(typeof(E2EDecryptFilter))]
         [ServiceFilter(typeof(EncryptResponseAttribute))]
         public async Task<IActionResult> InitializeLogin()
         {
@@ -3590,7 +2156,7 @@ namespace TradeWeb.API.Controllers
                                         : ipAddress.MapToIPv4().ToString();
                             }
 
-                            var response = _tradeWebRepository.Login(userId, password, epassword, key, loginAs, product, icpv, feature, "", ip);
+                            var response = await _tradeWebRepository.Login(userId, password, epassword, key, loginAs, product, icpv, feature, "", ip);
                             logRespMessage = response;
                             return Ok(response);
                         }
@@ -3605,7 +2171,8 @@ namespace TradeWeb.API.Controllers
                             string role = "";
                             DateTime expiry = new DateTime();
                             string strLoginAs = "";
-                            var datetimeExp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, UtilityCommon.GetIndianTimeZone());
+                            //var datetimeExp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("India Standard Time"));
+                            var datetimeExp = DateTime.UtcNow;
 
                             int refreshExpTime = 0;
 
@@ -3633,8 +2200,9 @@ namespace TradeWeb.API.Controllers
                                 objUtility.ExecuteSQL(Strsql);
                             }
 
-                            var currDatetime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, UtilityCommon.GetIndianTimeZone());
-                            if (string.IsNullOrWhiteSpace(storedToken) || expiry < currDatetime)
+                            //var currDatetime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("India Standard Time"));
+                            var currDatetime = DateTime.UtcNow;
+                            if (string.IsNullOrWhiteSpace(storedToken) || expiry <= currDatetime)
                             {
                                 //return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "", data = dsRes, datarows = new List<string> { dtRes.Rows.Count.ToString() } }, Formatting.Indented));
                                 logRespMessage = "Invalid or expired refresh token.";
@@ -3687,7 +2255,8 @@ namespace TradeWeb.API.Controllers
 
                             (string tokenString, string refreshToken) = _tradeWebRepository.RefreshToken(UserCode, role, guidVal.ToString(), expTime, strUserAccess, strLoginAs, refExpTime, branch);
 
-                            dtRes.Rows.Add(tokenString, refreshToken, datetimeExp.AddMinutes(refreshExpTime).ToString("yyyy/MM/dd HH:mm:ss"));
+                            //dtRes.Rows.Add(tokenString, refreshToken, datetimeExp.AddMinutes(refreshExpTime).ToString("yyyy/MM/dd HH:mm:ss"));
+                            dtRes.Rows.Add(tokenString, refreshToken, datetimeExp.AddMinutes(refreshExpTime).ToString(UtcDateTimeFormat));
 
                             DataSet dsRes = new DataSet();
                             dsRes.Tables.Add(dtRes);
@@ -3743,7 +2312,7 @@ namespace TradeWeb.API.Controllers
                                 string.Equals(strModuleName, "CrossNet", StringComparison.OrdinalIgnoreCase) ? "CrossWeb" :
                                 strModuleName;
 
-                            DataTable dtResponse = objUtility.TradeMobileSendOTP(clientCode, ProductFP, "FP", "");
+                            DataTable dtResponse = await objUtility.TradeMobileSendOTP(clientCode, ProductFP, "FP", "");
                             string strStatus = dtResponse.Rows[0]["Status"].ToString();
                             string strMessage = dtResponse.Rows[0]["Message"].ToString();
                             if (strStatus == "Y")
@@ -4017,7 +2586,7 @@ namespace TradeWeb.API.Controllers
                                 /*Guid guidVal = Guid.NewGuid();
                                 tokenString = GenerateJSONWebToken(new TradeWebLoginModel { username = userId, password = "", role = role, guid = guidVal.ToString() });
                                 int expTime = Convert.ToInt32(_configuration["tokenExpireTime"]);
-                                var datetimeExp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, UtilityCommon.GetIndianTimeZone());
+                                var datetimeExp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("India Standard Time"));
                                 var userList = _tradeWebRepository.UserDetails(userId, "", true, strModuleName, role);
 
                                 tokenResponse result = new tokenResponse();
@@ -4128,7 +2697,7 @@ namespace TradeWeb.API.Controllers
                                     {
                                         refreshExpTime = Convert.ToInt32(_configuration["refreshTokenExpireTime"]);
                                     }
-                                    //var datetimeExp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, UtilityCommon.GetIndianTimeZone());
+                                    //var datetimeExp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("India Standard Time"));
 
                                     if (product.Trim() == "T")
                                     {
@@ -4853,13 +3422,15 @@ namespace TradeWeb.API.Controllers
                                 if (objUtility.fnchkTable("Other_Products"))
                                 {
                                     string strDPParamName = "";
+                                    string DPApplicationName = "";
                                     strsql = "select * from Other_Products where OP_Product in ('Cross','Estro','Commex') and OP_Status = 'A'";
                                     DataTable dtOP = objUtility.OpenDataTable(strsql);
                                     foreach (DataRow dr in dtOP.Rows)
                                     {
                                         if (dr["OP_Product"].ToString().Trim() == "Cross")
                                         {
-                                            strDPParamName = "CrossWeb";
+                                            strDPParamName = "CrossWeb" + (strParmUAT == "Y" ? "UAT" : "");
+                                            DPApplicationName = "CrossWeb";
 
                                             /*if (Message != "")
                                             {
@@ -4868,11 +3439,13 @@ namespace TradeWeb.API.Controllers
                                         }
                                         else if (dr["OP_Product"].ToString().Trim() == "Estro")
                                         {
-                                            strDPParamName = "EstroWeb";
+                                            strDPParamName = "EstroWeb" + (strParmUAT == "Y" ? "UAT" : "");
+                                            DPApplicationName = "EstroWeb";
                                         }
                                         else if (dr["OP_Product"].ToString().Trim() == "Commex")
                                         {
-                                            strDPParamName = "Commex";
+                                            strDPParamName = "Commex" + (strParmUAT == "Y" ? "UAT" : "");
+                                            DPApplicationName = "Commex";
                                         }
 
                                         if (strDPParamName != "")
@@ -4890,7 +3463,7 @@ namespace TradeWeb.API.Controllers
                                                 bool isDPQueryDateValid = DateTime.TryParseExact(strDPParamDBDate, "yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out DPParamDBDate);
 
                                                 //var client = new HttpClient();
-                                                urlWithParams = $"{TplusAPIURL}/Tplus/Versions?ApplicationName={Uri.EscapeDataString(strDPParamName)}&Date={Uri.EscapeDataString(DPParamDBDate.ToString("yyyyMMddHHmmss"))}";
+                                                urlWithParams = $"{TplusAPIURL}/Tplus/Versions?ApplicationName={Uri.EscapeDataString(DPApplicationName)}&Date={Uri.EscapeDataString(DPParamDBDate.ToString("yyyyMMddHHmmss"))}";
                                                 if (strParmUAT == "Y")
                                                 {
                                                     urlWithParams += "&Environment=UAT";
@@ -4907,7 +3480,7 @@ namespace TradeWeb.API.Controllers
 
                                                 versionInfo = objUtility.GetVersionInfo(VersionRes, sqlcon);
 
-                                                strVersionExc = objUtility.ExecuteVersion(strDPParamName, strDPParamName, dtRes, versionInfo, VersionRes, sqlcon);
+                                                strVersionExc = objUtility.ExecuteVersion(strDPParamName, DPApplicationName, dtRes, versionInfo, VersionRes, sqlcon);
                                                 if (strVersionExc != "")
                                                 {
                                                     return Ok(strVersionExc);
@@ -5007,8 +3580,8 @@ namespace TradeWeb.API.Controllers
                         }
                         else if (strFunctionName == "LoginSSO")
                         {
-                            var ssoResp = _tradeWebRepository.LoginSSO_Req(xmlStr);
-                            logRespMessage = ssoResp;
+                            var ssoResp = await _tradeWebRepository.LoginSSO_Req(xmlStr);
+                            logRespMessage = Convert.ToString(ssoResp);
                             return Ok(ssoResp);
                         }
 
@@ -5046,43 +3619,218 @@ namespace TradeWeb.API.Controllers
             return BadRequest();
         }
 
-        [HttpPost("UpdatePasswordFP", Name = "UpdatePasswordFP")]
-        public IActionResult UpdatePasswordFP([FromBody] UpdatePasswordFP request)
+        [Route("ReceiveCallback/{source?}")]
+        [AcceptVerbs("GET", "POST")]
+        public async Task<IActionResult> ReceiveCallback(string source = null)
         {
-            if (ModelState.IsValid)
+            long logSrNo = 0;
+            string logRespMessage = "", logErrorMessage = "", logReq = "";
+            string strDebugFlag = "";
+            string connetionString = objUtility.GetConnectionStr();
+
+            try
             {
-                try
+                string body = string.Empty;
+
+                object bodyNode = null;
+
+                Request.EnableBuffering();
+
+                if (Request.HasFormContentType)
                 {
-                    if (string.IsNullOrEmpty(request.userId))
+                    var form = await Request.ReadFormAsync();
+
+                    bodyNode = form.Keys
+                        .ToDictionary(k => k, v => form[v].ToString());
+                }
+                else
+                {
+                    using (var reader = new StreamReader(Request.Body, Encoding.UTF8, leaveOpen: true))
                     {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "UserId should not be blank!", ""));
-                    }
-                    request.userId = objUtility.mfnReplaceForSQLInjection(request.userId.Trim());
-                    request.newPassword = objUtility.mfnReplaceForSQLInjection(request.newPassword.Trim());
-                    var getData = _tradeWebRepository.UpdatePasswordFP(request.userId, request.otp, request.newPassword);
-                    if (getData.status == "success")
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(true, (int)HttpStatusCode.OK, "success", getData, ""));
-                    }
-                    else
-                    {
-                        return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", getData, ""));
+                        var rawBody = await reader.ReadToEndAsync();
+                        Request.Body.Position = 0;
+
+                        if (!string.IsNullOrWhiteSpace(rawBody))
+                        {
+                            if (Request.ContentType != null &&
+                                Request.ContentType.Contains("application/json"))
+                            {
+                                bodyNode = JsonConvert.DeserializeObject(rawBody);
+                            }
+                            else
+                            {
+                                bodyNode = rawBody;
+                            }
+                        }
                     }
                 }
-                catch (Exception ex)
+
+                var logObject = new
                 {
-                    return BadRequest(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.BadRequest, "error", ex.Message.ToString(), ""));
+                    Method = Request.Method,
+                    Path = Request.Path.ToString(),
+                    QueryString = Request.QueryString.ToString(),
+                    ContentType = Request.ContentType,
+                    Body = bodyNode,
+                    ClientIp = HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    RequestTimeUtc = DateTime.UtcNow.ToString("o"),
+                    TraceIdentifier = HttpContext.TraceIdentifier
+                };
+
+                string logJson = JsonConvert.SerializeObject(logObject);
+
+                strDebugFlag = "Y";
+
+                if (strDebugFlag == "Y")
+                {
+                    using (SqlConnection conn = new SqlConnection(connetionString))
+                    {
+                        conn.Open();
+                        logSrNo = objUtility.InsertLog(0, "ReceiveCallback", "", logJson, "", "", "", conn);
+                    }
+                }
+
+                body = string.Empty;
+                bodyNode = string.Empty;
+
+                if (Request.HasFormContentType)
+                {
+                    var form = await Request.ReadFormAsync();
+
+                    bodyNode = form.Keys
+                        .ToDictionary(k => k, v => form[v].ToString());
+                }
+                else
+                {
+                    using (var reader = new StreamReader(Request.Body, Encoding.UTF8, leaveOpen: true))
+                    {
+                        var rawBody = await reader.ReadToEndAsync();
+                        Request.Body.Position = 0;
+
+                        if (!string.IsNullOrWhiteSpace(rawBody))
+                        {
+                            if (Request.ContentType != null &&
+                                Request.ContentType.Contains("application/json"))
+                            {
+                                bodyNode = rawBody;
+                            }
+                            else
+                            {
+                                bodyNode = rawBody; // XML or text stays raw
+                            }
+                        }
+                    }
+                }
+
+                var requestObject = new
+                {
+                    Source = source,
+                    Method = Request.Method,
+                    Path = Request.Path.ToString(),
+                    ContentType = Request.ContentType ?? "",
+                    ContentLength = Request.ContentLength?.ToString() ?? "0",
+                    QueryString = Request.Query.Any() ? Request.Query.ToDictionary(q => q.Key, q => q.Value.ToString()) : null,
+                    Body = bodyNode,
+                    Headers = Request.Headers.Any() ? Request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString()) : null,
+                    ClientIp = Request.HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+                };
+
+                string strJSON = JsonConvert.SerializeObject(requestObject, Formatting.Indented);
+                using (SqlConnection conn = new SqlConnection(connetionString))
+                {
+                    using (SqlCommand cmd = new SqlCommand("stpr_ReceiveCallback"))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        //cmd.CommandTimeout = 0;
+                        if (conn.State == ConnectionState.Closed)
+                            conn.Open();
+                        cmd.Connection = conn;
+                        cmd.Parameters.Add(new SqlParameter("@i_vcInputJSON", SqlDbType.VarChar));
+                        cmd.Parameters["@i_vcInputJSON"].Value = strJSON;
+
+                        cmd.Parameters.Add(new SqlParameter("@o_vcOutPutJSON", SqlDbType.VarChar, 2000000));
+                        cmd.Parameters["@o_vcOutPutJSON"].Direction = ParameterDirection.Output;
+                        cmd.CommandTimeout = 0;
+                        cmd.ExecuteNonQuery();
+
+                        /*string retValue = cmd.Parameters["@o_vcOutPutJSON"].Value.ToString();
+
+                        JArray jsonArray = null;
+                        try
+                        {
+                            if (!string.IsNullOrEmpty(retValue))
+                            {
+                                jsonArray = JArray.Parse(retValue);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            throw ex;
+                        }*/
+
+                        string retValue = cmd.Parameters["@o_vcOutPutJSON"].Value?.ToString();
+
+                        logRespMessage = "ReturnValue = " + retValue;
+
+                        JArray jsonArray = null;
+                        JObject jsonObject = null;
+                        string plainText = null;
+
+                        try
+                        {
+                            if (!string.IsNullOrWhiteSpace(retValue))
+                            {
+                                retValue = retValue.Trim();
+
+                                if (retValue.StartsWith("["))
+                                {
+                                    jsonArray = JArray.Parse(retValue);
+                                }
+                                else if (retValue.StartsWith("{"))
+                                {
+                                    jsonObject = JObject.Parse(retValue);
+                                }
+                                else
+                                {
+                                    plainText = retValue; // normal text
+                                }
+                            }
+                        }
+                        catch (Exception)
+                        {
+                            // fallback: treat everything as plain text if parsing fails
+                            plainText = retValue;
+                        }
+                        cmd.Parameters.Clear();
+                    }
+                }
+
+                logRespMessage += " " + JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "Data posted successfully" });
+                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "Data posted successfully" }, Formatting.Indented));
+            }
+            catch (Exception ex)
+            {
+                logErrorMessage = JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = ex.Message.ToString() });
+                return BadRequest(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = ex.Message.ToString(), data = null, datarows = null }, Formatting.Indented));
+            }
+            finally
+            {
+                if (strDebugFlag != "N")
+                {
+                    using (SqlConnection conn = new SqlConnection(connetionString))
+                    {
+                        conn.Open();
+                        if (logSrNo == 0)
+                        {
+                            logSrNo = objUtility.InsertLog(0, "TradeWeb", "", logReq, logRespMessage, logErrorMessage, "", conn);
+                        }
+                        else
+                        {
+                            objUtility.UpdateLog(logSrNo, "", logRespMessage, logErrorMessage, conn);
+                        }
+                    }
                 }
             }
-            return BadRequest();
-        }
-
-        [HttpPost("TestPDF", Name = "TestPDF")]
-        public IActionResult TestPDF(string ReportName, string ReportDisplayName, string json, string pdfType)
-        {
-            var resp = _tradeWebRepository.TestPDFHardcode(ReportName, ReportDisplayName, json, pdfType);
-            return Ok(resp);
-
         }
 
         [HttpPost, Route("/api/PayoutToBackOffice")]
@@ -5151,819 +3899,44 @@ namespace TradeWeb.API.Controllers
         [Consumes("application/json")]
         public async Task<IActionResult> DigitalSendEmail([FromBody] DigitalSendEmailRequest request)
         {
-            long logSrNo = 0;
-            string logRespMessage = "";
-            string logErrorMessage = "";
-            var processWatch = System.Diagnostics.Stopwatch.StartNew();
-            var processStart = DateTime.Now.ToString("dd-MM-yyyy HH:mm:ss");
-            string connectionString = objUtility.GetConnectionStr();
-            int intBatchSize = 100;
-            string userId = request.UserId;
+            string userId = string.IsNullOrWhiteSpace(request?.UserId) ? "API" : request.UserId;
 
-            if (string.IsNullOrWhiteSpace(userId))
-            {
-                userId = "API";
-            }
+            await _svc.ReleaseStaleAsync();
 
-            using (SqlConnection conn = new SqlConnection(connectionString))
-            {
-                conn.Open();
-                logSrNo = objUtility.InsertLog(0, "TradeWeb", "", "DigitalSendEmail Process Started. Start Time : " + processStart, "", "", "API", conn);
-            }
+            if (!await _svc.HasPendingAsync())
+                return Ok(Reply(false, "No records found"));
 
-            try
-            {
-                var counters = new Counters();
-                int sentInThisConnection = 0;
+            long? jobId = await _svc.TryStartJobAsync(userId);
+            if (jobId == null)
+                return Ok(Reply(true, "Email sending is already in progress. Please wait until it finishes."));
 
-                DataTable dtDocType = objUtility.OpenDataTable($@"SELECT dd_DocumentType, COUNT(0) AS TotalCount, MIN(dd_Priority) AS MinPriority
-                                      FROM Digital_Emaildetails
-                                      WHERE dd_SendFlag = 'N' GROUP BY dd_DocumentType ORDER BY MinPriority");
-                if (dtDocType.Rows.Count < 1)
-                {
-                    logRespMessage = "No records found";
-                    return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = "No records found" }, Formatting.Indented));
-                }
-
-                string isParallel = objUtility.GetWebParameter("ParallelEmail").Trim();
-
-                foreach (DataRow dr in dtDocType.Rows)
-                {
-                    string strDocType = dr["dd_DocumentType"].ToString().Trim();
-
-                    int maxParallel = Math.Max(2, Environment.ProcessorCount);
-                    var emailQueue = new ConcurrentQueue<EmailModel>();
-                    var EmailResults = new List<(string Id, string Status, string Error)>(); //int
-                    var emailResultsLock = new object();
-                    bool producerCompleted = false;
-                    int activeWorkers = maxParallel;
-
-                    strsql = "select top 1 dd_EmailParamCode from Digital_Emaildetails where dd_DocumentType='" + strDocType + "'";
-                    DataTable dtSMTP = objUtility.OpenDataTable(strsql);
-
-                    if (dtSMTP.Rows.Count == 0)
-                    {
-                        continue;
-                    }
-
-                    strsql = $@"Select SMTPServer [Host], SMTPPort [Port], SMTPMailId Username, SMTPPassword[Password], SMTPSSLFlag Tls, SMTPAccountName SenderName, ParamCode 
-                            EmailParamCode FROM tbl_EMailParameters where ParamCode = '{dtSMTP.Rows[0]["dd_EmailParamCode"].ToString().Trim()}'";
-                    DataTable dtSMTPSetting = objUtility.OpenDataTable(strsql);
-                    if (dtSMTPSetting.Rows.Count == 0)
-                    {
-                        int failedCount = await MarkFullGroupFailedNew(
-                                connectionString,
-                                strDocType,
-                                "SMTP details not found");
-
-                        Interlocked.Add(ref counters.TotalErrors, failedCount);
-                        continue; // skip this document type
-                    }
-
-                    int port = (int)dtSMTPSetting.Rows[0]["Port"];
-                    string host = dtSMTPSetting.Rows[0]["Host"].ToString().Trim();
-                    string username = dtSMTPSetting.Rows[0]["Username"].ToString().Trim();
-                    string password = dtSMTPSetting.Rows[0]["Password"].ToString();
-                    string senderName = dtSMTPSetting.Rows[0]["SenderName"].ToString().Trim();
-                    string eParamCode = dtSMTPSetting.Rows[0]["EmailParamCode"].ToString().Trim();
-                    string enableSSL = dtSMTPSetting.Rows[0]["Tls"].ToString().Trim();
-
-                    string strReportingEmail = "";
-                    string strReportingSubject = "";
-                    string strReportingBody = "";
-
-                    strsql = "select ReportingEmailID, ReportingEmailSubject, ReportingEmailBody from tbl_EmailTemplate where RefName='" + strDocType + "'";
-                    DataTable dtReporting = objUtility.OpenDataTable(strsql);
-                    if (dtReporting.Rows.Count > 0)
-                    {
-                        strReportingEmail = dtReporting.Rows[0]["ReportingEmailID"].ToString().Trim();
-                        strReportingSubject = dtReporting.Rows[0]["ReportingEmailSubject"].ToString().Trim();
-                        strReportingBody = dtReporting.Rows[0]["ReportingEmailBody"].ToString().Trim();
-                    }
-
-                    if (isParallel == "Y")
-                    {
-                        try
-                        {
-                            using var smtpTest = new MailKit.Net.Smtp.SmtpClient();
-
-                            if (enableSSL == "N")
-                            {
-                                //bypass certificates validations
-                                smtpTest.ServerCertificateValidationCallback = (s, c, h, e) => true;
-                            }
-
-                            await smtpTest.ConnectAsync(host, port, SecureSocketOptions.StartTls);
-                            await smtpTest.AuthenticateAsync(username, password);
-
-                            if (!string.IsNullOrEmpty(strReportingEmail))
-                            {
-                                var message = new MimeMessage();
-                                message.From.Add(new MailboxAddress(senderName, username));
-                                message.To.Add(MailboxAddress.Parse(strReportingEmail));
-                                message.Subject = strReportingSubject + " [Started]";
-
-                                var builder = new BodyBuilder { HtmlBody = strReportingBody + " [Started]" };
-
-                                message.Body = builder.ToMessageBody();
-
-                                await smtpTest.SendAsync(message);
-                            }
-
-                            await smtpTest.DisconnectAsync(true);
-                        }
-                        catch (AuthenticationException)
-                        {
-                            int failedCount = await MarkFullGroupFailedNew(
-                                connectionString,
-                                strDocType,
-                                "Invalid SMTP username or password");
-
-                            Interlocked.Add(ref counters.TotalErrors, failedCount);
-                            continue; // skip this SMTP account
-                        }
-                        catch (Exception ex)
-                        {
-                            int failedCount = await MarkFullGroupFailedNew(
-                                connectionString,
-                                strDocType,
-                                "SMTP connection failed : " + ex.Message);
-
-                            Interlocked.Add(ref counters.TotalErrors, failedCount);
-                            continue;
-                        }
-
-                        var producer = Task.Run(async () =>
-                        {
-                            while (true)
-                            {
-                                var batch = await GetEmailBatchAsync(connectionString, strDocType, intBatchSize);
-                                if (batch.Count == 0)
-                                    break;
-
-                                foreach (var mail in batch)
-                                    emailQueue.Enqueue(mail);
-
-                                await Task.Delay(3000); // gap between DB reads
-                            }
-
-                            producerCompleted = true;
-                        });
-
-                        var bulkUpdater = Task.Run(async () =>
-                        {
-                            while (!producerCompleted || !emailQueue.IsEmpty || activeWorkers > 0)
-                            {
-                                await Task.Delay(5000); // flush every 5 sec
-
-                                List<(string Id, string Status, string Error)> snapshot; //int
-
-                                lock (emailResultsLock)
-                                {
-                                    if (EmailResults.Count == 0)
-                                        continue;
-
-                                    snapshot = EmailResults.ToList();
-                                    EmailResults.Clear();
-                                }
-
-                                var converted = snapshot.Select(x =>
-                                (
-                                    Id: x.Id.ToString(),        // int → string
-                                    Flag: x.Status,             // rename
-                                    Reason: x.Error             // rename
-                                )).ToList();
-
-                                await BulkEmailStatusUpdateAsync(connectionString, userId, converted);
-                            }
-
-                            // ⭐ FINAL FLUSH
-                            lock (emailResultsLock)
-                            {
-                                if (EmailResults.Count > 0)
-                                {
-                                    var snapshot = EmailResults.ToList();
-                                    EmailResults.Clear();
-
-                                    var converted = snapshot.Select(x =>
-                                    (
-                                        Id: x.Id.ToString(),        // int → string
-                                        Flag: x.Status,             // rename
-                                        Reason: x.Error             // rename
-                                    )).ToList();
-
-                                    BulkEmailStatusUpdateAsync(connectionString, userId, converted).Wait();
-                                }
-                            }
-                        });
-
-                        activeWorkers = maxParallel;
-
-                        var workers = Enumerable.Range(0, maxParallel).Select(_ => Task.Run(async () =>
-                        {
-                            using var smtp = new MailKit.Net.Smtp.SmtpClient();
-
-                            if (enableSSL == "N")
-                            {
-                                //bypass certificates validations
-                                smtp.ServerCertificateValidationCallback = (s, c, h, e) => true;
-                            }
-
-                            int sentInThisConnection = 0;
-
-                            try
-                            {
-                                await smtp.ConnectAsync(host, port, SecureSocketOptions.StartTls);
-                                await smtp.AuthenticateAsync(username, password);
-
-                                while (!producerCompleted || !emailQueue.IsEmpty)
-                                {
-                                    if (!emailQueue.TryDequeue(out var email))
-                                    {
-                                        await Task.Delay(500);
-                                        continue;
-                                    }
-
-                                    try
-                                    {
-                                        var message = new MimeMessage();
-                                        message.From.Add(new MailboxAddress(senderName, username));
-                                        message.To.Add(MailboxAddress.Parse(email.ToEmail));
-                                        message.Subject = email.Subject;
-
-                                        var builder = new BodyBuilder { HtmlBody = email.Body };
-
-                                        if (email.Document != null)
-                                            builder.Attachments.Add(email.FileName, email.Document);
-
-                                        message.Body = builder.ToMessageBody();
-
-                                        await smtp.SendAsync(message);
-
-                                        lock (emailResultsLock)
-                                            EmailResults.Add((email.Id, "S", ""));
-
-                                        Interlocked.Increment(ref counters.TotalProcessed);
-                                        sentInThisConnection++;
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        lock (emailResultsLock)
-                                            EmailResults.Add((email.Id, "F", ex.Message));
-
-                                        Interlocked.Increment(ref counters.TotalErrors);
-                                    }
-
-                                    // throttle per mail
-                                    await Task.Delay(500);
-
-                                    // reconnect every 80 mails per worker
-                                    if (sentInThisConnection >= 80)
-                                    {
-                                        if (smtp.IsConnected)
-                                            await smtp.DisconnectAsync(true);
-
-                                        await Task.Delay(2000);
-                                        await smtp.ConnectAsync(host, port, SecureSocketOptions.StartTls);
-                                        await smtp.AuthenticateAsync(username, password);
-
-                                        sentInThisConnection = 0;
-                                    }
-                                }
-
-                                if (smtp.IsConnected)
-                                    await smtp.DisconnectAsync(true);
-                            }
-                            catch (Exception ex)
-                            {
-                                // If worker dies → mark remaining queue mails failed
-                                while (emailQueue.TryDequeue(out var email))
-                                {
-                                    lock (emailResultsLock)
-                                        EmailResults.Add((email.Id, "F", "SMTP worker crashed: " + ex.Message));
-
-                                    Interlocked.Increment(ref counters.TotalErrors);
-                                }
-                            }
-                            finally
-                            {
-                                Interlocked.Decrement(ref activeWorkers);
-                            }
-                        }));
-
-                        await producer;                 // wait until DB batches finished loading
-                        await Task.WhenAll(workers);    // wait until all SMTP workers finish sending
-                        await bulkUpdater;              // wait until final DB flush completes
-
-                        try
-                        {
-                            using var smtpEnd = new MailKit.Net.Smtp.SmtpClient();
-
-                            if (enableSSL == "N")
-                            {
-                                //bypass certificates validations
-                                smtpEnd.ServerCertificateValidationCallback = (s, c, h, e) => true;
-                            }
-
-                            await smtpEnd.ConnectAsync(host, port, SecureSocketOptions.StartTls);
-                            await smtpEnd.AuthenticateAsync(username, password);
-
-                            if (!string.IsNullOrEmpty(strReportingEmail))
-                            {
-                                var endMessage = new MimeMessage();
-                                endMessage.From.Add(new MailboxAddress(senderName, username));
-                                endMessage.To.Add(MailboxAddress.Parse(strReportingEmail));
-
-                                endMessage.Subject = strReportingSubject + " [Ended]";
-
-                                var builder = new BodyBuilder
-                                {
-                                    HtmlBody = strReportingBody + " [Ended]"
-                                };
-
-                                endMessage.Body = builder.ToMessageBody();
-
-                                await smtpEnd.SendAsync(endMessage);
-                            }
-
-                            await smtpEnd.DisconnectAsync(true);
-                        }
-                        catch
-                        {
-                            // Never crash main flow because END mail failed
-                        }
-                    }
-                    else
-                    {
-                        using (var smtp = new MailKit.Net.Smtp.SmtpClient())
-                        {
-                            sentInThisConnection = 0;
-
-                            if (enableSSL == "N")
-                            {
-                                //bypass certificates validations
-                                smtp.ServerCertificateValidationCallback = (s, c, h, e) => true;
-                            }
-
-                            try
-                            {
-                                try
-                                {
-                                    await smtp.ConnectAsync(host, port, SecureSocketOptions.StartTls);
-                                    await smtp.AuthenticateAsync(username, password);
-
-                                    if (!string.IsNullOrEmpty(strReportingEmail))
-                                    {
-                                        var message = new MimeMessage();
-                                        message.From.Add(new MailboxAddress(senderName, username));
-                                        message.To.Add(MailboxAddress.Parse(strReportingEmail));
-                                        message.Subject = strReportingSubject + " [Started]";
-
-                                        var builder = new BodyBuilder { HtmlBody = strReportingBody + " [Started]" };
-
-                                        message.Body = builder.ToMessageBody();
-
-                                        await smtp.SendAsync(message);
-                                    }
-                                }
-                                catch (AuthenticationException)
-                                {
-                                    // ⭐ AUTH FAILED → mark ALL emails of this document type failed
-                                    int failedCount = await MarkFullGroupFailedNew(connectionString, strDocType,
-                                        "Invalid SMTP username or password");
-                                    Interlocked.Add(ref counters.TotalErrors, failedCount);
-                                    continue;
-                                }
-                                catch (Exception ex)
-                                {
-                                    int failedCount = await MarkFullGroupFailedNew(connectionString, strDocType,
-                                        "SMTP connection failed : " + ex.Message);
-                                    Interlocked.Add(ref counters.TotalErrors, failedCount);
-                                    continue;
-                                }
-
-                                while (true)
-                                {
-                                    var batch = await GetEmailBatchAsync(connectionString, strDocType, intBatchSize);
-
-                                    if (batch.Count == 0)
-                                        break; // no more emails left
-
-                                    foreach (var email in batch)
-                                    {
-                                        if (!smtp.IsConnected)
-                                        {
-                                            await Task.Delay(2000);
-                                            await smtp.ConnectAsync(host, port, SecureSocketOptions.StartTls);
-                                            await smtp.AuthenticateAsync(username, password);
-                                        }
-
-                                        var message = new MimeMessage();
-                                        message.From.Add(new MailboxAddress(senderName, username));
-                                        message.To.Add(MailboxAddress.Parse(email.ToEmail));
-                                        message.Subject = email.Subject;
-
-                                        try
-                                        {
-                                            var builder = new BodyBuilder { HtmlBody = email.Body };
-
-                                            if (email.Document != null)
-                                                builder.Attachments.Add(email.FileName, email.Document);
-
-                                            message.Body = builder.ToMessageBody();
-
-                                            await smtp.SendAsync(message);
-
-                                            EmailResults.Add((email.Id, "S", ""));
-                                            Interlocked.Increment(ref counters.TotalProcessed);
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            EmailResults.Add((email.Id, "F", ex.Message));
-                                            Interlocked.Increment(ref counters.TotalErrors);
-                                        }
-
-                                        await Task.Delay(500); // throttle per mail
-
-                                        sentInThisConnection++;
-
-                                        //reconnect every 80 mails
-                                        if (sentInThisConnection >= 80)
-                                        {
-                                            if (smtp.IsConnected)
-                                                await smtp.DisconnectAsync(true);
-                                            //await smtp.DisconnectAsync(true);
-                                            await Task.Delay(2000);
-                                            await smtp.ConnectAsync(host, port, SecureSocketOptions.StartTls);
-                                            await smtp.AuthenticateAsync(username, password);
-                                            sentInThisConnection = 0;
-                                        }
-                                    }
-
-                                    if (EmailResults.Count > 0)
-                                    {
-                                        await BulkEmailStatusUpdateAsync(connectionString, userId, EmailResults);
-                                        EmailResults.Clear();
-                                    }
-
-                                    // cooldown between batches
-                                    await Task.Delay(5000);
-                                }
-
-                                if (smtp.IsConnected)
-                                    await smtp.DisconnectAsync(true);
-                            }
-                            catch (Exception)
-                            {
-                                if (smtp.IsConnected)
-                                    await smtp.DisconnectAsync(true);
-                            }
-                            finally
-                            {
-                                try
-                                {
-                                    // Reconnect if needed
-                                    if (!smtp.IsConnected)
-                                    {
-                                        await smtp.ConnectAsync(host, port, SecureSocketOptions.StartTls);
-                                        await smtp.AuthenticateAsync(username, password);
-                                    }
-
-                                    if (!string.IsNullOrEmpty(strReportingEmail))
-                                    {
-                                        var message = new MimeMessage();
-                                        message.From.Add(new MailboxAddress(senderName, username));
-                                        message.To.Add(MailboxAddress.Parse(strReportingEmail));
-                                        message.Subject = strReportingSubject + " [Ended]";
-
-                                        var builder = new BodyBuilder { HtmlBody = strReportingBody + " [Ended]" };
-
-                                        message.Body = builder.ToMessageBody();
-
-                                        await smtp.SendAsync(message);
-                                    }
-                                }
-                                catch
-                                {
-
-                                }
-
-                                if (smtp.IsConnected)
-                                    await smtp.DisconnectAsync(true);
-                            }
-                        }
-                    }
-                }
-
-                DataSet dsRes = new DataSet();
-                dsRes.Tables.Add("rs0");
-                dsRes.Tables[0].Columns.Add("SuccessCount", typeof(string));
-                dsRes.Tables[0].Columns.Add("FailedCount", typeof(string));
-                dsRes.Tables[0].Rows.Add(counters.TotalProcessed, counters.TotalErrors);
-
-                var processEnd = DateTime.Now;
-
-                processWatch.Stop();
-                logRespMessage = "DigitalSendEmail Process completed. End Time : " + DateTime.Now.ToString("dd-MM-yyyy HH:mm:ss") + " Time taken : " + processWatch.Elapsed;
-                return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel { success = true, message = "Email has been sent successfully", data = dsRes, datarows = new List<string>() { "1" } }, Formatting.Indented));
-            }
+            try { await _channel.Writer.WriteAsync(new DigitalEmailJob(jobId.Value, userId)); }
             catch (Exception ex)
             {
-                processWatch.Stop();
-                logErrorMessage = "Error in DigitalSendEmail process. Error : " + ex.Message + ". End Time : " + DateTime.Now.ToString("dd-MM-yyyy HH:mm:ss") + " Time taken" + processWatch.Elapsed;
+                await _svc.FinishJobAsync(jobId.Value, new SendRunResult(false, "Could not queue: " + ex.Message, 0, 0));
+                throw;
             }
-            finally
+
+            return Ok(Reply(true, "Email process started"));
+        }
+
+        [HttpGet, Route("DigitalSendEmailStatus")]
+        public async Task<IActionResult> DigitalSendEmailStatus()
+        {
+            DataTable dt = await _svc.GetCurrentJobAsync();
+            dt.TableName = "rs0";
+            var ds = new DataSet(); ds.Tables.Add(dt);
+            return Ok(JsonConvert.SerializeObject(new CrossNetCommonModel
             {
-                using (SqlConnection conn = new SqlConnection(connectionString))
-                {
-                    conn.Open();
-                    objUtility.UpdateLog(logSrNo, "", logRespMessage, logErrorMessage, conn);
-                }
-            }
-
-            return BadRequest();
+                success = true,
+                message = "",
+                data = ds,
+                datarows = new List<string> { dt.Rows.Count.ToString() }
+            }, Formatting.Indented));
         }
 
-        [ApiExplorerSettings(IgnoreApi = true)]
-        private async Task<List<EmailModel>> GetEmailBatchAsync(string conStr, string docType, int batchSize)
-        {
-            var list = new List<EmailModel>();
-
-            using var con = new SqlConnection(conStr);
-            await con.OpenAsync();
-
-            string sql = @"
-    ;WITH cte AS
-    (
-        SELECT TOP (@BatchSize) *
-        FROM Digital_Emaildetails WITH (ROWLOCK, READPAST)
-        WHERE dd_SendFlag = 'N'
-        AND dd_DocumentType = @ParamCode
-        ORDER BY dd_Priority ASC, dd_srno ASC
-    )
-    UPDATE cte
-       SET dd_SendFlag = 'L',      -- lock rows
-           dd_RetryCount = ISNULL(dd_RetryCount,0)+1, 
-		   dd_LastRetryDate = GETDATE()
-    OUTPUT inserted.dd_srno,
-           inserted.dd_toEmailid,
-           inserted.dd_Subject,
-           inserted.dd_bodyText,
-           inserted.dd_Document,
-           inserted.dd_FileName";
-
-            using var cmd = new SqlCommand(sql, con);
-            cmd.Parameters.AddWithValue("@BatchSize", batchSize);
-            cmd.Parameters.AddWithValue("@ParamCode", docType);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
-            {
-                list.Add(new EmailModel
-                {
-                    Id = reader["dd_srno"].ToString(),
-                    ToEmail = reader["dd_toEmailid"].ToString(),
-                    Subject = reader["dd_Subject"].ToString(),
-                    Body = reader["dd_bodyText"].ToString(),
-                    Document = reader["dd_Document"] as byte[],
-                    FileName = reader["dd_FileName"].ToString()
-                });
-            }
-
-            return list;
-        }
-
-
-        [ApiExplorerSettings(IgnoreApi = true)]
-        public async IAsyncEnumerable<EmailModel> GetEmailsAsync(string connectionString, string eParmCode)
-        {
-            using var con = new SqlConnection(connectionString);
-            await con.OpenAsync();
-
-            using var cmd = new SqlCommand(@"
-                SELECT
-                    Cast(dd_srno as varchar),
-                    dd_toEmailid,
-                    dd_subject,
-                    dd_bodyText,
-                    dd_document,
-                    dd_filename 
-                FROM Digital_Emaildetails WHERE dd_EmailParamCode = '" + eParmCode + "' AND dd_SendFlag = 'N' ", con);
-
-            using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess);
-
-            while (await reader.ReadAsync())
-            {
-                yield return new EmailModel
-                {
-                    Id = reader.GetString(0),
-                    ToEmail = reader.GetString(1),
-                    Subject = reader.GetString(2),
-                    Body = reader.GetString(3),
-                    Document = reader.IsDBNull(4) ? null : (byte[])reader[4],
-                    FileName = reader.IsDBNull(5) ? null : reader.GetString(5)
-                };
-            }
-        }
-
-        [ApiExplorerSettings(IgnoreApi = true)]
-        public async Task<int> MarkFullGroupFailed(string connectionString, string paramCode, string reason)
-        {
-            using var con = new SqlConnection(connectionString);
-            using var cmd = new SqlCommand(@"
-        UPDATE Digital_Emaildetails
-        SET dd_SendFlag = 'F',
-            dd_RetryCount = ISNULL(dd_RetryCount,0) + 1,
-            dd_LastRetryDate = GETDATE(),
-            dd_BounceReason = @reason
-        WHERE dd_EmailParamCode = @paramCode
-        AND dd_SendFlag = 'N'", con); //dd_SendFlag IN ('P','F')
-
-            cmd.Parameters.AddWithValue("@reason", reason);
-            cmd.Parameters.AddWithValue("@paramCode", paramCode);
-
-            await con.OpenAsync();
-            int rows = await cmd.ExecuteNonQueryAsync();
-            return rows;
-        }
-
-        [ApiExplorerSettings(IgnoreApi = true)]
-        public async Task<int> MarkFullGroupFailedNew(string connectionString, string documentType, string reason)
-        {
-            using var con = new SqlConnection(connectionString);
-            using var cmd = new SqlCommand(@"
-                UPDATE Digital_Emaildetails
-                SET dd_SendFlag = 'F',
-                    dd_RetryCount = ISNULL(dd_RetryCount,0) + 1,
-                    dd_LastRetryDate = GETDATE(),
-                    dd_BounceReason = @reason
-                WHERE dd_DocumentType = @documentType
-                AND dd_SendFlag = 'N'", con); //dd_SendFlag IN ('P','F')
-
-            cmd.Parameters.AddWithValue("@reason", reason);
-            cmd.Parameters.AddWithValue("@documentType", documentType);
-
-            await con.OpenAsync();
-            int rows = await cmd.ExecuteNonQueryAsync();
-            return rows;
-        }
-
-
-        [HttpPost("QuestPDF", Name = "QuestPDF")]
-        public IActionResult QuestPDF()
-        {
-            try
-            {
-                string time = DateTime.Now.ToString("HHmmss");
-                string jsonFilePath = "E:/My Work/16022026/TradeWebAPI/QuestPdfServicesClass/JsonFiles/ClientFundLedger.json";
-                string outputFilePath = "E:/My Work/16022026/TradeWebAPI/QuestPdfServicesClass/JsonFiles/output_" + time + ".pdf";
-                string logoPath = "E:/My Work/16022026/TradeWebAPI/QuestPdfServicesClass/JsonFiles/CompanyLogo.png";
-                DataSet dsCFL = objUtility.OpenDataSet("exec SP_CFL");
-                TestQuestPdf.Generate(jsonFilePath, outputFilePath, logoPath);
-                //QuestPdfGeneratorByJson.GenerateBytes(jsonFilePath);
-
-                return Ok();
-            }
-
-            catch (Exception ex)
-            {
-                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "An error occurred during file processing. " + ex.Message.ToString(), ""));
-            }
-        }
-
-        [HttpPost("QuestPDFNew", Name = "QuestPDFNew")]
-        public IActionResult QuestPDFNew()
-        {
-            try
-            {
-                string time = DateTime.Now.ToString("HHmmss");
-                string jsonFilePath = "E:/My Work/16022026/TradeWebAPI/QuestPdfServicesClass/JsonFiles/ClientFundLedgerNew.json";
-                string outputFilePath = "E:/My Work/16022026/TradeWebAPI/QuestPdfServicesClass/JsonFiles/output_" + time + ".pdf";
-                string logoPath = "E:/My Work/16022026/TradeWebAPI/QuestPdfServicesClass/JsonFiles/CompanyLogo.png";
-                DataSet dsCFL = objUtility.OpenDataSet("exec SP_CFL");
-                TestQuestPdf_New.Generate(jsonFilePath, outputFilePath, logoPath, dsCFL);
-                return Ok();
-            }
-            catch (Exception ex)
-            {
-                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "An error occurred during file processing. " + ex.Message.ToString(), ""));
-            }
-        }
-
-        [HttpPost("QuestPDFCFL", Name = "QuestPDFCFL")]
-        public IActionResult QuestPDFCFL()
-        {
-            try
-            {
-                string time = DateTime.Now.ToString("HHmmss");
-                //string jsonFilePath = "E:/My Work/16022026/TradeWebAPI/QuestPdfServicesClass/JsonFiles/ClientFundLedgerNew.json";
-                string jsonFilePath = "E:/My Work/16022026/TradeWebAPI/QuestPdfServicesClass/JsonFiles/CombineContractNote.json";
-                string outputFilePath = "E:/My Work/16022026/TradeWebAPI/QuestPdfServicesClass/JsonFiles/output_" + time + ".pdf";
-                string logoPath = "E:/My Work/16022026/TradeWebAPI/QuestPdfServicesClass/JsonFiles/CompanyLogo.png";
-
-                DataSet ds = new DataSet();
-
-                var typstResponse = _tradeWebRepository.GenerateQuestPDF("", "", ds, "", "");
-
-
-                //TestQuestPdf.Generate(jsonFilePath, outputFilePath, logoPath);
-                //QuestPdfGeneratorByJson.GenerateBytes(jsonFilePath);
-                return Ok();
-            }
-
-            catch (Exception ex)
-            {
-                return Ok(returnJson.ConvertDataIntoJson(false, (int)HttpStatusCode.OK, "error", "An error occurred during file processing. " + ex.Message.ToString(), ""));
-            }
-        }
-
-
-        /*[ApiExplorerSettings(IgnoreApi = true)]
-        public async Task BulkUpdateAsync(string connectionString, List<string> ids)
-        {
-            using var con = new SqlConnection(connectionString);
-            await con.OpenAsync();
-            string idList = string.Join(",", ids.Select(x => $"'{x}'"));
-            string sql = $@"
-                    UPDATE dbo.Digital_Emaildetails
-                    SET dd_SentDate = GETDATE(),
-                        dd_SendFlag = 'Y'
-                    WHERE dd_srno IN ({idList})";
-
-            using var cmd = new SqlCommand(sql, con);
-            await cmd.ExecuteNonQueryAsync();
-        }*/
-
-        #region old code
-        /*[ApiExplorerSettings(IgnoreApi = true)]
-        public async Task BulkFailedEmailUpdateAsync(string connectionString, List<string> ids)
-        {
-            using var con = new SqlConnection(connectionString);
-            await con.OpenAsync();
-            string idList = string.Join(",", ids.Select(x => $"'{x}'"));
-            string sql = $@"
-                    UPDATE dbo.Digital_Emaildetails
-                    SET dd_SentDate = GETDATE(),
-                        dd_SendFlag = 'F'
-                    WHERE dd_srno IN ({idList})";
-
-            using var cmd = new SqlCommand(sql, con);
-            await cmd.ExecuteNonQueryAsync();
-        }*/
-        #endregion
-
-
-        private string GenerateJwtTokenOnly(string username, string compCode, string guid, string role, int tokenExpTime)
-        {
-            string decryptJwtKey = objUtility.Decrypt(_configuration["Jwt:Key"].ToString());
-            var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(decryptJwtKey));
-            var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
-
-            var claims = new[] {
-                new Claim(JwtRegisteredClaimNames.Sub, username),
-                new Claim(type: "companyCode", value: compCode),
-                new Claim(JwtRegisteredClaimNames.Jti, guid),
-                new Claim(type: "username", value: username),
-                new Claim(ClaimTypes.Role, role),
-            };
-            var token = new JwtSecurityToken(_configuration["Jwt:Issuer"],
-                _configuration["Jwt:Issuer"],
-                claims,
-                expires: DateTime.UtcNow.AddMinutes(tokenExpTime),
-                signingCredentials: credentials);
-
-            //if (role == "Branch")
-            //{
-            //    _tokenStore.StoreToken(username, new JwtSecurityTokenHandler().WriteToken(token));
-            //}
-
-            return new JwtSecurityTokenHandler().WriteToken(token);
-        }
-
-        [ApiExplorerSettings(IgnoreApi = true)]
-        public async Task BulkEmailStatusUpdateAsync(string connectionString, string userId, IEnumerable<(string Id, string Flag, string Reason)> results)
-        {
-            var table = new DataTable();
-            table.Columns.Add("Id", typeof(string));
-            table.Columns.Add("SendFlag", typeof(string));
-            table.Columns.Add("BounceReason", typeof(string));
-
-            foreach (var r in results)
-                table.Rows.Add(r.Id, r.Flag, r.Reason);
-
-            using var con = new SqlConnection(connectionString);
-            using var cmd = new SqlCommand("dbo.Stpr_BulkEmailStatusUpdate", con);
-            cmd.CommandType = CommandType.StoredProcedure;
-
-            var tvp = cmd.Parameters.AddWithValue("@EmailStatus", table);
-            tvp.SqlDbType = SqlDbType.Structured;
-            tvp.TypeName = "dbo.EmailStatusType";
-            cmd.Parameters.AddWithValue("@UserId", userId);
-
-            await con.OpenAsync();
-            await cmd.ExecuteNonQueryAsync();
-        }
+        private static string Reply(bool ok, string msg) =>
+            JsonConvert.SerializeObject(new CrossNetCommonModel { success = ok, message = msg }, Formatting.Indented);
 
         private JwtSecurityToken GetToken()
         {
@@ -5973,10 +3946,7 @@ namespace TradeWeb.API.Controllers
             var token = handler.ReadToken(authHeader) as JwtSecurityToken;
             return token;
         }
-        #endregion
 
-
-        #region Other methods for JWT Token
         // TODO : Write a method for generate jwt token.
         private string GenerateJSONWebToken(TradeWebLoginModel userInfo)
         {
@@ -6292,9 +4262,9 @@ namespace TradeWeb.API.Controllers
 
         private static byte[] EncryptStringToBytes_Aes(string plainText, byte[] key, byte[] iv)
         {
-            using (var aesAlg = new AesCryptoServiceProvider())
+            using (Aes aesAlg = Aes.Create())
             {
-                aesAlg.KeySize = 128;           // key is 16 bytes
+                aesAlg.KeySize = 128;   // key is 16 bytes
                 aesAlg.BlockSize = 128;
                 aesAlg.Mode = CipherMode.CBC;
                 aesAlg.Padding = PaddingMode.PKCS7;
@@ -6302,14 +4272,15 @@ namespace TradeWeb.API.Controllers
                 aesAlg.Key = key;
                 aesAlg.IV = iv;
 
-                using (var encryptor = aesAlg.CreateEncryptor(aesAlg.Key, aesAlg.IV))
-                using (var msEncrypt = new MemoryStream())
-                using (var csEncrypt = new CryptoStream(msEncrypt, encryptor, CryptoStreamMode.Write))
-                using (var swEncrypt = new StreamWriter(csEncrypt))
+                using (ICryptoTransform encryptor = aesAlg.CreateEncryptor(aesAlg.Key, aesAlg.IV))
+                using (MemoryStream msEncrypt = new MemoryStream())
+                using (CryptoStream csEncrypt = new CryptoStream(msEncrypt, encryptor, CryptoStreamMode.Write))
+                using (StreamWriter swEncrypt = new StreamWriter(csEncrypt))
                 {
                     swEncrypt.Write(plainText);
                     swEncrypt.Flush();
                     csEncrypt.FlushFinalBlock();
+
                     return msEncrypt.ToArray();
                 }
             }
@@ -6318,88 +4289,33 @@ namespace TradeWeb.API.Controllers
         private static string DecryptStringFromBytes(byte[] cipherText, byte[] key, byte[] iv)
         {
             if (cipherText == null || cipherText.Length <= 0)
-            {
-                throw new ArgumentNullException("cipherText");
-            }
+                throw new ArgumentNullException(nameof(cipherText));
+
             if (key == null || key.Length <= 0)
-            {
-                throw new ArgumentNullException("key");
-            }
+                throw new ArgumentNullException(nameof(key));
+
             if (iv == null || iv.Length <= 0)
-            {
-                throw new ArgumentNullException("key");
-            }
-            // Declare the string used to hold  
-            // the decrypted text.  
+                throw new ArgumentNullException(nameof(iv));
+
             string plaintext = null;
 
-            #region old encryption logic
-            // Create an RijndaelManaged object  
-            // with the specified key and IV.  
-            /*using (var rijAlg = new RijndaelManaged())
+            using (Aes aesAlg = Aes.Create())
             {
-                //Settings  
-                rijAlg.Mode = CipherMode.CBC;
-                rijAlg.Padding = PaddingMode.PKCS7;
-                rijAlg.FeedbackSize = 128;
+                aesAlg.Mode = CipherMode.CBC;
+                aesAlg.Padding = PaddingMode.PKCS7;
 
-                rijAlg.Key = key;
-                rijAlg.IV = iv;
-                // Create a decrytor to perform the stream transform.  
-                var decryptor = rijAlg.CreateDecryptor(rijAlg.Key, rijAlg.IV);
-                try
+                aesAlg.KeySize = 256;
+                aesAlg.BlockSize = 128;
+
+                aesAlg.Key = key;
+                aesAlg.IV = iv;
+
+                using (ICryptoTransform decryptor = aesAlg.CreateDecryptor(aesAlg.Key, aesAlg.IV))
+                using (MemoryStream msDecrypt = new MemoryStream(cipherText))
+                using (CryptoStream csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read))
+                using (StreamReader srDecrypt = new StreamReader(csDecrypt))
                 {
-                    // Create the streams used for decryption.  
-                    using (var msDecrypt = new MemoryStream(cipherText))
-                    {
-                        using (var csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read))
-                        {
-                            using (var srDecrypt = new StreamReader(csDecrypt))
-                            {
-                                // Read the decrypted bytes from the decrypting stream  
-                                // and place them in a string.  
-                                plaintext = srDecrypt.ReadToEnd();
-                            }
-                        }
-                    }
-                }
-                catch
-                {
-                    plaintext = "keyError";
-                }
-            }*/
-            #endregion
-
-            using (var aesAlg = new AesCryptoServiceProvider())
-            {
-                try
-                {
-                    aesAlg.Mode = CipherMode.CBC;
-                    aesAlg.Padding = PaddingMode.PKCS7;
-
-                    aesAlg.KeySize = 256;
-                    aesAlg.BlockSize = 128;
-
-                    aesAlg.Key = key;
-                    aesAlg.IV = iv;
-
-                    using (var decryptor = aesAlg.CreateDecryptor(aesAlg.Key, aesAlg.IV))
-                    {
-                        using (var msDecrypt = new MemoryStream(cipherText))
-                        {
-                            using (var csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read))
-                            {
-                                using (var srDecrypt = new StreamReader(csDecrypt))
-                                {
-                                    plaintext = srDecrypt.ReadToEnd();
-                                }
-                            }
-                        }
-                    }
-                }
-                finally
-                {
-                    aesAlg.Clear();
+                    plaintext = srDecrypt.ReadToEnd();
                 }
             }
 
@@ -6413,12 +4329,13 @@ namespace TradeWeb.API.Controllers
             {
                 strHost = System.Environment.GetEnvironmentVariable("COMPUTERNAME");// System.Net.Dns.GetHostEntry(Request.ServerVariables["remote_addr"]).HostName.Trim().ToUpper();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 strHost = "";// Request.ServerVariables["remote_Addr"].ToString();
             }
             return strHost;
         }
+
         private dynamic LoginSSOResponse(string key, string product, string loginAs, string userId, DataTable dt)
         {
             string role = "";
@@ -6533,7 +4450,8 @@ namespace TradeWeb.API.Controllers
             {
                 refreshExpTime = Convert.ToInt32(objUtility.GetWebParameter("refreshExpTime").Trim());
             }
-            var datetimeExp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, UtilityCommon.GetIndianTimeZone());
+            //var datetimeExp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("India Standard Time"));
+            var datetimeExp = DateTime.UtcNow;
             if (product.Trim() == "T")
             {
                 FillConfigParametersString();
@@ -6554,59 +4472,11 @@ namespace TradeWeb.API.Controllers
             result.message = "success";
             result.status_code = (int)HttpStatusCode.OK;
             result.token = tokenString;
-            result.tokenExpireTime = datetimeExp.AddMinutes(expTime).ToString("yyyy/MM/dd HH:mm:ss");
+            result.tokenExpireTime = datetimeExp.AddMinutes(expTime).ToString(UtcDateTimeFormat);
             result.refreshToken = refreshToken;
             result.data = dt;
             var jsonData = JsonConvert.SerializeObject(result, Formatting.Indented);
             return jsonData;
-        }
-
-        #endregion
-
-        #region Fill Configuration
-        private WebParamterLoginEntity FillConfigParameters()
-        {
-            try
-            {
-                // TODO : Added code of web from Login.aspx(125 -175)
-
-                WebParamterLoginEntity wp = new WebParamterLoginEntity();
-                wp.Segments = objUtility.GetWebParameter("Segments");
-                wp.CLR_TITLE = objUtility.GetWebParameter("CLR_TITLE");
-                wp.CLR_MENU = objUtility.GetWebParameter("CLR_MENU");
-                wp.CLR_HEADER = objUtility.GetWebParameter("CLR_HEADER");
-                wp.CLR_TOTALS = objUtility.GetWebParameter("CLR_TOTALS");
-                wp.IsTradeWeb = objUtility.GetWebParameter("IsTradeWeb");
-                wp.TPlus = objUtility.GetWebParameter("TPlus");
-                wp.TPlusES = objUtility.GetWebParameter("TPlusES");
-                wp.Cross = objUtility.GetWebParameter("Cross");
-                wp.CrossEs = objUtility.GetWebParameter("CrossEs");
-                wp.Estro = objUtility.GetWebParameter("Estro");
-                wp.EstroEs = objUtility.GetWebParameter("EstroEs");
-                wp.Commex = objUtility.GetWebParameter("Commex");
-                wp.CommexEs = objUtility.GetWebParameter("CommexEs");
-
-                wp.CAPTCHA = objUtility.GetWebParameter("CAPTCHA");
-                wp.SMTPHOST = objUtility.GetWebParameter("SMTPHOST");
-                wp.PANASPASSWORD = objUtility.GetWebParameter("PANASPASSWORD");
-                wp.GroupLogin = objUtility.GetWebParameter("GroupLogin");
-                wp.ShowRupeeSymbol = objUtility.GetWebParameter("ShowRupeeSymbol");
-                wp.CLR_WEBSKIN = objUtility.GetWebParameter("CLR_WEBSKIN");
-                wp.FTSOSURL = objUtility.GetWebParameter("FTSOSURL");
-                wp.PMSUrl = objUtility.GetWebParameter("PMSUrl");
-                wp.KYCPDF = objUtility.GetWebParameter("KYCPDF");
-                wp.OrganizationName = objUtility.GetWebParameter("OrganizationName");
-                wp.TNetInvplUrl = objUtility.GetWebParameter("TNetInvplUrl");
-                wp.OUTPOSURL = objUtility.GetWebParameter("OUTPOSURL");
-                wp.SMTPSERVER = objUtility.GetWebParameter("SMTPSERVER");
-                wp.SECURITYPROT = objUtility.GetWebParameter("SECURITYPROT");
-
-                return wp;
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
         }
 
         private string FillConfigParametersString()
@@ -6652,15 +4522,5 @@ namespace TradeWeb.API.Controllers
 
             }
         }
-
-        #endregion
-
-
-        private dynamic Generate_AccountClosurePDF(string spXML, string esignReturnUrl, string newBOID, string userId, string accountType, string cmrBase64)
-        {
-            return new { Status = "N", UnsignedPdf = "", EsignUrl = "", EmailId = "", Remark = "Account closure PDF generation has been disabled." };
-        }
-
-
     }
 }

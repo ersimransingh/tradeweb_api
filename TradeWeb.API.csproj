@@ -1,40 +1,214 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
 	<PropertyGroup>
-		<TargetFramework>netcoreapp3.1</TargetFramework>
+		<TargetFramework>net10.0</TargetFramework>
 		<UserSecretsId>aspnet-TradeWeb.API-31843B8F-1C85-4C19-931C-2ACB593D9DCA</UserSecretsId>
 		<WebProject_DirectoryAccessLevelKey>0</WebProject_DirectoryAccessLevelKey>
 	</PropertyGroup>
 
 	<ItemGroup>
+		<Compile Remove="Connected Services\INVPLService\**" />
+		<Compile Remove="Data\**" />
+		<Compile Remove="DevForms\**" />
 		<Compile Remove="Entity\**" />
+		<Compile Remove="ExtentionMethod\**" />
+		<Content Remove="Connected Services\INVPLService\**" />
+		<Content Remove="Data\**" />
+		<Content Remove="DevForms\**" />
 		<Content Remove="Entity\**" />
+		<Content Remove="ExtentionMethod\**" />
+		<EmbeddedResource Remove="Connected Services\INVPLService\**" />
+		<EmbeddedResource Remove="Data\**" />
+		<EmbeddedResource Remove="DevForms\**" />
 		<EmbeddedResource Remove="Entity\**" />
+		<EmbeddedResource Remove="ExtentionMethod\**" />
+		<None Remove="Connected Services\INVPLService\**" />
+		<None Remove="Data\**" />
+		<None Remove="DevForms\**" />
 		<None Remove="Entity\**" />
+		<None Remove="ExtentionMethod\**" />
 	</ItemGroup>
 
 	<ItemGroup>
+		<Compile Remove="Controllers\BillsController.cs" />
+		<Compile Remove="Controllers\CapitalGainLossController.cs" />
+		<Compile Remove="Controllers\ChangeDetailController.cs" />
+		<Compile Remove="Controllers\Confirmation_TransactionController.cs" />
+		<Compile Remove="Controllers\CrossController.cs" />
+		<Compile Remove="Controllers\CrossNetController.cs" />
+		<Compile Remove="Controllers\CrossNetInstructionController.cs" />
+		<Compile Remove="Controllers\CrossNetMasterController.cs" />
+		<Compile Remove="Controllers\CrossNetReportController.cs" />
+		<Compile Remove="Controllers\CrossNet_ClientController.cs" />
 		<Compile Remove="Controllers\DigilockerController.cs" />
+		<Compile Remove="Controllers\EstroController.cs" />
+		<Compile Remove="Controllers\EstroNetController.cs" />
+		<Compile Remove="Controllers\FamilyController.cs" />
+		<Compile Remove="Controllers\HoldingController.cs" />
+		<Compile Remove="Controllers\IPOController.cs" />
+		<Compile Remove="Controllers\MarginController.cs" />
+		<Compile Remove="Controllers\MargingFinanceController.cs" />
+		<Compile Remove="Controllers\MiscellaniousController.cs" />
+		<Compile Remove="Controllers\ModificationController.cs" />
 		<Compile Remove="Controllers\ModificationRequestController.cs" />
+		<Compile Remove="Controllers\ProfiltAndLossController.cs" />
+		<Compile Remove="Controllers\ReKYCController.cs" />
+		<Compile Remove="Controllers\RequestController.cs" />
+		<Compile Remove="Controllers\SubscriptionController.cs" />
 		<Compile Remove="Controllers\ThirdPartyController.cs" />
-		<Compile Remove="Controllers\ThirdPartyServiceController.cs" />
-		<Compile Remove="Service\ThirdPartyServiceDAO.cs" />
+		<Compile Remove="Controllers\TradeMobileController.cs" />
+		<Compile Remove="Controllers\TradeNetController.cs" />
+		<Compile Remove="Models\AuditRequest.cs" />
+		<Compile Remove="Models\BillBreakUpReq.cs" />
+		<Compile Remove="Models\BillSummaryFOResponse.cs" />
+		<Compile Remove="Models\BillSummaryModel.cs" />
+		<Compile Remove="Models\BrokerageFOResponseModel.cs" />
+		<Compile Remove="Models\BrokerageOrderFOResponseModel.cs" />
+		<Compile Remove="Models\BrokerageReponseModel.cs" />
+		<Compile Remove="Models\CapitalGainLossModel.cs" />
+		<Compile Remove="Models\CapitalGainLossResponse.cs" />
+		<Compile Remove="Models\ClientListingReq.cs" />
+		<Compile Remove="Models\ClientMasterModel.cs" />
+		<Compile Remove="Models\ClientOutstandingReq.cs" />
+		<Compile Remove="Models\CmbMasterResponse.cs" />
+		<Compile Remove="Models\CommissionReportResponseModel.cs" />
+		<Compile Remove="Models\CompanyPerformanceModel.cs" />
+		<Compile Remove="Models\CrossBillModel.cs" />
+		<Compile Remove="Models\CrossBillSummaryReq.cs" />
+		<Compile Remove="Models\CrossClientModificationModel.cs" />
+		<Compile Remove="Models\CrossLedgerReq.cs" />
+		<Compile Remove="Models\CrossLedgerResponse.cs" />
+		<Compile Remove="Models\CrossOffMarketModel.cs" />
+		<Compile Remove="Models\CrossTransactionModel.cs" />
+		<Compile Remove="Models\DebitNotesRequest.cs" />
+		<Compile Remove="Models\DeliveryStatementModel.cs" />
+		<Compile Remove="Models\DigitalDocumentModel.cs" />
+		<Compile Remove="Models\DigitalDocumentResponse.cs" />
+		<Compile Remove="Models\DpHoldingDetail.cs" />
+		<Compile Remove="Models\EarlyPayInReq.cs" />
+		<Compile Remove="Models\EntryGSTInvoiceResponse.cs" />
+		<Compile Remove="Models\EntryReceiptPaymentModel.cs" />
+		<Compile Remove="Models\EstroLedgerModel.cs" />
+		<Compile Remove="Models\EstroTransactionModel.cs" />
+		<Compile Remove="Models\FamilyBalanceResponse.cs" />
+		<Compile Remove="Models\FamilyHoldingResponse.cs" />
+		<Compile Remove="Models\FamilyModel.cs" />
+		<Compile Remove="Models\FamilyPositionResponse.cs" />
+		<Compile Remove="Models\FamilyRetainedStokeModel.cs" />
+		<Compile Remove="Models\FamilyTransactionResponse.cs" />
+		<Compile Remove="Models\FundRequestModel.cs" />
+		<Compile Remove="Models\FundRequest_Model.cs" />
+		<Compile Remove="Models\GenerateOtpModel.cs" />
+		<Compile Remove="Models\Generate_Combined_OTP_Response.cs" />
+		<Compile Remove="Models\HoldingRequest.cs" />
+		<Compile Remove="Models\Holding_DematAct_Graph.cs" />
+		<Compile Remove="Models\IPOSubmitModel.cs" />
+		<Compile Remove="Models\JournalGetResponse.cs" />
+		<Compile Remove="Models\JournalRequest.cs" />
+		<Compile Remove="Models\LedgerDetailsModel.cs" />
+		<Compile Remove="Models\LedgerTypeResponse.cs" />
+		<Compile Remove="Models\MargingFinanceShortFallModel.cs" />
+		<Compile Remove="Models\MargingFinanceStatusCombineModel.cs" />
+		<Compile Remove="Models\MarginResponse.cs" />
+		<Compile Remove="Models\ModificationRequestCombinedModel.cs" />
+		<Compile Remove="Models\ModificationRequestDetailResponse.cs" />
+		<Compile Remove="Models\Modification_Read_Combined_OTP_Response.cs" />
+		<Compile Remove="Models\modification_upload_document.cs" />
+		<Compile Remove="Models\OtpUserIdSession.cs" />
+		<Compile Remove="Models\OutstandingAgeingResponseModel.cs" />
+		<Compile Remove="Models\OutstandingBalanceModel.cs" />
+		<Compile Remove="Models\OutstandingPositionModel.cs" />
+		<Compile Remove="Models\PerformanceCashResponseModel.cs" />
+		<Compile Remove="Models\PerformanceCommexResponseModel.cs" />
+		<Compile Remove="Models\PerformanceFOResponseModel.cs" />
+		<Compile Remove="Models\PerformanceRepRequest.cs" />
+		<Compile Remove="Models\PledgeForMarginModel.cs" />
+		<Compile Remove="Models\PledgeForMarginResponse.cs" />
+		<Compile Remove="Models\ProductWiseBrokerageResponse.cs" />
+		<Compile Remove="Models\ProfitLossCombinedModel.cs" />
+		<Compile Remove="Models\ProfitLossModel.cs" />
+		<Compile Remove="Models\ReceiptAddReq.cs" />
+		<Compile Remove="Models\ReceiptFind.cs" />
+		<Compile Remove="Models\ReceiptPaymentEntriesReq.cs" />
+		<Compile Remove="Models\RequestPostModel.cs" />
+		<Compile Remove="Models\RmsRequestResponse.cs" />
+		<Compile Remove="Models\ShareResponse.cs" />
+		<Compile Remove="Models\SlipIssueReq.cs" />
+		<Compile Remove="Models\SlipStopReq.cs" />
+		<Compile Remove="Models\SubscriptionModel.cs" />
+		<Compile Remove="Models\TradeNetXModel.cs" />
+		<Compile Remove="Models\TransactionDetailModel.cs" />
+		<Compile Remove="Models\TransactionTradeResponse.cs" />
+		<Compile Remove="Models\TransectionStatementRequest.cs" />
+		<Compile Remove="Models\TransectionStatusResponse.cs" />
+		<Compile Remove="Models\UnPledgeRequestModel.cs" />
+		<Compile Remove="Models\WebParamterLoginEntity.cs" />
+		<Compile Remove="Repository\CommonRepository.cs" />
+		<Compile Remove="Repository\CrossNetRepository.cs" />
+		<Compile Remove="Repository\CrossWebRepository.cs" />
+		<Compile Remove="Repository\EstroNetRepository.cs" />
+		<Compile Remove="Repository\EstroWebRepository.cs" />
+		<Compile Remove="Repository\ICrossNetRepository.cs" />
+		<Compile Remove="Repository\ICrossWebRepository.cs" />
+		<Compile Remove="Repository\IEstroNetRepository.cs" />
+		<Compile Remove="Repository\IEstroWebRepository.cs" />
+		<Compile Remove="Repository\ISubscriptionRepository.cs" />
+		<Compile Remove="Repository\ITradeMobileRepository.cs" />
+		<Compile Remove="Repository\ITradeNetRepository.cs" />
+		<Compile Remove="Repository\ModelTradeWebCommon.cs" />
+		<Compile Remove="Repository\SubscriptionRepository.cs" />
+		<Compile Remove="Repository\TradeMobileRepository.cs" />
+		<Compile Remove="Repository\TradeNetRepository.cs" />
 		<Compile Remove="Service\IblogUtility.cs" />
-		<Compile Remove="ExtentionMethod\InsertOrUpdate.cs" />
+		<Compile Remove="Service\ThirdPartyServiceDAO.cs" />
 	</ItemGroup>
 
 	<ItemGroup>
+	  <None Remove="Controllers\BillsController.cs.bak" />
+	  <None Remove="Controllers\CapitalGainLossController.cs.bak" />
+	  <None Remove="Controllers\ChangeDetailController.cs.bak" />
+	  <None Remove="Controllers\Confirmation_TransactionController.cs.bak" />
+	  <None Remove="Controllers\CrossController.cs.bak" />
+	  <None Remove="Controllers\CrossNetController.cs.bak" />
+	  <None Remove="Controllers\CrossNetInstructionController.cs.bak" />
+	  <None Remove="Controllers\CrossNetMasterController.cs.bak" />
+	  <None Remove="Controllers\CrossNetReportController.cs.bak" />
+	  <None Remove="Controllers\CrossNet_ClientController.cs.bak" />
+	  <None Remove="Controllers\EstroController.cs.bak" />
+	  <None Remove="Controllers\EstroNetController.cs.bak" />
+	  <None Remove="Controllers\FamilyController.cs.bak" />
+	  <None Remove="Controllers\HoldingController.cs.bak" />
+	  <None Remove="Controllers\IPOController.cs.bak" />
+	  <None Remove="Controllers\ReKYCController.cs.bak" />
+	  <None Remove="Models\BillSummaryFOResponse.cs.bak" />
+	  <None Remove="Models\BillSummaryModel.cs.bak" />
+	  <None Remove="Models\BrokerageFOResponseModel.cs.bak" />
+	  <None Remove="Models\BrokerageReponseModel.cs.bak" />
+	  <None Remove="Models\ClientMasterModel.cs.bak" />
+	  <None Remove="Models\CrossTransactionModel.cs.bak" />
+	  <None Remove="Models\EntryReceiptPaymentModel.cs.bak" />
+	  <None Remove="Models\LedgerDetailsModel.cs.bak" />
+	  <None Remove="Models\PerformanceCommexResponseModel.cs.bak" />
+	  <None Remove="Models\ProductWiseBrokerageResponse.cs.bak" />
+	  <None Remove="Models\SubscriptionModel.cs.bak" />
+	  <None Remove="Repository\CrossNetRepository.cs.bak" />
+	  <None Remove="Repository\CrossWebRepository.cs.bak" />
+	  <None Remove="Repository\SubscriptionRepository.cs.bak" />
+	  <None Remove="Repository\TradeMobileRepository.cs.bak" />
 	  <None Remove="SQL\ChatBot.sql" />
 	  <None Remove="SQL\Commex.sql" />
+	  <None Remove="SQL\CommexUAT.sql" />
 	  <None Remove="SQL\CrossWeb.sql" />
 	  <None Remove="SQL\CrossWebO.sql" />
 	  <None Remove="SQL\Estro.sql" />
 	  <None Remove="SQL\EstroWeb.sql" />
+	  <None Remove="SQL\EstroWebUAT.sql" />
 	  <None Remove="SQL\json.sql" />
 	  <None Remove="SQL\Pledge.sql" />
 	  <None Remove="SQL\ReKYC.sql" />
 	  <None Remove="SQL\ReKYC2.sql" />
 	  <None Remove="SQL\TradeWeb.sql" />
+	  <None Remove="SQL\TradeWebUAT.sql" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -43,6 +217,9 @@
 	  </Content>
 	  <Content Include="SQL\Commex.sql">
 		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\CommexUAT.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </Content>
 	  <Content Include="SQL\CrossWeb.sql">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -54,6 +231,9 @@
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </Content>
 	  <Content Include="SQL\EstroWeb.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="SQL\EstroWebUAT.sql">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </Content>
 	  <Content Include="SQL\json.sql">
@@ -71,6 +251,9 @@
 	  <Content Include="SQL\TradeWeb.sql">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </Content>
+	  <Content Include="SQL\TradeWebUAT.sql">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
 	  <Content Include="Typst\**\*.*">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </Content>
@@ -84,41 +267,58 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="AspNetCoreRateLimit" Version="4.0.2" />
-		<PackageReference Include="Azure.Core" Version="1.24.0" />
+		<PackageReference Include="AspNetCoreRateLimit" Version="5.0.0" />
 		<PackageReference Include="ClosedXML" Version="0.105.0" />
 		<PackageReference Include="Core.Renci.SshNet" Version="2021.10.2" />
 		<PackageReference Include="Fernet" Version="0.1.7" />
-		<PackageReference Include="Grpc.Core" Version="2.46.3" />
-		<!--<PackageReference Include="itext.bouncy-castle-adapter" Version="9.6.0" />
-		<PackageReference Include="itext7" Version="9.6.0" />-->
-		<PackageReference Include="iTextSharp" Version="5.5.13.3" />
-		<PackageReference Include="MailKit" Version="4.14.1" />
-		<PackageReference Include="Microsoft.AspNet.Identity.EntityFramework" Version="2.2.3" />
-		<PackageReference Include="Microsoft.AspNet.Mvc" Version="5.2.7" />
-		<PackageReference Include="Microsoft.AspNet.WebApi.Core" Version="5.2.9" />
-		<PackageReference Include="Microsoft.AspNetCore.Authentication.AzureAD.UI" Version="3.1.17" />
-		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="3.1.22" />
-		<PackageReference Include="Microsoft.AspNetCore.Identity" Version="2.2.0" />
-		<PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="5.0.10" />
-		<PackageReference Include="Microsoft.EntityFrameworkCore" Version="5.0.10" />
-		<PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="5.0.10" />
-		<PackageReference Include="Microsoft.Extensions.Configuration" Version="5.0.0" />
-		<PackageReference Include="Microsoft.Extensions.Identity.Stores" Version="5.0.10" />
-		<PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+		<PackageReference Include="HtmlSanitizer" Version="9.2.1039" />
+		<PackageReference Include="iTextSharp" Version="5.5.13.4" />
+		<PackageReference Include="MailKit" Version="4.16.0" />
+		<PackageReference Include="Microsoft.AspNet.Mvc" Version="5.3.0" />
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.2" />
+		<PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.2" />
+		<PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.4" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
 		<PackageReference Include="QuestPDF" Version="2025.12.4" />
-		<PackageReference Include="ReportViewerCore.NETCore" Version="15.1.19" />
-		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="6.2.1" />
-		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="6.2.1" />
-		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="6.2.1" />
-		<PackageReference Include="System.ServiceModel.Duplex" Version="4.7.*" />
-		<PackageReference Include="System.ServiceModel.Http" Version="4.7.*" />
-		<PackageReference Include="System.ServiceModel.NetTcp" Version="4.7.*" />
-		<PackageReference Include="System.ServiceModel.Security" Version="4.7.*" />
-		<PackageReference Include="System.Data.SqlClient" Version="4.8.6" />
+		<PackageReference Include="ReportViewerCore.NETCore" Version="15.1.32" />
+		<PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+		<PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
+		<PackageReference Include="System.ServiceModel.Duplex" Version="6.0.0" />
+		<PackageReference Include="System.ServiceModel.Http" Version="10.0.652802" />
+		<PackageReference Include="System.ServiceModel.NetTcp" Version="10.0.652802" />
+		<PackageReference Include="System.ServiceModel.Security" Version="6.0.0" />
 	</ItemGroup>
-
 	<ItemGroup>
+		<Reference Include="DevExpress.Data.Desktop.v22.2">
+			
+		</Reference>
+		<Reference Include="DevExpress.DataAccess.v22.2.UI">
+			
+		</Reference>
+		<Reference Include="DevExpress.ExpressApp.PivotGrid.Win.v22.2">
+			
+		</Reference>
+		<Reference Include="DevExpress.Drawing.v22.2">
+			
+		</Reference>
+		<Reference Include="DevExpress.Pdf.v22.2.Core">
+			
+		</Reference>
+		<Reference Include="DevExpress.Pdf.v22.2.Drawing">
+			
+		</Reference>
+		<Reference Include="DevExpress.Charts.v22.2.Core">
+			
+		</Reference>
+		<Reference Include="DevExpress.XtraCharts.v22.2">
+			
+		</Reference>
+		<Reference Include="DevExpress.XtraReports.v22.2">
+			
+		</Reference>
+	</ItemGroup>
+	<ItemGroup>
+	  <Folder Include="Connected Services\" />
 	  <Folder Include="Typst\Assets\" />
 	  <Folder Include="Typst\Inputs\" />
 	  <Folder Include="Typst\Outputs\" />

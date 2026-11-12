@@ -9,8 +9,9 @@ using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using TradeWeb.API.Data;
-using TradeWeb.API.ExtentionMethod;
+//using TradeWeb.API.ExtentionMethod;
 using TradeWeb.API.Models;
+using static TradeWeb.API.Startup;
 
 namespace TradeWeb.API.Repository
 {
@@ -25,15 +26,17 @@ namespace TradeWeb.API.Repository
         IHttpContextAccessor _httpContextAccessor;
         // private readonly IWebHostEnvironment _environment;
         private readonly IWebHostEnvironment _environment;
+        private readonly string _connStr;
         #endregion
 
         #region Constructor
-        public TradeNetRepository(IConfiguration configuration, UtilityCommon objUtility, IHttpContextAccessor httpContextAccessor, IWebHostEnvironment environment)
+        public TradeNetRepository(IConfiguration configuration, UtilityCommon objUtility, IHttpContextAccessor httpContextAccessor, IWebHostEnvironment environment, ConnectionString connectionString)
         {
             _configuration = configuration;
             this.objUtility = objUtility;
             _httpContextAccessor = httpContextAccessor;
             _environment = environment;
+            _connStr = connectionString.Default;
         }
         #endregion
         public dynamic Validate_LoginAccess(string clientCode, string loginAccess)
@@ -2171,8 +2174,8 @@ namespace TradeWeb.API.Repository
                 intChequeLen = Convert.ToInt32(objUtility.fnFireQueryTradeWeb("information_schema.columns", "character_maximum_length", "table_name='Receipts' and COLUMN_NAME", "rc_chequeno", true));
                 req.ChequeNo = Strings.Left(req.ChequeNo.Trim(), intChequeLen);
 
-                var db = new DataContext();
-                using (SqlConnection sqlCon = new SqlConnection((db.Database.GetDbConnection()).ConnectionString))
+                //var db = new DataContext();
+                using (SqlConnection sqlCon = new SqlConnection(_connStr))
                 {
                     sqlCon.Open();
                     objTrans = sqlCon.BeginTransaction();
@@ -3872,14 +3875,22 @@ namespace TradeWeb.API.Repository
                         foreach (var dictItem in dictExchSeg)
                         {
                             SegmentWiseDetail segmentWise = new SegmentWiseDetail();
-                            segmentWise.Brokerage = data.Rows[i][dictItem.Key + "BROKERAGE"].ToDouble();
+                            /*segmentWise.Brokerage = data.Rows[i][dictItem.Key + "BROKERAGE"].ToDouble();
                             segmentWise.Remmisier1_Share = data.Rows[i][dictItem.Key + "Share"].ToDouble();
                             segmentWise.Remmisier2_Share = data.Rows[i][dictItem.Key + "remissier2share"].ToDouble();
                             segmentWise.Net = data.Rows[i][dictItem.Key + "BROKERAGE"].ToDouble() - data.Rows[i][dictItem.Key + "Share"].ToDouble() - data.Rows[i][dictItem.Key + "remissier2share"].ToDouble();
                             dictNew.Add(dictItem.Value, segmentWise);
                             totalBrokerage += data.Rows[i][dictItem.Key + "BROKERAGE"].ToDouble();
                             totalShare1 += data.Rows[i][dictItem.Key + "Share"].ToDouble();
-                            totalShare2 += data.Rows[i][dictItem.Key + "remissier2share"].ToDouble();
+                            totalShare2 += data.Rows[i][dictItem.Key + "remissier2share"].ToDouble();*/
+                            segmentWise.Brokerage = objUtility.ToDouble(data.Rows[i][dictItem.Key + "BROKERAGE"]);
+                            segmentWise.Remmisier1_Share = objUtility.ToDouble(data.Rows[i][dictItem.Key + "Share"]);
+                            segmentWise.Remmisier2_Share = objUtility.ToDouble(data.Rows[i][dictItem.Key + "remissier2share"]);
+                            segmentWise.Net = objUtility.ToDouble(data.Rows[i][dictItem.Key + "BROKERAGE"]) - objUtility.ToDouble(data.Rows[i][dictItem.Key + "Share"]) - objUtility.ToDouble(data.Rows[i][dictItem.Key + "remissier2share"]);
+                            dictNew.Add(dictItem.Value, segmentWise);
+                            totalBrokerage += objUtility.ToDouble(data.Rows[i][dictItem.Key + "BROKERAGE"]);
+                            totalShare1 += objUtility.ToDouble(data.Rows[i][dictItem.Key + "Share"]);
+                            totalShare2 += objUtility.ToDouble(data.Rows[i][dictItem.Key + "remissier2share"]);
                         }
 
                         SegmentWiseDetail segment = new SegmentWiseDetail
@@ -4150,8 +4161,8 @@ namespace TradeWeb.API.Repository
             {
                 SqlTransaction objTrans;
                 string oldVal = "", mkrOldId = "", mkrOldDate = "";
-                var db = new DataContext();
-                using (SqlConnection sqlCon = new SqlConnection((db.Database.GetDbConnection()).ConnectionString))
+                //var db = new DataContext();
+                using (SqlConnection sqlCon = new SqlConnection(_connStr))
                 {
                     if (sqlCon.State == ConnectionState.Closed)
                         sqlCon.Open();
@@ -4568,27 +4579,27 @@ namespace TradeWeb.API.Repository
                             ft_sname = (ds.Columns.Contains("ft_sname")) ? ds.Rows[i]["ft_sname"].ToString().Trim() : "",
                             ft_dpid = (ds.Columns.Contains("ft_dpid")) ? ds.Rows[i]["ft_dpid"].ToString() : "",
                             ft_exchange = (ds.Columns.Contains("ft_exchange")) ? ds.Rows[i]["ft_exchange"].ToString() : "",
-                            ft_Cashbrokerage = (ds.Columns.Contains("ft_Cashbrokerage")) ? ds.Rows[i]["ft_Cashbrokerage"].ToDouble() : 0,
-                            ft_CashFiller = (ds.Columns.Contains("ft_CashFiller")) ? ds.Rows[i]["ft_CashFiller"].ToDouble() : 0,
-                            ft_cashTotal = (ds.Columns.Contains("ft_cashTotal")) ? ds.Rows[i]["ft_cashTotal"].ToDouble() : 0,
-                            ft_DelvBrokerage = (ds.Columns.Contains("ft_DelvBrokerage")) ? ds.Rows[i]["ft_DelvBrokerage"].ToDouble() : 0,
-                            ft_DelvTotal = (ds.Columns.Contains("ft_DelvTotal")) ? ds.Rows[i]["ft_DelvTotal"].ToDouble() : 0,
-                            ft_FOBrokerage = (ds.Columns.Contains("ft_FOBrokerage")) ? ds.Rows[i]["ft_FOBrokerage"].ToDouble() : 0,
-                            ft_FOFiller = (ds.Columns.Contains("ft_FOFiller")) ? ds.Rows[i]["ft_FOFiller"].ToDouble() : 0,
-                            ft_FOTotal = (ds.Columns.Contains("ft_FOTotal")) ? ds.Rows[i]["ft_FOTotal"].ToDouble() : 0,
-                            ft_FutBrokerage = (ds.Columns.Contains("ft_FutBrokerage")) ? ds.Rows[i]["ft_FutBrokerage"].ToDouble() : 0,
-                            ft_FutTotal = (ds.Columns.Contains("ft_FutTotal")) ? ds.Rows[i]["ft_FutTotal"].ToDouble() : 0,
-                            ft_ledger = (ds.Columns.Contains("ft_ledger")) ? ds.Rows[i]["ft_ledger"].ToDouble() : 0,
-                            ft_OptBrokerage = (ds.Columns.Contains("ft_OptBrokerage")) ? ds.Rows[i]["ft_OptBrokerage"].ToDouble() : 0,
-                            ft_OptTotal = (ds.Columns.Contains("ft_OptTotal")) ? ds.Rows[i]["ft_OptTotal"].ToDouble() : 0,
-                            ft_Specbrokerage = (ds.Columns.Contains("ft_Specbrokerage")) ? ds.Rows[i]["ft_Specbrokerage"].ToDouble() : 0,
-                            ft_specTotal = (ds.Columns.Contains("ft_specTotal")) ? ds.Rows[i]["ft_specTotal"].ToDouble() : 0,
-                            ft_FutTotalC = (ds.Columns.Contains("ft_FutTotalC")) ? ds.Rows[i]["ft_FutTotalC"].ToDouble() : 0,
-                            ft_OptTotalC = (ds.Columns.Contains("ft_OptTotalC")) ? ds.Rows[i]["ft_OptTotalC"].ToDouble() : 0,
-                            ft_FOTotalC = (ds.Columns.Contains("ft_FOTotalC")) ? ds.Rows[i]["ft_FOTotalC"].ToDouble() : 0,
-                            ft_FutBrokerageC = (ds.Columns.Contains("ft_FutBrokerageC")) ? ds.Rows[i]["ft_FutBrokerageC"].ToDouble() : 0,
-                            ft_OptBrokerageC = (ds.Columns.Contains("ft_OptBrokerageC")) ? ds.Rows[i]["ft_OptBrokerageC"].ToDouble() : 0,
-                            ft_FOBrokerageC = (ds.Columns.Contains("ft_FOBrokerageC")) ? ds.Rows[i]["ft_FOBrokerageC"].ToDouble() : 0,
+                            ft_Cashbrokerage = (ds.Columns.Contains("ft_Cashbrokerage")) ? objUtility.ToDouble(ds.Rows[i]["ft_Cashbrokerage"]) : 0,
+                            ft_CashFiller = (ds.Columns.Contains("ft_CashFiller")) ? objUtility.ToDouble(ds.Rows[i]["ft_CashFiller"]) : 0,
+                            ft_cashTotal = (ds.Columns.Contains("ft_cashTotal")) ? objUtility.ToDouble(ds.Rows[i]["ft_cashTotal"]) : 0,
+                            ft_DelvBrokerage = (ds.Columns.Contains("ft_DelvBrokerage")) ? objUtility.ToDouble(ds.Rows[i]["ft_DelvBrokerage"]) : 0,
+                            ft_DelvTotal = (ds.Columns.Contains("ft_DelvTotal")) ? objUtility.ToDouble(ds.Rows[i]["ft_DelvTotal"]) : 0,
+                            ft_FOBrokerage = (ds.Columns.Contains("ft_FOBrokerage")) ? objUtility.ToDouble(ds.Rows[i]["ft_FOBrokerage"]) : 0,
+                            ft_FOFiller = (ds.Columns.Contains("ft_FOFiller")) ? objUtility.ToDouble(ds.Rows[i]["ft_FOFiller"]) : 0,
+                            ft_FOTotal = (ds.Columns.Contains("ft_FOTotal")) ? objUtility.ToDouble(ds.Rows[i]["ft_FOTotal"]) : 0,
+                            ft_FutBrokerage = (ds.Columns.Contains("ft_FutBrokerage")) ? objUtility.ToDouble(ds.Rows[i]["ft_FutBrokerage"]) : 0,
+                            ft_FutTotal = (ds.Columns.Contains("ft_FutTotal")) ? objUtility.ToDouble(ds.Rows[i]["ft_FutTotal"]) : 0,
+                            ft_ledger = (ds.Columns.Contains("ft_ledger")) ? objUtility.ToDouble(ds.Rows[i]["ft_ledger"]) : 0,
+                            ft_OptBrokerage = (ds.Columns.Contains("ft_OptBrokerage")) ? objUtility.ToDouble(ds.Rows[i]["ft_OptBrokerage"]) : 0,
+                            ft_OptTotal = (ds.Columns.Contains("ft_OptTotal")) ? objUtility.ToDouble(ds.Rows[i]["ft_OptTotal"]) : 0,
+                            ft_Specbrokerage = (ds.Columns.Contains("ft_Specbrokerage")) ? objUtility.ToDouble(ds.Rows[i]["ft_Specbrokerage"]) : 0,
+                            ft_specTotal = (ds.Columns.Contains("ft_specTotal")) ? objUtility.ToDouble(ds.Rows[i]["ft_specTotal"]) : 0,
+                            ft_FutTotalC = (ds.Columns.Contains("ft_FutTotalC")) ? objUtility.ToDouble(ds.Rows[i]["ft_FutTotalC"]) : 0,
+                            ft_OptTotalC = (ds.Columns.Contains("ft_OptTotalC")) ? objUtility.ToDouble(ds.Rows[i]["ft_OptTotalC"]) : 0,
+                            ft_FOTotalC = (ds.Columns.Contains("ft_FOTotalC")) ? objUtility.ToDouble(ds.Rows[i]["ft_FOTotalC"]) : 0,
+                            ft_FutBrokerageC = (ds.Columns.Contains("ft_FutBrokerageC")) ? objUtility.ToDouble(ds.Rows[i]["ft_FutBrokerageC"]) : 0,
+                            ft_OptBrokerageC = (ds.Columns.Contains("ft_OptBrokerageC")) ? objUtility.ToDouble(ds.Rows[i]["ft_OptBrokerageC"]) : 0,
+                            ft_FOBrokerageC = (ds.Columns.Contains("ft_FOBrokerageC")) ? objUtility.ToDouble(ds.Rows[i]["ft_FOBrokerageC"]) : 0,
                             ft_segment = (ds.Columns.Contains("ft_segment")) ? ds.Rows[i]["ft_segment"].ToString() : "",
                         });
                     }
@@ -4887,7 +4898,7 @@ namespace TradeWeb.API.Repository
                                 strSql += " 0, 0, 0, ";
                             strSql += "0 from trx with(index(idx_trx_dt_clientcd)),Settlements,settlement_type, Securities ";
                         }
-                        if ((Strings.InStr(1, strSql, "cm_") > 0) || Strings.InStr(1, strWhere, "cm_").ToBoolean())
+                        if ((Strings.InStr(1, strSql, "cm_") > 0) || strWhere.Contains("cm_", StringComparison.OrdinalIgnoreCase))
                             strSql += ", client_master ";
                         strSql += " where td_stlmnt=se_stlmnt and se_type=sy_type and se_exchange = sy_exchange and td_scripcd = ss_cd ";
                         strSql += " and td_companycode = '" + Strings.Left(strComSeg, 1) + "' and ";
@@ -5009,7 +5020,7 @@ namespace TradeWeb.API.Repository
                             strSql += "0 from " + (Strings.InStr("NX,BX", Strings.Right(strComSeg, 2)) > 0 ? "" : strCommex + ".") + "trades ";
                         }
                         strSql += ", client_master ";
-                        if (Strings.InStr(1, strSql, "sm_") > 0 || Strings.InStr(1, strWhere, "sm_").ToBoolean())
+                        if (Strings.InStr(1, strSql, "sm_") > 0 || strWhere.Contains("sm_", StringComparison.OrdinalIgnoreCase))
                             strSql += ", " + (Strings.InStr("NX,BX", Strings.Right(strComSeg, 2)) > 0 ? "" : strCommex + ".") + "series_master ";
                         strSql += " where td_companycode = '" + Strings.Left(strComSeg, 1) + "' and ";
                         strSql += " td_dt >= '" + strFromDt + "' and td_dt <= '" + strToDt + "'" + strWhere;
@@ -5136,9 +5147,9 @@ namespace TradeWeb.API.Repository
                             strSql += "0 from trades with(index(idx_trades_dt_clientcd)) ";
                         }
 
-                        if (Strings.InStr(1, strSql, "cm_") > 0 || Strings.InStr(1, strWhere, "cm_").ToBoolean())
+                        if (Strings.InStr(1, strSql, "cm_") > 0 || strWhere.Contains("cm_", StringComparison.OrdinalIgnoreCase))
                             strSql += ", client_master ";
-                        if (Strings.InStr(1, strSql, "sm_") > 0 | Strings.InStr(1, strWhere, "sm_").ToBoolean())
+                        if (Strings.InStr(1, strSql, "sm_") > 0 | strWhere.Contains("sm_", StringComparison.OrdinalIgnoreCase))
                             strSql += ", series_master ";
                         strSql += " where td_companycode = '" + Strings.Left(strComSeg, 1) + "' and ";
                         strSql += " td_segment = '" + (Strings.Right(strComSeg, 1) == "Y" ? "X" : Strings.Right(strComSeg, 1)) + "' and ";
@@ -5242,7 +5253,7 @@ namespace TradeWeb.API.Repository
                     if (chkCashBrokerage)
                         strSql += " 0, sum( Case When sy_maptype = 'C' Or td_marginYN = 'B' then (td_brokerage*(td_bqty+td_sqty)) else case td_brokeragetype when 'DLV' then (td_bqty+td_sqty)*td_brokerage else 0 end end ), sum(td_brokerage*(td_bqty+td_sqty)), ";
                     strSql += "0 from trx with(index(idx_trx_dt_clientcd)) , settlements , Settlement_type, securities ";
-                    if (Strings.InStr(1, strSql, "cm_") > 0 || Strings.InStr(1, strWhere, "cm_").ToBoolean())
+                    if (Strings.InStr(1, strSql, "cm_") > 0 || strWhere.Contains("cm_", StringComparison.OrdinalIgnoreCase))
                         strSql += ", client_master ";
                     strSql += " where td_stlmnt = se_stlmnt and se_type = sy_type and sy_exchange = se_exchange and td_scripcd = ss_cd and td_companycode = '" + Strings.Left(strComSeg, 1) + "' and ";
                     strSql += " td_dt >= '" + strFromDt + "' and td_dt <= '" + strToDt + "'" + strWhere;

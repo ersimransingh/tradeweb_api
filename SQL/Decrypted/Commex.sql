@@ -554,7 +554,7 @@ BEGIN
   Symbol VARCHAR(50), seriesid INT, ExpiryDate VARCHAR(8), Scrip VARCHAR(100), Multiplier INT, TrxnDate VARCHAR(8), 
   BF_QTY numeric, BF_CloseRate MONEY, BF_VALUE MONEY, BOT_QTY numeric, BOT_VALUE MONEY, 
   SOLD_QTY numeric,SOLD_VALUE MONEY, EX_QTY numeric, EX_VALUE MONEY, AS_QTY numeric, AS_VALUE MONEY, MTM MONEY,
-  NET_QTY numeric, CMP MONEY, NET_VALUE MONEY, AccountType VARCHAR(1))
+  NET_QTY numeric, CMP MONEY, NET_VALUE MONEY, AccountType VARCHAR(1), IncomeTaxAmount MONEY)
   
   CREATE INDEX indx_ClientPL ON #tbl_ClientPL (seriesid)
     
@@ -1276,11 +1276,13 @@ BEGIN
 	    WHERE ms_exchange = X.ms_exchange --and ms_segment = X.ms_segment 
 		and ms_dt<=@dtToDt)
 		
-		UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
+		UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0),
+		A.IncomeTaxAmount = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
         FROM #tbl_ClientPL A	  
 	  		
 	  	UPDATE A SET A.MTM =((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0)),
-	    A.NET_VALUE = 0 
+	    A.NET_VALUE = 0, 
+		A.IncomeTaxAmount = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))
 	    FROM #tbl_ClientPL A
 	    WHERE  EXISTS(SELECT 1 FROM Series_master(NOLOCK)
 	    WHERE --sm_Segment =  A.Segment AND 
@@ -1292,7 +1294,10 @@ BEGIN
 	    UPDATE A SET A.MTM = case WHEN NET_QTY > 0 THEN 
 		((ABS(ISNULL(A.BOT_QTY,0)*ROUND((ISNULL(A.BOT_VALUE,0)/ISNULL(A.BOT_QTY,0)),2))-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))
 		ELSE ((ISNULL(A.SOLD_VALUE,0)-ABS(ISNULL(A.SOLD_QTY,0)*ROUND((ISNULL(A.SOLD_VALUE,0)/ISNULL(A.SOLD_QTY,0)),2)))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0)) END,
-	    A.NET_VALUE = 0 
+	    A.NET_VALUE = 0 ,
+		A.IncomeTaxAmount =  case WHEN NET_QTY > 0 THEN 
+		((ABS(ISNULL(A.BOT_QTY,0)*ROUND((ISNULL(A.BOT_VALUE,0)/ISNULL(A.BOT_QTY,0)),2))-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))
+		ELSE ((ISNULL(A.SOLD_VALUE,0)-ABS(ISNULL(A.SOLD_QTY,0)*ROUND((ISNULL(A.SOLD_VALUE,0)/ISNULL(A.SOLD_QTY,0)),2)))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0)) END		
 	    FROM #tbl_ClientPL A
 	    WHERE EXISTS(SELECT 1 FROM Series_master(NOLOCK)
 	    WHERE --sm_Segment =  A.Segment AND 
@@ -1315,11 +1320,13 @@ BEGIN
 	    WHERE ms_exchange = X.ms_exchange --and ms_segment = X.ms_segment 
 		and ms_dt<=@dtToDt )
 	  
-  	    UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
+  	    UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0),
+		A.IncomeTaxAmount = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
         FROM #tbl_ClientPL A	  
 	  
 	    UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0)),
-	    A.NET_VALUE = 0 
+	    A.NET_VALUE = 0 ,
+		A.IncomeTaxAmount = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))
 	    FROM #tbl_ClientPL A
 	    WHERE  EXISTS(SELECT 1 FROM Series_master(NOLOCK)
 	    WHERE --sm_Segment =  A.Segment AND 
@@ -1352,7 +1359,8 @@ BEGIN
 	  AND sm_seriesid = A.seriesid  AND sm_prodtype IN('EO','CO','IO')) 
 	  AND A.NET_QTY <> 0
 	  
-	  UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
+	  UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0),
+	  A.IncomeTaxAmount = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
       FROM #tbl_ClientPL A
 	  
 	END
@@ -1405,11 +1413,13 @@ BEGIN
       CLOSE db_CursorRateCF        
       DEALLOCATE db_CursorRateCF	
 
-	  UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
+	  UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0),
+	  A.IncomeTaxAmount = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))+isnull(NET_VALUE,0)
       FROM #tbl_ClientPL A
 	  
 	  UPDATE A SET A.MTM = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0)),
-	  A.NET_VALUE = 0 
+	  A.NET_VALUE = 0 ,
+	  A.IncomeTaxAmount = ((ISNULL(A.SOLD_VALUE,0)-isnull(A.BOT_VALUE,0))+ISNULL(A.BF_VALUE,0)-ISNULL(A.AS_VALUE,0)-ISNULL(A.EX_VALUE,0))
 	  FROM #tbl_ClientPL A
 	  WHERE  EXISTS(SELECT 1 FROM Series_master(NOLOCK)
 	  WHERE --sm_Segment =  A.Segment AND 
@@ -1456,7 +1466,8 @@ BEGIN
     DECLARE @XMLDATA1 XML=''
 	
 	
-
+    
+	
 	IF ISNULL(@strReportType,'') in('Series Wise','')
 	BEGIN
 	  IF @strOutputType = 'X'
@@ -1480,14 +1491,16 @@ BEGIN
 	      THEN ISNULL(MTM ,0) ELSE 0 END,
 	      UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END,
 		  Lookup = Exchange+Segment+CAST(seriesid AS VARCHAR), 
-		  Charges = 0
+		  Charges = 0,
+		  IncomeTaxAmount =  ISNULL(IncomeTaxAmount ,0)
           FROM #tbl_ClientPL
           UNION ALL
           SELECT TAG = 2, Exchange, Segment, ClientCode, ClientName = '', SeriesId = '',  SeriesDetails = ChargesDescp, 
 	      Multiplier = 0,BF_QTY = 0, BF_CloseRate = 0, BF_VALUE = 0, BOT_QTY = 0, BOT_RATE = 0, BOT_VALUE = 0,
 	      SOLD_QTY = 0, SOLD_RATE = 0, SOLD_VALUE = 0, EX_QTY = 0, EX_VALUE = 0, AS_QTY = 0, AS_VALUE = 0, NET_QTY = 0, CMP = 0, NET_VALUE = 0, 
 	      MTM = (bc_amount)*-1, --AccountType = '', 
-		  RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0, Lookup = Exchange+Segment, Charges = ISNULL(bc_amount,0)*-1
+		  RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0, Lookup = Exchange+Segment, Charges = ISNULL(bc_amount,0)*-1,
+		  IncomeTaxAmount =  (bc_amount)*-1
 	      FROM @tbl_billCharges) X1 --WHERE ((@strRequestFrom = 'M' AND TAG <> 2) OR  @strRequestFrom <> 'M')
 		  WHERE ((seriesid <> '' and @StrLookup <> '') or isnull(@StrLookup,'') = '')
 		  ORDER BY ClientCode, TAG, SeriesDetails FOR XML PATH('ProfitLoss'))
@@ -1535,7 +1548,8 @@ BEGIN
 		[Sell Qty] = SOLD_QTY, [Sell Value] = SOLD_VALUE, 
 		[Excr Qty] = EX_QTY, [Excr Value] = EX_VALUE, 
 		[Assign Qty] = AS_QTY, [Assign Value] = AS_VALUE, [Net Qty] = NET_QTY,
-		[LTP] = CMP, [Net Value] = NET_VALUE, Booked = RelPL, [Notional] = UnRelPL, MTM, Scrip = Lookup
+		[LTP] = CMP, [Net Value] = NET_VALUE, Booked = RelPL, [Notional] = UnRelPL, MTM, Scrip = Lookup,
+		[Taxable Amount] = IncomeTaxAmount
 		FROM (
 	    SELECT TAG = '1', Exchange, ClientCode, ClientName, 
         CAST(seriesid AS VARCHAR) as SeriesId, Scrip as SeriesDetails, Multiplier,  BF_QTY = ISNULL(BF_QTY,0), 
@@ -1553,14 +1567,16 @@ BEGIN
         RelPL = CASE WHEN (ISNULL(AccountType,'N') ='Y' OR ISNULL(NET_QTY,0) = 0) 
 	    THEN ISNULL(MTM ,0) ELSE 0 END,
 	    UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END,
-		Lookup = Exchange+CAST(seriesid AS VARCHAR)
+		Lookup = Exchange+CAST(seriesid AS VARCHAR),
+		IncomeTaxAmount =  ISNULL(IncomeTaxAmount ,0)
         FROM #tbl_ClientPL
         UNION ALL
         SELECT TAG = 2, Exchange, ClientCode, ClientName = '', SeriesId = '', SeriesDetails = ChargesDescp, 
 	    Multiplier = 0,BF_QTY = 0, BF_CloseRate = 0, BF_VALUE = 0, BOT_QTY = 0, BOT_RATE = 0, BOT_VALUE = 0,
 	    SOLD_QTY = 0, SOLD_RATE = 0, SOLD_VALUE = 0, EX_QTY = 0, EX_VALUE = 0, AS_QTY = 0, AS_VALUE = 0, NET_QTY = 0, CMP = 0, NET_VALUE = 0, 
 	    MTM = (bc_amount)*-1, --AccountType = '', 
-		RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0, Lookup = Exchange+'C'
+		RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0, Lookup = Exchange+'C',
+		IncomeTaxAmount =  (bc_amount)*-1
 	    FROM @tbl_billCharges) X1 
 		--WHERE ((seriesid <> '' and @StrLookup <> '') or isnull(@StrLookup,'') = '')
 		ORDER BY ClientCode, TAG, SeriesDetails
@@ -1625,7 +1641,8 @@ BEGIN
 	      --AccountType = ISNULL(AccountType,'N'),
           RelPL = CASE WHEN (ISNULL(AccountType,'N') ='Y' OR ISNULL(NET_QTY,0) = 0) 
 	      THEN ISNULL(MTM ,0) ELSE 0 END,
-	      UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END
+	      UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END,
+		  [IncomeTax Amount] = IncomeTaxAmount
           FROM #tbl_ClientPL
 	      
 	    END
@@ -1646,7 +1663,8 @@ BEGIN
 	      --AccountType = ISNULL(AccountType,'N'),
           RelPL = CASE WHEN (ISNULL(AccountType,'N') ='Y' OR ISNULL(NET_QTY,0) = 0) 
 	      THEN ISNULL(MTM ,0) ELSE 0 END,
-	      UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END
+	      UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END,
+		  IncomeTaxAmount = ISNULL(IncomeTaxAmount ,0)
           FROM #tbl_ClientPL
           UNION ALL
           SELECT TAG = 2, Exchange, ClientCode, ClientName = '', SeriesId = '', ExpiryDate= '', SeriesDetails = ChargesDescp, 
@@ -1654,7 +1672,7 @@ BEGIN
 	      BOT_VALUE = 0,
 	      SOLD_QTY = 0, SOLD_RATE = 0, SOLD_VALUE = 0, EX_QTY = 0, EX_VALUE = 0, AS_QTY = 0, AS_VALUE = 0, NET_QTY = 0, CMP = 0, NET_VALUE = 0, 
 	      MTM = (bc_amount)*-1, --AccountType = '', 
-		  RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0
+		  RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0, IncomeTaxAmount = (bc_amount)*-1
 	      FROM @tbl_billCharges) X1 ORDER BY ClientCode, TAG, SeriesDetails, TrxnDate
 		  END TRY
 		  BEGIN CATCH
@@ -1678,7 +1696,8 @@ BEGIN
 	    --AccountType = ISNULL(AccountType,'N'),
         RelPL = CASE WHEN (ISNULL(AccountType,'N') ='Y' OR ISNULL(NET_QTY,0) = 0) 
 	    THEN ISNULL(MTM ,0) ELSE 0 END,
-	    UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END
+	    UnRelPL = CASE WHEN ISNULL(AccountType,'') ='' AND ISNULL(NET_QTY,0) <> 0 THEN  ISNULL(MTM ,0) ELSE 0 END,
+		IncomeTaxAmount = ISNULL(IncomeTaxAmount ,0)
         FROM #tbl_ClientPL
         UNION ALL
         SELECT TAG = 2, Exchange, ClientCode, ClientName = '', SeriesId = '', SeriesDetails = ChargesDescp, 
@@ -1686,7 +1705,7 @@ BEGIN
 	    BOT_VALUE = 0,
 	    SOLD_QTY = 0, SOLD_RATE = 0, SOLD_VALUE = 0, EX_QTY = 0, EX_VALUE = 0, AS_QTY = 0, AS_VALUE = 0, NET_QTY = 0, CMP = 0, NET_VALUE = 0, 
 	    MTM = (bc_amount)*-1, --AccountType = '', 
-		RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0
+		RelPL = (ISNULL(bc_amount,0))*-1, UnRelPL = 0, IncomeTaxAmount = (bc_amount)*-1
 	    FROM @tbl_billCharges) X1 
 		WHERE ((seriesid <> '' and @StrLookup <> '') or isnull(@StrLookup,'') = '')
 		ORDER BY ClientCode, TAG, SeriesDetails, TrxnDate 

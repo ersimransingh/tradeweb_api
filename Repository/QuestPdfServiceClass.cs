@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -36,6 +37,15 @@ namespace TradeWeb.API.Repository
 
             var sw = Stopwatch.StartNew();
 
+            // Check the BCC column only once before starting workers.
+            bool hasBCCColumn;
+
+            await using (var checkConn = new SqlConnection(BuildConnectionString()))
+            {
+                await checkConn.OpenAsync();
+                hasBCCColumn = await EmailDetailsWriter.HasBCCColumnAsync(checkConn);
+            }
+
             var channel = Channel.CreateBounded<LetterData>(new BoundedChannelOptions(numWorkers * 10)
             {
                 FullMode = BoundedChannelFullMode.Wait
@@ -62,11 +72,11 @@ namespace TradeWeb.API.Repository
                         try
                         {
                             var pdfBytes = PdfWriterQuest.GeneratePdfBytes(data, headerImagePath, logoPath);
-                            await EmailDetailsWriter.InsertAsync(workerConn, data, pdfBytes, userId);
+                            await EmailDetailsWriter.InsertAsync(workerConn, data, pdfBytes, userId, hasBCCColumn);
 
                             Interlocked.Increment(ref counters.TotalProcessed);
                         }
-                        catch (Exception e)
+                        catch (Exception)
                         {
                             Interlocked.Increment(ref counters.TotalErrors);
                         }
@@ -237,23 +247,38 @@ namespace TradeWeb.API.Repository
 
     static class EmailDetailsWriter
     {
-        private const string InsertSql = @"
-        INSERT INTO dbo.Digital_Emaildetails
-        (
-            dd_companycode, dd_clientcd, dd_dt, dd_DocumentType, dd_computername,
-            dd_EmailParamCode, dd_toEmailid, dd_subject, dd_bodyText, dd_document, dd_filename, dd_CreatedBy
-        )
-        VALUES
-        (
-            @CompanyCode, @ClientCode, @Dt, @DocumentType, @ComputerName,
-            @EmailParamCode, @ToEmailId, @Subject, @BodyText, @Document, @FileName, @CreatedBy
-        );
-    ";
+        private const string InsertSqlWithBCC = @"
+    INSERT INTO dbo.Digital_Emaildetails
+    (
+        dd_companycode, dd_clientcd, dd_dt, dd_DocumentType, dd_computername,
+        dd_EmailParamCode, dd_toEmailid, dd_ccEmailid, dd_BCCEmailID,
+        dd_subject, dd_bodyText, dd_document, dd_filename, dd_CreatedBy
+    )
+    VALUES
+    (
+        @CompanyCode, @ClientCode, @Dt, @DocumentType, @ComputerName,
+        @EmailParamCode, @ToEmailId, @CCEmailID, @BCCEmailID,
+        @Subject, @BodyText, @Document, @FileName, @CreatedBy
+    );";
 
-        public static async Task InsertAsync(SqlConnection conn, LetterData data, byte[] pdfBytes, string userId)
+        private const string InsertSqlWithoutBCC = @"
+    INSERT INTO dbo.Digital_Emaildetails
+    (
+        dd_companycode, dd_clientcd, dd_dt, dd_DocumentType, dd_computername,
+        dd_EmailParamCode, dd_toEmailid, dd_ccEmailid,
+        dd_subject, dd_bodyText, dd_document, dd_filename, dd_CreatedBy
+    )
+    VALUES
+    (
+        @CompanyCode, @ClientCode, @Dt, @DocumentType, @ComputerName,
+        @EmailParamCode, @ToEmailId, @CCEmailID,
+        @Subject, @BodyText, @Document, @FileName, @CreatedBy
+    );";
+
+        public static async Task InsertAsync(SqlConnection conn, LetterData data, byte[] pdfBytes, string userId, bool hasBCCColumn)
         {
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = InsertSql;
+            cmd.CommandText = hasBCCColumn ? InsertSqlWithBCC : InsertSqlWithoutBCC;
             cmd.Parameters.AddWithValue("@CompanyCode", (object?)data.CompanyCode ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@ClientCode", (object?)data.ClientCode ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@Dt", DateTime.Now.ToString("yyyyMMdd"));
@@ -261,12 +286,35 @@ namespace TradeWeb.API.Repository
             cmd.Parameters.AddWithValue("@ComputerName", Environment.MachineName);
             cmd.Parameters.AddWithValue("@EmailParamCode", (object?)data.EmailParamCode ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@ToEmailId", (object?)data.ToEmailId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@CCEmailID", (object?)data.CCEmailID ?? DBNull.Value);
+            if (hasBCCColumn)
+            {
+                cmd.Parameters.AddWithValue(
+                    "@BCCEmailID",
+                    (object?)data.BCCEmailID ?? DBNull.Value);
+            }
             cmd.Parameters.AddWithValue("@Subject", (object?)data.EmailSubject ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@BodyText", (object?)data.EmailBodyText ?? DBNull.Value);
             cmd.Parameters.Add("@Document", System.Data.SqlDbType.VarBinary, pdfBytes.Length).Value = pdfBytes;
             cmd.Parameters.AddWithValue("@FileName", (object?)data.FileName ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@CreatedBy", userId);
             await cmd.ExecuteNonQueryAsync();
+        }
+
+        public static async Task<bool> HasBCCColumnAsync(SqlConnection conn)
+        {
+            using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+        SELECT CASE
+            WHEN COL_LENGTH(
+                'dbo.Digital_Emaildetails',
+                'dd_BCCEmailID'
+            ) IS NOT NULL THEN 1
+            ELSE 0
+        END;";
+
+            return Convert.ToBoolean(await cmd.ExecuteScalarAsync());
         }
     }
 
@@ -295,6 +343,8 @@ namespace TradeWeb.API.Repository
         public string EmailSubject { get; set; }
         public string EmailBodyText { get; set; }
         public string ToEmailId { get; set; }
+        public string CCEmailID { get; set; }
+        public string BCCEmailID { get; set; }
         public string FileName { get; set; }
         public string ReportName { get; set; }
         public string FooterModuleName { get; set; }
@@ -325,10 +375,25 @@ namespace TradeWeb.API.Repository
                 EmailSubject = row["Emailsubject"]?.ToString()?.Trim(),
                 EmailBodyText = row["EmailBodyText"]?.ToString()?.Trim(),
                 ToEmailId = row["ToEmailid"]?.ToString()?.Trim(),
+                CCEmailID = GetColumnValue(row, "CCEmailID"),
+                BCCEmailID = GetColumnValue(row, "BCCEmailID"),
                 FileName = row["FileName"]?.ToString()?.Trim(),
                 ReportName = row["ReportName"]?.ToString()?.Trim(),
                 FooterModuleName = row["FooterModuleName"]?.ToString()?.Trim()
             };
+        }
+
+        private static string GetColumnValue(DataTableReader row, string columnName)
+        {
+            if (!row.GetSchemaTable().AsEnumerable()
+                .Any(r => r["ColumnName"].ToString() == columnName))
+            {
+                return string.Empty;
+            }
+
+            return row[columnName] == DBNull.Value
+                ? string.Empty
+                : row[columnName]?.ToString() ?? string.Empty;
         }
     }
 

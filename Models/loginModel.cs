@@ -67,12 +67,4 @@ namespace TradeWeb.API.Models
         public string Feature { get; set; }
     }
 
-    public class GenerateTokenModel
-    {
-        public string username { get; set; }
-        public string companyCode { get; set; }
-        public string role { get; set; }
-        public string loginAs { get; set; }
-    }
-
 }

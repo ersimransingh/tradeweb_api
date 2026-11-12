@@ -1,14 +1,20 @@
 ﻿using System.Collections.Generic;
-using TradeWeb.API.ExtentionMethod;
+//using TradeWeb.API.ExtentionMethod;
 using TradeWeb.API.Logs;
 using TradeWeb.API.Models;
+using TradeWeb.API.Repository;
 
 
 namespace TradeWeb.API.Service
 {
     public class ThirdPartyServiceDAO
     {
-        InsertOrUpdate iuObj = new InsertOrUpdate();
+        private readonly UtilityCommon _objUtility;
+
+        public ThirdPartyServiceDAO(UtilityCommon objUtility)
+        {
+            _objUtility = objUtility;
+        }
 
         public void InsertThirdPartyServiceData(ThirdPartyModel fModel, string reqDetail, string outputResponse)
         {
@@ -23,7 +29,7 @@ namespace TradeWeb.API.Service
             iData.Add("Response", outputString);
             iData.Add("UpdateTimeStamp", "GetDate()");
 
-            int i = iuObj.InsertData("", "tbl_GenericAPILog", iData);
+            int i = _objUtility.InsertData("", "tbl_GenericAPILog", iData);
         }
         public void InsertThirdPartyServiceData(ThirdPartyServiceMultiPartModel fModel, string reqDetail, string outputResponse)
         {
@@ -37,28 +43,7 @@ namespace TradeWeb.API.Service
             iData.Add("Response", outputString);
             iData.Add("UpdateTimeStamp", "GetDate()");
 
-            int i = iuObj.InsertData("", "tbl_GenericAPILog", iData);
+            int i = _objUtility.InsertData("", "tbl_GenericAPILog", iData);
         }
-
-        public dynamic Authenticate(AuthenticateRequest model)
-        {
-            //var user = _users.SingleOrDefault(x => x.Username == model.Username && x.Password == model.Password);
-            var user = new User { Username = model.Username, Password = model.Password };
-            if (iuObj.checkPassword(user))
-            {
-                // return null if user not found
-                if (user == null)
-                    return null;
-
-                return user;
-            }
-            else
-            {
-                return null;
-            }
-        }
-
-
-
     }
 }

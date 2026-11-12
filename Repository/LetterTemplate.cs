@@ -1,8 +1,8 @@
-﻿using QuestPDF.Fluent;
+﻿using System;
+using System.IO;
+using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
-using System;
-using System.IO;
 
 namespace TradeWeb.API.Repository
 {
@@ -68,33 +68,33 @@ namespace TradeWeb.API.Repository
                                 row.RelativeItem().Element(container =>
                                 {
                                     container
-                                        .PaddingLeft(8)
-                                        .MaxWidth(490)
-                                        .MaxHeight(105)
-                                        .Image(headerImageBytes);
+                                    .PaddingLeft(8)
+                                    .MaxWidth(490)
+                                    .MaxHeight(105)
+                                    .Image(headerImageBytes);
                                 });
                             }
                             else
                             {
                                 // CENTER: Company Details
-                                    row.RelativeItem().Column(col =>
-                                    {
-                                        col.Item().AlignCenter()
-                                            .Text(_data.CompanyName)
-                                            .SemiBold().FontSize(13);
+                                row.RelativeItem().Column(col =>
+                                {
+                                    col.Item().AlignCenter()
+                                        .Text(_data.CompanyName)
+                                        .SemiBold().FontSize(13);
 
-                                        col.Item().AlignCenter().Text(_data.Address1).FontSize(10);
-                                        col.Item().AlignCenter().Text(_data.Address2).FontSize(10);
-                                        col.Item().AlignCenter().Text(_data.Address3).FontSize(10);
-                                        if (!string.IsNullOrWhiteSpace(_data.CINNo))
-                                            col.Item().AlignCenter().Text(_data.CINNo).FontSize(10);
-                                        if (!string.IsNullOrWhiteSpace(_data.ReportName))
-                                            col.Item().AlignCenter().Text(_data.ReportName).FontSize(10).SemiBold();
-                                    });
-                                    // RIGHT EMPTY SPACE (for balance)
-                                    row.ConstantItem(80);
-                                }
-                            });
+                                    col.Item().AlignCenter().Text(_data.Address1).FontSize(10);
+                                    col.Item().AlignCenter().Text(_data.Address2).FontSize(10);
+                                    col.Item().AlignCenter().Text(_data.Address3).FontSize(10);
+                                    if (!string.IsNullOrWhiteSpace(_data.CINNo))
+                                        col.Item().AlignCenter().Text(_data.CINNo).FontSize(10);
+                                    if (!string.IsNullOrWhiteSpace(_data.ReportName))
+                                        col.Item().AlignCenter().Text(_data.ReportName).FontSize(10).SemiBold();
+                                });
+                                // RIGHT EMPTY SPACE (for balance)
+                                row.ConstantItem(80);
+                            }
+                        });
                     });
 
 

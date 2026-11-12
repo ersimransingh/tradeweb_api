@@ -350,7 +350,7 @@ namespace TradeWeb.API.Repository
                         strsql += ") ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]";
                         objUtility.ExecuteSQL(strsql);
                     }
-
+                    
                     if (Convert.ToInt16(objUtility.OpenDataTable("select count(0) from tbl_WhatsAppChatbotConfig where ReportName = 'Capital Gain Loss' and Product = 'Trading'").Rows[0][0].ToString()) > 0)
                     {
                         if (Convert.ToInt16(objUtility.OpenDataTable("select count(0) from tbl_WhatsAppChatbotParam where ReportName like 'Capital Gain Loss%' and Product = 'Trading'").Rows[0][0].ToString()) == 0)
@@ -1443,7 +1443,9 @@ namespace TradeWeb.API.Repository
 
             if (dt.Rows.Count > 0)
             {
-                string strConnection = "server=" + dt.Rows[0]["op_server"].ToString().Trim() + ";Database=" + dt.Rows[0]["op_database"].ToString().Trim() + ";Uid=" + dt.Rows[0]["op_user"].ToString().Trim() + ";Pwd=" + dt.Rows[0]["op_pwd"].ToString().Trim() + ";Max Pool Size=200;Connect Timeout=20000;pooling='true';";
+                //string strConnection = "server=" + dt.Rows[0]["op_server"].ToString().Trim() + ";Database=" + dt.Rows[0]["op_database"].ToString().Trim() + ";Uid=" + dt.Rows[0]["op_user"].ToString().Trim() + ";Pwd=" + dt.Rows[0]["op_pwd"].ToString().Trim() + ";Max Pool Size=200;Connect Timeout=20000;pooling='true';";
+                string connectionString = objUtility.GetConnectionStr();
+                string strConnection = objUtility.GetDynamicConnectionString(connectionString, dt.Rows[0]["op_server"].ToString().Trim(), dt.Rows[0]["op_database"].ToString().Trim(), dt.Rows[0]["op_user"].ToString().Trim(), dt.Rows[0]["op_pwd"].ToString().Trim());
                 ObjDataSet = objUtility.OpenDataTable(strsql, new SqlConnection { ConnectionString = strConnection });
 
                 if (ObjDataSet.Rows.Count < 1)
@@ -1471,7 +1473,9 @@ namespace TradeWeb.API.Repository
             DataTable dt = objUtility.OpenDataTable("select * from other_products with (nolock) where op_product in ('Cross', 'Estro') and op_status='A'");
             if (dt.Rows.Count > 0)
             {
-                strConnection = "server=" + dt.Rows[0]["op_server"].ToString().Trim() + ";Database=" + dt.Rows[0]["op_database"].ToString().Trim() + ";Uid=" + dt.Rows[0]["op_user"].ToString().Trim() + ";Pwd=" + dt.Rows[0]["op_pwd"].ToString().Trim() + ";Max Pool Size=200;Connect Timeout=20000;pooling='true';";
+                //strConnection = "server=" + dt.Rows[0]["op_server"].ToString().Trim() + ";Database=" + dt.Rows[0]["op_database"].ToString().Trim() + ";Uid=" + dt.Rows[0]["op_user"].ToString().Trim() + ";Pwd=" + dt.Rows[0]["op_pwd"].ToString().Trim() + ";Max Pool Size=200;Connect Timeout=20000;pooling='true';";
+                string connetionString = objUtility.GetConnectionStr();
+                strConnection = objUtility.GetDynamicConnectionString(connetionString, dt.Rows[0]["op_server"].ToString().Trim(), dt.Rows[0]["op_database"].ToString().Trim(), dt.Rows[0]["op_user"].ToString().Trim(), dt.Rows[0]["op_pwd"].ToString().Trim());
             }
             return strConnection;
         }
