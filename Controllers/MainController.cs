@@ -1298,7 +1298,32 @@ namespace TradeWeb.API.Controllers
         [ServiceFilter(typeof(EncryptResponseAttribute))]
         public async Task<IActionResult> TradeWeb()
         {
-            if (ModelState.IsValid)
+            if (!ModelState.IsValid)
+            {
+                return BadRequest();
+            }
+            string xmlStr;
+            try
+            {
+                using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
+                {
+                    xmlStr = await reader.ReadToEndAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(JsonConvert.SerializeObject(new CrossNetCommonModel { success = false, message = ex.Message.ToString(), data = null, datarows = null }, Formatting.Indented));
+            }
+            return await ProcessTradeWebXml(xmlStr);
+        }
+
+        /// <summary>
+        /// Core handler for a single TradeWeb XML request (&lt;dsXml&gt;...&lt;/dsXml&gt;).
+        /// Shared by the TradeWeb endpoint and each item of the TradeWebBatch endpoint, so
+        /// both paths get identical validation, user-id injection and logging.
+        /// </summary>
+        internal async Task<IActionResult> ProcessTradeWebXml(string xmlStr)
+        {
             {
                 long logSrNo = 0;
                 string logRespMessage = "", logErrorMessage = "", logReq = "";
@@ -1310,7 +1335,9 @@ namespace TradeWeb.API.Controllers
                     JwtSecurityToken token = GetToken();
                     var userName = token.Claims.First(claim => claim.Type == "username").Value;
                     var role = token.Claims.First(claim => claim.Type == ClaimTypes.Role).Value;
-                    if (role == "TradeMobile")
+                    // The batch endpoint sets this before running items in parallel, so only
+                    // write it when missing (HttpContext.Items is not safe for concurrent writes).
+                    if (role == "TradeMobile" && HttpContext.Items["TradeMobile"]?.ToString() != "Y")
                     {
                         HttpContext.Items["TradeMobile"] = "Y";
                     }
@@ -1326,9 +1353,7 @@ namespace TradeWeb.API.Controllers
                     {
                         userId = strUserID[0];
                     }
-                    using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
                     {
-                        var xmlStr = await reader.ReadToEndAsync();
                         logReq = xmlStr;
                         XmlDocument xml = new XmlDocument();
                         xml.LoadXml(xmlStr);
@@ -2047,8 +2072,199 @@ namespace TradeWeb.API.Controllers
                     }
                 }
             }
-            return BadRequest();
         }
+
+        #region TradeWeb batch
+
+        // Options that change data, send messages, or generate files. They stay on the
+        // single TradeWeb endpoint so a batch is always a set of independent read/lookup
+        // queries that are safe to run in parallel.
+        private static readonly HashSet<string> BatchBlockedOptions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "ADD", "EDIT", "DELETE", "CHANGEPASSWORD", "VALIDATEPASSWORD", "SENDOTP", "VERIFYOTP",
+            "GETAGREEMENT", "GETSIGNATURE", "ENCRYPTDATA", "GENERATEPDF", "TYPSTMAIL"
+        };
+
+        /// <summary>
+        /// Runs several TradeWeb requests in one HTTP round trip.
+        /// Body (JSON): { "requests": [ { "id": "1", "body": "&lt;dsXml&gt;...&lt;/dsXml&gt;" }, ... ] }
+        /// Response:    { "success": true, "results": [ { "id": "1", "status": 200, "body": { ...same JSON as TradeWeb... } } ] }
+        /// Each item goes through the same handler as api/Main/TradeWeb, so auth-derived
+        /// UserId injection, validation and logging are identical. Items run in parallel,
+        /// each in its own DI scope.
+        /// </summary>
+        [Authorize(AuthenticationSchemes = "Bearer", Roles = "Admin,TradeMobile,ComAPI,CrossNet,EstroNet,CrossWeb,EstroWeb,Branch")]
+        [HttpPost, Route("TradeWebBatch")]
+        [Consumes("application/json")]
+        [TypeFilter(typeof(ValidateUser), Arguments = new object[] { "TradeWeb" })]
+        [ServiceFilter(typeof(E2EDecryptFilter))]
+        [ServiceFilter(typeof(EncryptResponseAttribute))]
+        public async Task<IActionResult> TradeWebBatch()
+        {
+            int maxItems = _configuration.GetValue<int?>("BatchRequest:MaxItems") ?? 50;
+            int maxParallelism = Math.Max(1, _configuration.GetValue<int?>("BatchRequest:MaxParallelism") ?? 6);
+
+            // Read the raw body ourselves: model binding runs before E2EDecryptFilter, so
+            // [FromBody] would see the encrypted payload.
+            TradeWebBatchRequest batch;
+            try
+            {
+                string bodyStr;
+                using (var reader = new StreamReader(Request.Body, Encoding.UTF8))
+                {
+                    bodyStr = await reader.ReadToEndAsync();
+                }
+                batch = JsonConvert.DeserializeObject<TradeWebBatchRequest>(bodyStr);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(JsonConvert.SerializeObject(new TradeWebBatchResponse { Success = false, Message = "Invalid batch body: " + ex.Message }));
+            }
+
+            if (batch?.Requests == null || batch.Requests.Count == 0)
+            {
+                return BadRequest(JsonConvert.SerializeObject(new TradeWebBatchResponse { Success = false, Message = "requests must contain at least one item" }));
+            }
+            if (batch.Requests.Count > maxItems)
+            {
+                return BadRequest(JsonConvert.SerializeObject(new TradeWebBatchResponse { Success = false, Message = $"A batch may contain at most {maxItems} requests" }));
+            }
+
+            // Set once up front so parallel items never write HttpContext.Items concurrently.
+            var role = GetToken()?.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value;
+            if (role == "TradeMobile")
+            {
+                HttpContext.Items["TradeMobile"] = "Y";
+            }
+
+            var scopeFactory = HttpContext.RequestServices.GetRequiredService<IServiceScopeFactory>();
+            var results = new TradeWebBatchResult[batch.Requests.Count];
+            using (var gate = new SemaphoreSlim(maxParallelism))
+            {
+                var tasks = batch.Requests.Select(async (item, index) =>
+                {
+                    await gate.WaitAsync();
+                    try
+                    {
+                        results[index] = await Task.Run(() => RunBatchItem(scopeFactory, item, index));
+                    }
+                    finally
+                    {
+                        gate.Release();
+                    }
+                }).ToList();
+                await Task.WhenAll(tasks);
+            }
+
+            return Ok(JsonConvert.SerializeObject(new TradeWebBatchResponse { Success = true, Message = "", Results = results.ToList() }));
+        }
+
+        private async Task<TradeWebBatchResult> RunBatchItem(IServiceScopeFactory scopeFactory, TradeWebBatchItem item, int index)
+        {
+            string id = string.IsNullOrEmpty(item?.Id) ? index.ToString() : item.Id;
+            try
+            {
+                if (string.IsNullOrWhiteSpace(item?.Body))
+                {
+                    return BatchError(id, StatusCodes.Status400BadRequest, "body is empty");
+                }
+
+                string rejection = GetBatchRejectionReason(item.Body);
+                if (rejection != null)
+                {
+                    return BatchError(id, StatusCodes.Status400BadRequest, rejection);
+                }
+
+                // A fresh scope gives each parallel item its own controller, repository and
+                // utility instances, since those hold per-call mutable state.
+                using (var scope = scopeFactory.CreateScope())
+                {
+                    var controller = ActivatorUtilities.CreateInstance<MainController>(scope.ServiceProvider);
+                    controller.ControllerContext = new ControllerContext { HttpContext = HttpContext };
+                    IActionResult actionResult = await controller.ProcessTradeWebXml(item.Body);
+                    return ToBatchResult(id, actionResult);
+                }
+            }
+            catch (Exception ex)
+            {
+                return BatchError(id, StatusCodes.Status500InternalServerError, ex.Message);
+            }
+        }
+
+        private static string GetBatchRejectionReason(string xmlStr)
+        {
+            try
+            {
+                var xml = new XmlDocument();
+                xml.LoadXml(xmlStr);
+                var jUiNode = xml.GetElementsByTagName("J_Ui");
+                if (jUiNode == null || jUiNode.Count == 0) return null; // let the normal handler report it
+
+                string jsonString = "{" + jUiNode[0].InnerText.Replace("“", "\"").Replace("”", "\"") + "}";
+                var jUi = JsonConvert.DeserializeObject<JUiModel>(jsonString);
+                string option = jUi?.Option?.Trim() ?? "";
+                if (BatchBlockedOptions.Contains(option))
+                {
+                    return $"Option '{option}' is not allowed in a batch request; call api/Main/TradeWeb instead";
+                }
+                if (!string.IsNullOrWhiteSpace(jUi?.ReportDisplay))
+                {
+                    return "ReportDisplay requests are not allowed in a batch request; call api/Main/TradeWeb instead";
+                }
+                return null;
+            }
+            catch
+            {
+                return null; // malformed XML/JSON: the normal handler returns its usual error
+            }
+        }
+
+        private static TradeWebBatchResult ToBatchResult(string id, IActionResult actionResult)
+        {
+            switch (actionResult)
+            {
+                case ObjectResult objectResult:
+                    return new TradeWebBatchResult
+                    {
+                        Id = id,
+                        Status = objectResult.StatusCode ?? StatusCodes.Status200OK,
+                        Body = ToJToken(objectResult.Value)
+                    };
+                case StatusCodeResult statusCodeResult:
+                    return new TradeWebBatchResult { Id = id, Status = statusCodeResult.StatusCode, Body = null };
+                default:
+                    return BatchError(id, StatusCodes.Status500InternalServerError, "Unsupported result type");
+            }
+        }
+
+        private static JToken ToJToken(object value)
+        {
+            if (value == null) return null;
+            if (value is string s)
+            {
+                string trimmed = s.TrimStart();
+                // Handler output is produced by JsonConvert.SerializeObject, so embed it as-is
+                // instead of paying to parse and re-serialize large result sets.
+                if (trimmed.StartsWith("{") || trimmed.StartsWith("["))
+                {
+                    return new JRaw(s);
+                }
+                return new JValue(s);
+            }
+            return JToken.FromObject(value);
+        }
+
+        private static TradeWebBatchResult BatchError(string id, int status, string message)
+        {
+            return new TradeWebBatchResult
+            {
+                Id = id,
+                Status = status,
+                Body = JObject.FromObject(new { success = false, message, data = (object)null, datarows = (object)null })
+            };
+        }
+
+        #endregion
 
         [HttpPost, Route("InitializeLogin")]
         [Consumes("application/xml")]
