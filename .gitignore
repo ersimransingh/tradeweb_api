@@ -413,3 +413,6 @@ dynamic.pdf
 
 # Generated QuestPDF output files
 **/JsonFiles/output*
+
+# Local configuration (may contain secrets)
+appsettings.json
