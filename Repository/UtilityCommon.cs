@@ -10473,7 +10473,7 @@ INSERT INTO tbl_TradeWebMenu ([ModuleCode], [MenuCode], [MenuName], [MenuTag], [
                                 {
                                     checkQuery = @"SELECT COUNT(*) FROM sys.objects WHERE object_id = OBJECT_ID(@ObjectName)";
                                 }
-                                using SqlCommand checkCmd = new SqlCommand(checkQuery, conn);
+                                using SqlCommand checkCmd = new SqlCommand(checkQuery, sqlCon);
                                 if (objectType == "TYPE")
                                 {
                                     checkCmd.Parameters.AddWithValue("@Name", match.Groups["name"].Value);

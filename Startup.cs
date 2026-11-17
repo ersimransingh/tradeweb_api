@@ -324,7 +324,22 @@ namespace TradeWeb.API
             {
                 context.Response.Headers["X-XSS-Protection"] = "0";
                 context.Response.Headers["X-Frame-Options"] = "DENY";
-                context.Response.Headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'";
+
+                if (context.Request.Path.StartsWithSegments("/swagger"))
+                {
+                    // Relaxed policy for Swagger UI only
+                    context.Response.Headers["Content-Security-Policy"] =
+                        "default-src 'self'; " +
+                        "script-src 'self' 'unsafe-inline'; " +
+                        "style-src 'self' 'unsafe-inline'; " +
+                        "img-src 'self' data:; " +
+                        "frame-ancestors 'none'";
+                }
+                else
+                {
+                    context.Response.Headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'";
+                }
+
                 context.Response.Headers["Referrer-Policy"] = "no-referrer";
                 context.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
                 context.Response.Headers["Cross-Origin-Opener-Policy"] = "same-origin";
@@ -335,14 +350,14 @@ namespace TradeWeb.API
             if (env.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
-                app.UseSwagger();
-                app.UseSwaggerUI(c =>
-                {
-                    c.SwaggerEndpoint("../swagger/v1/swagger.json", "TradeWeb.API V1");
-                });
             }
             app.UseStaticFiles();
             app.UseIpRateLimiting();
+            app.UseSwagger();
+            app.UseSwaggerUI(c =>
+            {
+                c.SwaggerEndpoint("../swagger/v1/swagger.json", "TradeWeb.API V1");
+            });
             app.UseRouting();
 
             //app.UseCors(); //// Allowing CORS policy
